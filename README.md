@@ -17,11 +17,7 @@ ML-Ralph is an autonomous ML agent loop (Claude or Codex) that turns an ML proje
 Install the CLI once, then initialize each project.
 
 ```bash
-# From the ml-ralph repo
-uv tool install .
-
-# Or (after publishing) install from package index
-# uv tool install ml-ralph
+uv tool install ml-ralph
 ```
 
 In your project:
@@ -29,11 +25,6 @@ In your project:
 ```bash
 ml-ralph init
 ```
-
-`ml-ralph init` copies `ml-ralph.sh`, `CLAUDE.md`, `CODEX.md`, and `AGENTS.md` into the project root, and installs skills into:
-
-- `.claude/skills/`
-- `.codex/skills/`
 
 ## Setup Weights & Biases (Required Before Running)
 
@@ -48,10 +39,7 @@ uv add wandb
 # Login (opens browser)
 wandb login
 
-# Or set API key for CI/headless environments
-export WANDB_API_KEY="your-api-key-here"
-
-# Set project name (recommended)
+# Set project name
 export WANDB_PROJECT="your-project-name"
 
 # Optional: set entity (team or username)
