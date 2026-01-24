@@ -44,10 +44,11 @@ const allSteps: { id: string; label: string; description: string; phase: Phase }
   { id: '5', label: 'Refine backlog', description: 'Evidence-driven updates', phase: 'loop' },
   { id: '6', label: 'Pick next story', description: 'Highest priority, not done', phase: 'loop' },
   { id: '7', label: 'Run minimal experiment', description: 'One change at a time', phase: 'loop' },
-  { id: '8', label: 'Log evidence', description: 'Metrics, artifacts, notes', phase: 'loop' },
-  { id: '9', label: 'More stories?', description: '', phase: 'decision' },
+  { id: '8', label: 'Run gates + update status', description: 'Checks, commit, passes: true', phase: 'loop' },
+  { id: '9', label: 'Log evidence', description: 'Metrics, artifacts, notes', phase: 'loop' },
+  { id: '10', label: 'Stop condition?', description: 'Plateau, budget, risk', phase: 'decision' },
   // Exit
-  { id: '10', label: 'Done!', description: 'All stories complete', phase: 'done' },
+  { id: '11', label: 'Done!', description: 'All stories complete', phase: 'done' },
 ];
 
 const notes = [
@@ -72,7 +73,7 @@ const notes = [
   },
   {
     id: 'note-2',
-    appearsWithStep: 8,
+    appearsWithStep: 9,
     position: { x: 480, y: 620 },
     color: { bg: '#fdf4f0', border: '#c97a50' },
     content: `Progress log captures:
@@ -135,10 +136,11 @@ const positions: { [key: string]: { x: number; y: number } } = {
   '5': { x: 450, y: 300 },
   '6': { x: 750, y: 450 },
   '7': { x: 470, y: 520 },
-  '8': { x: 200, y: 620 },
-  '9': { x: 40, y: 720 },
+  '8': { x: 700, y: 610 },
+  '9': { x: 200, y: 680 },
+  '10': { x: 40, y: 780 },
   // Exit
-  '10': { x: 350, y: 880 },
+  '11': { x: 350, y: 940 },
   // Notes
   ...Object.fromEntries(notes.map(n => [n.id, n.position])),
 };
@@ -154,9 +156,10 @@ const edgeConnections: { source: string; target: string; sourceHandle?: string; 
   { source: '6', target: '7', sourceHandle: 'left-source', targetHandle: 'right-target' },
   { source: '7', target: '8', sourceHandle: 'left-source', targetHandle: 'right-target' },
   { source: '8', target: '9', sourceHandle: 'left-source', targetHandle: 'right-target' },
-  { source: '9', target: '4', sourceHandle: 'top-source', targetHandle: 'bottom-target', label: 'Yes' },
+  { source: '9', target: '10', sourceHandle: 'left-source', targetHandle: 'right-target' },
+  { source: '10', target: '4', sourceHandle: 'top-source', targetHandle: 'bottom-target', label: 'No' },
   // Exit
-  { source: '9', target: '10', sourceHandle: 'bottom', targetHandle: 'top', label: 'No' },
+  { source: '10', target: '11', sourceHandle: 'bottom', targetHandle: 'top', label: 'Yes' },
 ];
 
 function createNode(step: typeof allSteps[0], visible: boolean, position?: { x: number; y: number }): Node {
