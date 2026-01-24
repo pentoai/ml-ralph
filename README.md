@@ -73,6 +73,12 @@ Notes:
 - Codex uses `CODEX.md` and auto-loads `AGENTS.md`.
 - Default Codex mode is full autonomy (no approvals, no sandbox). Use `--codex-safe` for workspace-write sandboxing.
 
+## How it works
+
+```bash
+ml-ralph explain
+```
+
 ## Key files
 
 | File             | Purpose                          |

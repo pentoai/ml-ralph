@@ -4,6 +4,20 @@ from pathlib import Path
 import typer
 from importlib import resources
 
+EXPLAIN_TEXT = """
+ML-Ralph workflow:
+
+1) ml-ralph init
+   - Copies ml-ralph.sh, CLAUDE.md, CODEX.md, AGENTS.md into your project root
+   - Installs skills into .claude/skills and .codex/skills
+
+2) ml-ralph run --tool codex --max-iterations 250
+   - Runs the ML-Ralph loop
+   - Writes decisions/metrics to progress.jsonl
+   - Uses outputs/logs/active_runs.json to track long-running training
+"""
+
+
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 
 
@@ -88,6 +102,12 @@ def run(
 
     typer.echo(f"Running: {' '.join(cmd)}")
     subprocess.run(cmd, check=True)
+
+
+@app.command()
+def explain() -> None:
+    """Explain the ML-Ralph workflow and what init/run do."""
+    typer.echo(EXPLAIN_TEXT.strip())
 
 
 if __name__ == "__main__":
