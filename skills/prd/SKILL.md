@@ -63,7 +63,7 @@ Each story must include:
 - **Description**
 - **Type**: discovery | experiment | evaluation | implementation | ops
 - **Hypothesis** (optional but preferred)
-- **Evidence Required** (what must be logged)
+- **Evidence Required** (what must be logged, including W&B run URL/ID for experiment/evaluation stories)
 - **Acceptance Criteria** (verifiable)
 
 **Format:**
@@ -72,7 +72,7 @@ Each story must include:
 **Description:** As a [role], I want [outcome] so that [benefit].
 **Type:** discovery | experiment | evaluation | implementation | ops
 **Hypothesis:** If ..., then ... because ...
-**Evidence Required:** [What must appear in progress.txt or artifacts]
+**Evidence Required:** [What must appear in progress.txt or artifacts; include W&B run URL/ID for experiment/evaluation stories]
 
 **Acceptance Criteria:**
 - [ ] Specific, verifiable criterion

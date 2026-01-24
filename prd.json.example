@@ -28,7 +28,7 @@
       "description": "As an ML engineer, I want a fast baseline to validate the pipeline and set a starting score.",
       "type": "experiment",
       "hypothesis": "A simple model with minimal features will produce a stable baseline score.",
-      "evidenceRequired": "Baseline metric and variance logged; W&B run linked.",
+      "evidenceRequired": "Baseline metric and variance logged; W&B run linked with run URL/ID and dataset version.",
       "acceptanceCriteria": [
         "Baseline training script runs end-to-end",
         "Metric logged to W&B with config",
@@ -48,7 +48,7 @@
       "description": "As an ML engineer, I want to understand where the baseline fails to guide improvements.",
       "type": "evaluation",
       "hypothesis": "Certain segments have systematically worse performance.",
-      "evidenceRequired": "Slice metrics table or report saved and referenced in progress.txt.",
+      "evidenceRequired": "Slice metrics table or report saved and referenced in progress.txt; W&B run linked with run URL/ID and dataset version.",
       "acceptanceCriteria": [
         "Compute slice metrics for at least 3 segments",
         "Save report artifact",

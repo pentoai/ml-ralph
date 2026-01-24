@@ -71,7 +71,7 @@ Order stories so earlier ones unlock later ones:
 
 - Criteria must be verifiable.
 - **Always include** Ruff/Mypy/Pytest checks and evidence logging.
-- For experiment stories, include the specific metric and logging requirement.
+- For experiment stories, include the specific metric and logging requirement, including W&B run URL/ID.
 
 ---
 

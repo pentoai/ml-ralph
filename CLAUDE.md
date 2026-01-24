@@ -32,7 +32,7 @@ ML work is a loop: **hypothesis → experiment → evidence → decision**. Do n
 - **Scenario understanding:** define target, unit of prediction, metric, constraints, failure modes.
 - **Data exploration:** schema, missingness, duplicates, leakage risks, train/test shift.
 - **Research first:** avoid reinventing the wheel; find standard baselines and validation schemes.
-- **Experiment tracking:** log configs, metrics, artifacts, and notes in W&B.
+- **Experiment tracking:** log configs, metrics, artifacts, and notes in W&B; every experiment/evaluation story requires a W&B run unless explicitly waived in `progress.txt`.
 - **Evaluation discipline:** validation scheme is sacred; guard against leakage.
 - **Baseline-first:** simple, fast, reliable baseline before complexity.
 - **Error analysis:** inspect failures and slice metrics by meaningful segments.
@@ -58,7 +58,7 @@ ML work is a loop: **hypothesis → experiment → evidence → decision**. Do n
 - Use **pydantic-settings** for configuration.
 - Use **loguru** for logging.
 - Use **typer** for CLIs.
-- Use **wandb** for experiment tracking.
+- Use **wandb** for experiment tracking; require a W&B run per experiment/evaluation story and log the run URL/ID in `progress.txt`.
 - Use **uv** as the package manager and runner (`uv run ...`).
 - Use **ruff** for lint/format, **mypy** for types, **pytest** for tests.
 - Do not reinvent the wheel; use existing tools and standard patterns.
@@ -108,6 +108,7 @@ Evaluation:
 
 Evidence:
 - Artifacts/logs/links (e.g., W&B run)
+- W&B run URL/ID, config hash, dataset version
 
 Decision:
 - Keep / revert / investigate
