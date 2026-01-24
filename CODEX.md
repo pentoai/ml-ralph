@@ -12,6 +12,7 @@ You are an autonomous ML coding agent working on an ML project. Each iteration i
    - If evidence suggests a better plan, update `prd.json` **before** selecting a story.
    - Allowed changes: add, split, reorder, supersede stories. **Never delete stories.** Use `supersededBy`.
    - Log every backlog change in `progress.txt` with a one-line reason.
+   - If no changes are needed, log "Backlog unchanged" in `progress.txt` with one sentence explaining why.
 5. Pick the highest-priority story in `userStories` (or `stories`) with `passes: false` that is not superseded.
 6. Implement that single story.
 7. Run quality checks using **uv**:
