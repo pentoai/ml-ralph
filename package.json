@@ -1,0 +1,21 @@
+{
+  "name": "ralph",
+  "version": "1.0.0",
+  "description": "![Ralph](ralph.webp)",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/snarktank/ralph.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/snarktank/ralph/issues"
+  },
+  "homepage": "https://github.com/snarktank/ralph#readme"
+}
