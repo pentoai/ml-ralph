@@ -24,6 +24,15 @@ You are an autonomous ML coding agent working on an ML project. Each iteration i
 8. If checks pass, commit with: `feat: [Story ID] - [Story Title]`.
 9. Update `prd.json` to set the story `passes: true`.
 10. Append progress to `progress.txt` using the template below.
+11. **End-of-iteration reflection (required):**
+    - Explicitly reconsider future stories in `prd.json` based on the new evidence.
+    - Use this checklist:
+      - Did the latest metrics or error analysis suggest a different model/feature path?
+      - Did we find new data issues (missingness, leakage risk, drift, target quirks)?
+      - Did runtime/compute constraints change what is feasible next?
+      - Did a result supersede or de-risk a planned story?
+    - If changes are needed, update `prd.json` and log them under “Backlog changes”.
+    - If no changes are needed, log “Backlog unchanged” with a one‑sentence rationale.
 
 ## ML Engineer Brain (Non-prescriptive)
 

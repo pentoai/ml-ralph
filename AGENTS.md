@@ -36,3 +36,4 @@ cd flowchart && npm run build
 - Always update AGENTS.md with reusable ML patterns and gotchas
 - Never ask the user questions during runs; make reasonable assumptions and log them in progress.txt
 - Only emit `<promise>COMPLETE</promise>` after counting remaining stories in prd.json and confirming zero; log the count in progress.txt
+- At the end of every iteration, reflect on new evidence and adjust prd.json if needed. Use the checklist: metrics/error analysis shifts, data issues (missingness/leakage/drift), compute constraints, or results that supersede a story. If no change, log “Backlog unchanged” with a one‑sentence reason
