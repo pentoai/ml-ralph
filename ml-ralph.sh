@@ -90,7 +90,7 @@ for i in $(seq 1 $MAX_ITERATIONS); do
     OUTPUT=$(claude --dangerously-skip-permissions --print < "$SCRIPT_DIR/CLAUDE.md" 2>&1 | tee /dev/stderr) || true
   else
     # Codex CLI: use full-auto for workspace-write + on-request approvals
-    OUTPUT=$(codex exec --full-auto -C "$SCRIPT_DIR" - < "$SCRIPT_DIR/codex.md" 2>&1 | tee /dev/stderr) || true
+    OUTPUT=$(codex exec --full-auto -C "$SCRIPT_DIR" - < "$SCRIPT_DIR/CODEX.md" 2>&1 | tee /dev/stderr) || true
   fi
   
   # Check for completion signal

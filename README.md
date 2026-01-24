@@ -66,7 +66,7 @@ ML-Ralph will:
 8. Append evidence to `progress.txt`
 9. Repeat until all stories pass or max iterations reached
 
-When using Codex, ML-Ralph passes `codex.md` via stdin and Codex still auto-loads `AGENTS.md` as project instructions.
+When using Codex, ML-Ralph passes `CODEX.md` via stdin and Codex still auto-loads `AGENTS.md` as project instructions.
 
 ## Key Files
 
