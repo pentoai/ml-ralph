@@ -51,7 +51,7 @@ Load the ralph skill and convert tasks/prd-[project].md to prd.json
 ### 3) Run ML-Ralph
 
 ```bash
-./scripts/ml-ralph/ml-ralph.sh [--tool claude|codex] [max_iterations]
+./scripts/ml-ralph/ml-ralph.sh [--tool claude|codex] [--codex-safe] [max_iterations]
 ```
 
 ML-Ralph will:
@@ -67,6 +67,7 @@ ML-Ralph will:
 9. Repeat until all stories pass or max iterations reached
 
 When using Codex, ML-Ralph passes `CODEX.md` via stdin and Codex still auto-loads `AGENTS.md` as project instructions.
+By default, Codex runs with full autonomy (no approvals, no sandbox). Use `--codex-safe` to run in the safer workspace-write sandbox mode.
 
 ## Key Files
 

@@ -7,6 +7,7 @@ set -e
 # Parse arguments
 TOOL="claude"
 MAX_ITERATIONS=10
+CODEX_FLAGS="--dangerously-bypass-approvals-and-sandbox"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -16,6 +17,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --tool=*)
       TOOL="${1#*=}"
+      shift
+      ;;
+    --codex-safe)
+      CODEX_FLAGS="--full-auto"
       shift
       ;;
     *)
@@ -89,16 +94,23 @@ for i in $(seq 1 $MAX_ITERATIONS); do
     # Claude Code: use --dangerously-skip-permissions for autonomous operation, --print for output
     OUTPUT=$(claude --dangerously-skip-permissions --print < "$SCRIPT_DIR/CLAUDE.md" 2>&1 | tee /dev/stderr) || true
   else
-    # Codex CLI: use full-auto for workspace-write + on-request approvals
-    OUTPUT=$(codex exec --full-auto -C "$SCRIPT_DIR" - < "$SCRIPT_DIR/CODEX.md" 2>&1 | tee /dev/stderr) || true
+    # Codex CLI: default to full-auto (workspace-write + on-request approvals)
+    OUTPUT=$(codex exec $CODEX_FLAGS -C "$SCRIPT_DIR" - < "$SCRIPT_DIR/CODEX.md" 2>&1 | tee /dev/stderr) || true
   fi
   
-  # Check for completion signal
+  # Check for completion signal (verify PRD says all stories pass)
   if echo "$OUTPUT" | grep -q "<promise>COMPLETE</promise>"; then
-    echo ""
-    echo "ML-Ralph completed all tasks!"
-    echo "Completed at iteration $i of $MAX_ITERATIONS"
-    exit 0
+    REMAINING="-1"
+    if [ -f "$PRD_FILE" ]; then
+      REMAINING=$(jq -r 'if .userStories then [.userStories[]|select(.passes!=true)]|length elif .stories then [.stories[]|select(.passes!=true)]|length else -1 end' "$PRD_FILE" 2>/dev/null || echo -1)
+    fi
+    if [ "$REMAINING" = "0" ]; then
+      echo ""
+      echo "ML-Ralph completed all tasks!"
+      echo "Completed at iteration $i of $MAX_ITERATIONS"
+      exit 0
+    fi
+    echo "Completion signal ignored: $REMAINING stories remaining."
   fi
   
   echo "Iteration $i complete. Continuing..."
