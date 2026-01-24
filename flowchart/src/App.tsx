@@ -36,15 +36,15 @@ const phaseColors: Record<Phase, { bg: string; border: string }> = {
 
 const allSteps: { id: string; label: string; description: string; phase: Phase }[] = [
   // Setup phase (vertical)
-  { id: '1', label: 'You write a PRD', description: 'Define what you want to build', phase: 'setup' },
-  { id: '2', label: 'Convert to prd.json', description: 'Break into small user stories', phase: 'setup' },
-  { id: '3', label: 'Run ralph.sh', description: 'Starts the autonomous loop', phase: 'setup' },
+  { id: '1', label: 'Define objective', description: 'Metric, constraints, success', phase: 'setup' },
+  { id: '2', label: 'Write ML PRD', description: 'Stories + evidence requirements', phase: 'setup' },
+  { id: '3', label: 'Convert to prd.json', description: 'Living backlog format', phase: 'setup' },
+  { id: '4', label: 'Run ml-ralph.sh', description: 'Starts the autonomous loop', phase: 'setup' },
   // Loop phase
-  { id: '4', label: 'AI picks a story', description: 'Finds next passes: false', phase: 'loop' },
-  { id: '5', label: 'Implements it', description: 'Writes code, runs tests', phase: 'loop' },
-  { id: '6', label: 'Commits changes', description: 'If tests pass', phase: 'loop' },
-  { id: '7', label: 'Updates prd.json', description: 'Sets passes: true', phase: 'loop' },
-  { id: '8', label: 'Logs to progress.txt', description: 'Saves learnings', phase: 'loop' },
+  { id: '5', label: 'Refine backlog', description: 'Evidence-driven updates', phase: 'loop' },
+  { id: '6', label: 'Pick next story', description: 'Highest priority, not done', phase: 'loop' },
+  { id: '7', label: 'Run minimal experiment', description: 'One change at a time', phase: 'loop' },
+  { id: '8', label: 'Log evidence', description: 'Metrics, artifacts, notes', phase: 'loop' },
   { id: '9', label: 'More stories?', description: '', phase: 'decision' },
   // Exit
   { id: '10', label: 'Done!', description: 'All stories complete', phase: 'done' },
@@ -58,11 +58,14 @@ const notes = [
     color: { bg: '#f5f0ff', border: '#8b5cf6' },
     content: `{
   "id": "US-001",
-  "title": "Add priority field to database",
+  "title": "Baseline experiment",
+  "type": "experiment",
+  "hypothesis": "Simple model beats trivial baseline",
+  "evidenceRequired": "Metric + W&B run",
   "acceptanceCriteria": [
-    "Add priority column to tasks table",
-    "Generate and run migration",
-    "Typecheck passes"
+    "Baseline metric logged",
+    "Ruff/mypy/pytest pass",
+    "Evidence in progress.txt"
   ],
   "passes": false
 }`,
@@ -72,9 +75,11 @@ const notes = [
     appearsWithStep: 8,
     position: { x: 480, y: 620 },
     color: { bg: '#fdf4f0', border: '#c97a50' },
-    content: `Also updates AGENTS.md with
-patterns discovered, so future
-iterations learn from this one.`,
+    content: `Progress log captures:
+- hypothesis
+- metrics + variance
+- artifacts (W&B)
+- decision + next step`,
   },
 ];
 
@@ -325,8 +330,8 @@ function App() {
   return (
     <div className="app-container">
       <div className="header">
-        <h1>How Ralph Works</h1>
-        <p>Autonomous AI agent loop for completing PRDs</p>
+        <h1>How ML-Ralph Works</h1>
+        <p>ML-centric autonomous loop with evidence-first iteration</p>
       </div>
       <div className="flow-container">
         <ReactFlow
