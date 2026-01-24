@@ -1,64 +1,65 @@
 {
-  "project": "MyApp",
-  "branchName": "ralph/task-priority",
-  "description": "Task Priority System - Add priority levels to tasks",
+  "project": "ChurnPredictor",
+  "branchName": "ml-ralph/churn-baseline",
+  "description": "Baseline churn model with validated evaluation and experiment tracking",
   "userStories": [
     {
       "id": "US-001",
-      "title": "Add priority field to database",
-      "description": "As a developer, I need to store task priority so it persists across sessions.",
+      "title": "Frame objective and define evaluation",
+      "description": "As an ML engineer, I want a clear objective, metric, and validation scheme so results are meaningful.",
+      "type": "discovery",
+      "hypothesis": "",
+      "evidenceRequired": "Progress log includes objective, metric definition, and split strategy rationale.",
       "acceptanceCriteria": [
-        "Add priority column to tasks table: 'high' | 'medium' | 'low' (default 'medium')",
-        "Generate and run migration successfully",
-        "Typecheck passes"
+        "Document target, unit of prediction, and metric",
+        "Define validation scheme and leakage rules",
+        "Typecheck passes",
+        "Evidence logged in progress.txt"
       ],
       "priority": 1,
       "passes": false,
-      "notes": ""
+      "notes": "",
+      "supersededBy": "",
+      "risk": ""
     },
     {
       "id": "US-002",
-      "title": "Display priority indicator on task cards",
-      "description": "As a user, I want to see task priority at a glance.",
+      "title": "Establish baseline model",
+      "description": "As an ML engineer, I want a fast baseline to validate the pipeline and set a starting score.",
+      "type": "experiment",
+      "hypothesis": "A simple model with minimal features will produce a stable baseline score.",
+      "evidenceRequired": "Baseline metric and variance logged; W&B run linked.",
       "acceptanceCriteria": [
-        "Each task card shows colored priority badge (red=high, yellow=medium, gray=low)",
-        "Priority visible without hovering or clicking",
+        "Baseline training script runs end-to-end",
+        "Metric logged to W&B with config",
+        "Baseline score recorded in progress.txt",
         "Typecheck passes",
-        "Verify in browser using dev-browser skill"
+        "Evidence logged in progress.txt"
       ],
       "priority": 2,
       "passes": false,
-      "notes": ""
+      "notes": "",
+      "supersededBy": "",
+      "risk": ""
     },
     {
       "id": "US-003",
-      "title": "Add priority selector to task edit",
-      "description": "As a user, I want to change a task's priority when editing it.",
+      "title": "Add error analysis slices",
+      "description": "As an ML engineer, I want to understand where the baseline fails to guide improvements.",
+      "type": "evaluation",
+      "hypothesis": "Certain segments have systematically worse performance.",
+      "evidenceRequired": "Slice metrics table or report saved and referenced in progress.txt.",
       "acceptanceCriteria": [
-        "Priority dropdown in task edit modal",
-        "Shows current priority as selected",
-        "Saves immediately on selection change",
+        "Compute slice metrics for at least 3 segments",
+        "Save report artifact",
         "Typecheck passes",
-        "Verify in browser using dev-browser skill"
+        "Evidence logged in progress.txt"
       ],
       "priority": 3,
       "passes": false,
-      "notes": ""
-    },
-    {
-      "id": "US-004",
-      "title": "Filter tasks by priority",
-      "description": "As a user, I want to filter the task list to see only high-priority items.",
-      "acceptanceCriteria": [
-        "Filter dropdown with options: All | High | Medium | Low",
-        "Filter persists in URL params",
-        "Empty state message when no tasks match filter",
-        "Typecheck passes",
-        "Verify in browser using dev-browser skill"
-      ],
-      "priority": 4,
-      "passes": false,
-      "notes": ""
+      "notes": "",
+      "supersededBy": "",
+      "risk": ""
     }
   ]
 }
