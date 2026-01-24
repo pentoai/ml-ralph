@@ -58,7 +58,6 @@ ml-ralph run --tool codex --max-iterations 250
 
 Notes:
 
-- Codex uses `CODEX.md` and auto-loads `AGENTS.md`.
 - Default Codex mode is full autonomy (no approvals, no sandbox). Use `--codex-safe` for workspace-write sandboxing.
 
 ## How it works
@@ -69,15 +68,13 @@ ml-ralph explain
 
 ## Key files
 
-| File             | Purpose                          |
-| ---------------- | -------------------------------- |
-| `ml-ralph.sh`    | Loop runner                      |
-| `CLAUDE.md`      | Claude prompt (source of truth)  |
-| `CODEX.md`       | Codex prompt                     |
-| `prd.json`       | Living backlog                   |
-| `progress.jsonl` | Evidence log and learnings       |
-| `skills/`        | PRD creation + conversion skills |
-| `examples/`      | Code patterns and utilities      |
+| File                            | Purpose                    |
+| ------------------------------- | -------------------------- |
+| `prd.json`                      | Living backlog             |
+| `progress.jsonl`                | Evidence log and learnings |
+| `outputs/logs/active_runs.json` | Long‑run tracking          |
+| `.claude/skills/`               | Claude skills              |
+| `.codex/skills/`                | Codex skills               |
 
 ## Debugging
 

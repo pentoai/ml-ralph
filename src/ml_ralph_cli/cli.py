@@ -1,6 +1,10 @@
+import json
 import shutil
 import subprocess
+import time
+from datetime import datetime
 from pathlib import Path
+
 import typer
 from importlib import resources
 
@@ -8,7 +12,6 @@ EXPLAIN_TEXT = """
 ML-Ralph workflow:
 
 1) ml-ralph init
-   - Copies ml-ralph.sh, CLAUDE.md, CODEX.md, AGENTS.md into your project root
    - Installs skills into .claude/skills and .codex/skills
 
 2) ml-ralph run --tool codex --max-iterations 250
@@ -42,16 +45,63 @@ def _copy_tree(
         shutil.copyfileobj(fh, out)
 
 
-def _find_script(cwd: Path) -> Path:
-    direct = cwd / "ml-ralph.sh"
-    if direct.exists():
-        return direct
-    nested = cwd / "scripts" / "ml-ralph" / "ml-ralph.sh"
-    if nested.exists():
-        return nested
-    raise FileNotFoundError(
-        "ml-ralph.sh not found in project root or scripts/ml-ralph/"
-    )
+def _read_template(name: str) -> str:
+    templates_root = resources.files("ml_ralph_cli").joinpath("templates")
+    template = templates_root / name
+    if not template.exists():
+        raise FileNotFoundError(f"Missing template file: {name}")
+    return template.read_text()
+
+
+def _load_prd(prd_path: Path) -> dict:
+    if not prd_path.exists():
+        return {}
+    return json.loads(prd_path.read_text())
+
+
+def _count_remaining(prd: dict) -> int:
+    if "userStories" in prd:
+        stories = prd.get("userStories", [])
+    else:
+        stories = prd.get("stories", [])
+    return sum(1 for story in stories if not story.get("passes", False))
+
+
+def _ensure_progress(progress_path: Path, note: str) -> None:
+    if not progress_path.exists():
+        progress_path.parent.mkdir(parents=True, exist_ok=True)
+        progress_path.write_text("")
+        entry = {
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "event": "session_start",
+            "note": note,
+        }
+        progress_path.write_text(json.dumps(entry) + "\n")
+
+
+def _archive_if_branch_changed(
+    prd_path: Path, progress_path: Path, archive_dir: Path, last_branch_file: Path
+) -> None:
+    if not prd_path.exists() or not last_branch_file.exists():
+        return
+    prd = _load_prd(prd_path)
+    current_branch = prd.get("branchName") or ""
+    last_branch = last_branch_file.read_text().strip()
+    if current_branch and last_branch and current_branch != last_branch:
+        date = datetime.now().strftime("%Y-%m-%d")
+        folder_name = current_branch.replace("ml-ralph/", "").replace("ralph/", "")
+        archive_folder = archive_dir / f"{date}-{folder_name}"
+        archive_folder.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(prd_path, archive_folder / prd_path.name)
+        if progress_path.exists():
+            shutil.copy2(progress_path, archive_folder / progress_path.name)
+        progress_path.write_text("")
+        entry = {
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "event": "session_start",
+            "note": "Branch changed; new run initialized.",
+        }
+        progress_path.write_text(json.dumps(entry) + "\n")
 
 
 @app.command()
@@ -59,25 +109,14 @@ def init(
     path: Path = typer.Argument(Path("."), help="Project root to initialize."),
     force: bool = typer.Option(False, "--force", help="Overwrite existing files."),
 ) -> None:
-    """Initialize ML-Ralph in a project (copies scripts, prompts, and skills)."""
+    """Initialize ML-Ralph in a project (installs skills)."""
     path = path.resolve()
     templates_root = resources.files("ml_ralph_cli").joinpath("templates")
-
-    core_files = ["ml-ralph.sh", "CLAUDE.md", "CODEX.md", "AGENTS.md"]
-    for name in core_files:
-        src = templates_root / name
-        if not src.exists():
-            raise FileNotFoundError(f"Missing template file: {name}")
-        _copy_tree(src, path, force=force, rel=Path(name))
 
     skills_src = templates_root / "skills"
     if skills_src.exists():
         for skill_root in (path / ".claude" / "skills", path / ".codex" / "skills"):
             _copy_tree(skills_src, skill_root, force=force)
-
-    script_path = path / "ml-ralph.sh"
-    if script_path.exists():
-        script_path.chmod(script_path.stat().st_mode | 0o111)
 
     typer.echo(f"Initialized ML-Ralph in {path}")
 
@@ -92,16 +131,76 @@ def run(
 ) -> None:
     """Run ML-Ralph from the current project directory."""
     cwd = Path.cwd()
-    script_path = _find_script(cwd)
+    prd_path = cwd / "prd.json"
+    progress_path = cwd / "progress.jsonl"
+    archive_dir = cwd / "archive"
+    last_branch_file = cwd / ".last-branch"
 
-    cmd = [str(script_path), "--tool", tool]
-    if codex_safe:
-        cmd.append("--codex-safe")
-    if max_iterations is not None:
-        cmd.append(str(max_iterations))
+    _archive_if_branch_changed(prd_path, progress_path, archive_dir, last_branch_file)
 
-    typer.echo(f"Running: {' '.join(cmd)}")
-    subprocess.run(cmd, check=True)
+    prd = _load_prd(prd_path)
+    current_branch = prd.get("branchName") or ""
+    if current_branch:
+        last_branch_file.write_text(current_branch + "\n")
+
+    _ensure_progress(progress_path, "New run initialized.")
+
+    claude_prompt = _read_template("CLAUDE.md")
+    codex_prompt = _read_template("CODEX.md")
+
+    typer.echo(f"Starting ML-Ralph - Tool: {tool} - Max iterations: {max_iterations}")
+
+    for i in range(1, max_iterations + 1):
+        typer.echo("")
+        typer.echo("===============================================================")
+        typer.echo(f"  ML-Ralph Iteration {i} of {max_iterations}")
+        typer.echo("===============================================================")
+
+        if tool == "claude":
+            result = subprocess.run(
+                ["claude", "--dangerously-skip-permissions", "--print"],
+                input=claude_prompt,
+                text=True,
+                capture_output=True,
+            )
+        else:
+            cmd = ["codex", "exec"]
+            cmd.append(
+                "--full-auto"
+                if codex_safe
+                else "--dangerously-bypass-approvals-and-sandbox"
+            )
+            cmd.extend(["-C", str(cwd), "-"])
+            result = subprocess.run(
+                cmd,
+                input=codex_prompt,
+                text=True,
+                capture_output=True,
+            )
+
+        output = (result.stdout or "") + (result.stderr or "")
+        if output:
+            print(output, end="")
+
+        if "<promise>COMPLETE</promise>" in output:
+            prd = _load_prd(prd_path)
+            remaining = _count_remaining(prd)
+            if remaining == 0:
+                typer.echo("")
+                typer.echo("ML-Ralph completed all tasks!")
+                typer.echo(f"Completed at iteration {i} of {max_iterations}")
+                raise typer.Exit(code=0)
+            typer.echo(f"Completion signal ignored: {remaining} stories remaining.")
+
+        typer.echo(f"Iteration {i} complete. Continuing...")
+        time.sleep(2)
+
+    typer.echo("")
+    typer.echo(
+        f"ML-Ralph reached max iterations ({max_iterations}) without completing all tasks."
+    )
+    typer.echo(f"Check {progress_path} for status.")
+    raise typer.Exit(code=1)
 
 
 @app.command()
