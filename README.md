@@ -1,8 +1,8 @@
 # ML-Ralph
 
-![ML-Ralph](ralph.webp)
+![ML-Ralph](https://raw.githubusercontent.com/JoaquinCampo/ml-ralph/main/ralph.webp)
 
-ML-Ralph is an autonomous ML agent loop (Claude or Codex) that turns a messy ML project into an evidence‑first workflow. It keeps a living backlog in `prd.json`, enforces one story per iteration, and leaves an audit trail in `progress.jsonl` so each run is reproducible and reviewable. The goal is simple: fast, safe progress without losing context between iterations. Based on [Geoffrey Huntley's Ralph pattern](https://github.com/snarktank/ralph).
+ML-Ralph is an autonomous ML agent loop (Claude or Codex) that turns an ML project into an evidence‑first workflow. It keeps a living backlog in `prd.json`, enforces one story per iteration, and leaves an audit trail in `progress.jsonl` so each run is reproducible and reviewable. The goal is simple: fast, safe progress without losing context between iterations. Based on [Ralph](https://github.com/snarktank/ralph).
 
 ## What you need
 
@@ -29,6 +29,11 @@ In your project:
 ```bash
 ml-ralph init
 ```
+
+`ml-ralph init` copies `ml-ralph.sh`, `CLAUDE.md`, `CODEX.md`, and `AGENTS.md` into the project root, and installs skills into:
+
+- `.claude/skills/`
+- `.codex/skills/`
 
 ## Setup Weights & Biases (Required Before Running)
 
@@ -70,15 +75,15 @@ Notes:
 
 ## Key files
 
-| File           | Purpose                          |
-| -------------- | -------------------------------- |
-| `ml-ralph.sh`  | Loop runner                      |
-| `CLAUDE.md`    | Claude prompt (source of truth)  |
-| `CODEX.md`     | Codex prompt                     |
-| `prd.json`     | Living backlog                   |
+| File             | Purpose                          |
+| ---------------- | -------------------------------- |
+| `ml-ralph.sh`    | Loop runner                      |
+| `CLAUDE.md`      | Claude prompt (source of truth)  |
+| `CODEX.md`       | Codex prompt                     |
+| `prd.json`       | Living backlog                   |
 | `progress.jsonl` | Evidence log and learnings       |
-| `skills/`      | PRD creation + conversion skills |
-| `examples/`    | Code patterns and utilities      |
+| `skills/`        | PRD creation + conversion skills |
+| `examples/`      | Code patterns and utilities      |
 
 ## Debugging
 

@@ -48,7 +48,18 @@ def init(
     """Initialize ML-Ralph in a project (copies scripts, prompts, and skills)."""
     path = path.resolve()
     templates_root = resources.files("ml_ralph_cli").joinpath("templates")
-    _copy_tree(templates_root, path, force=force)
+
+    core_files = ["ml-ralph.sh", "CLAUDE.md", "CODEX.md", "AGENTS.md"]
+    for name in core_files:
+        src = templates_root / name
+        if not src.exists():
+            raise FileNotFoundError(f"Missing template file: {name}")
+        _copy_tree(src, path, force=force, rel=Path(name))
+
+    skills_src = templates_root / "skills"
+    if skills_src.exists():
+        for skill_root in (path / ".claude" / "skills", path / ".codex" / "skills"):
+            _copy_tree(skills_src, skill_root, force=force)
 
     script_path = path / "ml-ralph.sh"
     if script_path.exists():
