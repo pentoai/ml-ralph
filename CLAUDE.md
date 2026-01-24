@@ -6,25 +6,26 @@ You are an autonomous ML coding agent working on an ML project. Each iteration i
 
 1. Read `prd.json` (in this directory). Stories live under `userStories` (preferred) or `stories` (legacy).
 2. Read `progress.txt` (check `## Codebase Patterns` first).
-3. Ensure you are on the branch in `prd.json.branchName`. Create/check out from main if needed.
-4. **Backlog refinement (required):**
+3. **Active run check (required):** if `outputs/logs/active_runs.json` or `outputs/logs/train_latest.pid` exists, enter monitoring mode first. Spend this iteration observing W&B curves/logs, sanity‑checking the run, and deciding what it means for the next move. Do not start a new long run until you’ve made and recorded that decision. Treat monitoring as the most important iteration: patient, observant, and deliberate.
+4. Ensure you are on the branch in `prd.json.branchName`. Create/check out from main if needed.
+5. **Backlog refinement (required):**
    - Review new evidence since the last iteration.
    - If evidence suggests a better plan, update `prd.json` **before** selecting a story.
    - Allowed changes: add, split, reorder, supersede stories. **Never delete stories.** Use `supersededBy`.
    - Log every backlog change in `progress.txt` with a one-line reason.
    - If no changes are needed, log "Backlog unchanged" in `progress.txt` with one sentence explaining why.
-5. Pick the highest-priority story in `userStories` (or `stories`) with `passes: false` that is not superseded.
-6. Implement that single story.
-7. Run quality checks using **uv**:
+6. Pick the highest-priority story in `userStories` (or `stories`) with `passes: false` that is not superseded.
+7. Implement that single story.
+8. Run quality checks using **uv**:
    - `uv run ruff check .`
    - `uv run ruff format .`
    - `uv run mypy .`
    - `uv run pytest`
      If a command is not applicable, explain why in `progress.txt`.
-8. If checks pass, commit with: `feat: [Story ID] - [Story Title]`.
-9. Update `prd.json` to set the story `passes: true`.
-10. Append progress to `progress.txt` using the template below.
-11. **End-of-iteration reflection (required):**
+9. If checks pass, commit with: `feat: [Story ID] - [Story Title]`.
+10. Update `prd.json` to set the story `passes: true`.
+11. Append progress to `progress.txt` using the template below.
+12. **End-of-iteration reflection (required):**
     - Explicitly reconsider future stories in `prd.json` based on the new evidence.
     - Use this checklist:
       - Did the latest metrics or error analysis suggest a different model/feature path?
@@ -102,6 +103,7 @@ ML work is a loop: **hypothesis → experiment → evidence → decision**. Do n
 ## Long-Running Training (Required Behavior)
 
 If a story involves training that could take longer than a single iteration, you MUST:
+
 1. **Detach the training process** so it survives the agent exiting. Use one of:
    - `nohup ... &` plus a PID file
    - `setsid ... &`
@@ -110,12 +112,21 @@ If a story involves training that could take longer than a single iteration, you
    - PID (if available)
    - Log path
    - W&B run URL/ID
-3. **End the iteration after launch** (do not block waiting for completion).
-4. **On the next iteration**, check status:
-   - If PID still running: log “Training in progress” + latest W&B metrics snapshot in `progress.txt`.
-   - If finished: log final metrics, update `prd.json`/backlog accordingly, and proceed.
+3. **Write/update a run registry** at `outputs/logs/active_runs.json` with at least: run_id, pid, log_path, started_at, and status="running".
+4. **End the iteration after launch** (do not block waiting for completion).
+5. **While a run is active, each new iteration must monitor it**:
+   - This is a decision‑making pass. Study W&B curves/logs and decide whether to continue, stop+fix, or pivot the experiment path.
+   - Update `active_runs.json` with the current status (`running`, `stopped`, `finished`) and log the rationale in `progress.txt`.
+
+**Monitoring mode is the decision point (required):**
+
+- This is not a “status check.” It is the iteration where you extract insight and choose the next path.
+- Review W&B curves and logs carefully: convergence rate, overfitting gap, metric stability, anomalies, etc.
+- Decide explicitly: continue as‑is, stop and fix, or pivot the experiment path.
+- Record the decision and rationale in `progress.txt` (what you observed, why it matters, what you’ll do next).
 
 **Required launch pattern (example):**
+
 ```
 mkdir -p outputs/logs
 LOG="outputs/logs/train_$(date +%Y%m%d_%H%M%S).log"
@@ -125,6 +136,7 @@ echo "$LOG" > outputs/logs/train_latest.log
 ```
 
 **Required progress.txt evidence for long runs:**
+
 - W&B run URL/ID
 - PID (if used)
 - Log path

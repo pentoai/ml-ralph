@@ -24,4 +24,5 @@ ML-Ralph is an autonomous agent loop for ML projects. Each iteration is a fresh 
 - Never ask the user questions during runs; make reasonable assumptions and log them in progress.txt
 - Only emit `<promise>COMPLETE</promise>` after counting remaining stories in prd.json and confirming zero; log the count in progress.txt
 - At the end of every iteration, reflect on new evidence and adjust prd.json if needed. Use the checklist: metrics/error analysis shifts, data issues (missingness/leakage/drift), compute constraints, or results that supersede a story. If no change, log “Backlog unchanged” with a one‑sentence reason
-- For long training runs, always detach the process (nohup/setsid/tmux), log PID + log path + W&B run URL/ID, and monitor progress across iterations without blocking
+- For long training runs, always detach the process (nohup/setsid/tmux), log PID + log path + W&B run URL/ID, and monitor progress across iterations without blocking; if a run is active, the current iteration is a monitoring decision pass (observe W&B curves/logs, extract insight, decide continue/stop+fix/pivot, and log rationale)
+- Maintain `outputs/logs/active_runs.json` so the next iteration can always detect and monitor active training runs
