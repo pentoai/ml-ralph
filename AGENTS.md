@@ -20,6 +20,7 @@ ML-Ralph is an autonomous agent loop for ML projects. Each iteration is a fresh 
 - Evidence is mandatory; metrics are suspicious until validated
 - Backlog is dynamic: prd.json is refined each iteration based on evidence
 - Tooling defaults: uv, ruff, mypy, pytest, pydantic, loguru, typer, wandb
+- Always run project commands via `uv run` (no raw `python`, `pytest`, or `ruff`)
 - Always update AGENTS.md with reusable ML patterns and gotchas
 - Never ask the user questions during runs; make reasonable assumptions and log them in progress.jsonl
 - Only emit `<promise>COMPLETE</promise>` after counting remaining stories in prd.json and confirming zero; log the count in progress.jsonl
