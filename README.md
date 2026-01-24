@@ -4,7 +4,7 @@
 
 ML-Ralph is a Claude-only autonomous agent loop for ML projects. It keeps the proven Ralph pattern (fresh context per iteration, strict feedback loops) while embedding ML-engineer heuristics, evidence-first iteration, and a dynamic backlog.
 
-Based on [Geoffrey Huntley's Ralph pattern](https://ghuntley.com/ralph/).
+Based on [Geoffrey Huntley's Ralph pattern](https://github.com/snarktank/ralph).
 
 ## Prerequisites
 
@@ -55,6 +55,7 @@ Load the ralph skill and convert tasks/prd-[project].md to prd.json
 ```
 
 ML-Ralph will:
+
 1. Ensure the feature branch from `prd.json.branchName`
 2. Refine the backlog if new evidence suggests changes
 3. Pick the highest-priority story with `passes: false`
@@ -67,20 +68,21 @@ ML-Ralph will:
 
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `ml-ralph.sh` | The ML-Ralph loop runner (Claude-only) |
-| `CLAUDE.md` | ML-centric agent instructions and heuristics |
-| `prd.json` | Living backlog with story status |
-| `prd.json.example` | Example ML PRD format |
-| `progress.txt` | Evidence log and learnings |
-| `skills/prd/` | ML PRD generator |
-| `skills/ralph/` | PRD → prd.json converter |
-| `flowchart/` | Interactive visualization of ML-Ralph |
+| File               | Purpose                                      |
+| ------------------ | -------------------------------------------- |
+| `ml-ralph.sh`      | The ML-Ralph loop runner (Claude-only)       |
+| `CLAUDE.md`        | ML-centric agent instructions and heuristics |
+| `prd.json`         | Living backlog with story status             |
+| `prd.json.example` | Example ML PRD format                        |
+| `progress.txt`     | Evidence log and learnings                   |
+| `skills/prd/`      | ML PRD generator                             |
+| `skills/ralph/`    | PRD → prd.json converter                     |
+| `flowchart/`       | Interactive visualization of ML-Ralph        |
 
 ## Dynamic PRD (Living Backlog)
 
 `prd.json` is not a static spec. ML-Ralph refines it every iteration based on evidence:
+
 - add/split/reorder stories
 - supersede outdated tasks (never delete)
 - log the change and reasoning in `progress.txt`
@@ -88,6 +90,7 @@ ML-Ralph will:
 ## ML-Engineer Defaults
 
 ML-Ralph encodes:
+
 - scenario understanding before optimization
 - data exploration and leakage awareness
 - research before reinventing
@@ -97,7 +100,7 @@ ML-Ralph encodes:
 
 ## Flowchart
 
-[![ML-Ralph Flowchart](ralph-flowchart.png)](https://snarktank.github.io/ralph/)
+![ML-Ralph Flowchart](ml-ralph-flowchart.png)
 
 The `flowchart/` directory contains the source code. To run locally:
 

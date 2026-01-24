@@ -25,34 +25,42 @@
 **Step 1: Copy base files**
 
 Run:
+
 ```bash
 rsync -a --delete --exclude '.git' /Users/joaquincamponario/Documents/Personal/ralph/ /tmp/ml-ralph-worktree/
 ```
+
 Expected: repo tree matches Ralph baseline.
 
 **Step 2: Remove Amp artifacts**
 
 Run:
+
 ```bash
 rm -f /tmp/ml-ralph-worktree/prompt.md
 ```
+
 Expected: `prompt.md` no longer exists.
 
 **Step 3: Rename the loop script**
 
 Run:
+
 ```bash
 mv /tmp/ml-ralph-worktree/ralph.sh /tmp/ml-ralph-worktree/ml-ralph.sh
 ```
+
 Expected: `ml-ralph.sh` exists at repo root.
 
 **Step 4: Commit**
 
 Run:
+
 ```bash
 git -C /tmp/ml-ralph-worktree add -A
 git -C /tmp/ml-ralph-worktree commit -m "chore: scaffold ml-ralph from ralph"
 ```
+
 Expected: clean working tree.
 
 ---
@@ -67,6 +75,7 @@ Expected: clean working tree.
 **Step 1: Update CLAUDE.md with ML Engineer Brain + tooling rules**
 
 Edit `CLAUDE.md` to include:
+
 - ML Engineer Brain playbook
 - Decision tree
 - Dynamic PRD refinement rules
@@ -75,6 +84,7 @@ Edit `CLAUDE.md` to include:
 **Step 2: Update AGENTS.md with ML repo nature**
 
 Edit `AGENTS.md` to summarize:
+
 - ML-centric defaults
 - Evidence-first iteration
 - CLAUDE.md as source of truth
@@ -98,6 +108,7 @@ git -C /tmp/ml-ralph-worktree commit -m "docs: add ml-centric agent rules"
 **Step 1: Update README.md**
 
 Include:
+
 - ML-Ralph overview
 - Claude-only usage
 - Dynamic PRD behavior
@@ -106,6 +117,7 @@ Include:
 **Step 2: Update prd.json.example**
 
 Add ML fields:
+
 - `type`, `hypothesis`, `evidenceRequired`, `supersededBy`
 
 **Step 3: Commit**
@@ -127,6 +139,7 @@ git -C /tmp/ml-ralph-worktree commit -m "docs: update ml-ralph docs and prd sche
 **Step 1: Update PRD generator skill**
 
 Add ML-specific guidance:
+
 - story types
 - evidence-required criteria
 - dynamic backlog language
@@ -135,6 +148,7 @@ Add ML-specific guidance:
 **Step 2: Update converter skill**
 
 Ensure conversion includes:
+
 - new schema fields
 - evidence-required criteria
 - no Kaggle-specific language
@@ -158,6 +172,7 @@ git -C /tmp/ml-ralph-worktree commit -m "docs: add ml-specific skills"
 **Step 1: Update labels for ML-Ralph**
 
 Adjust steps to:
+
 - “Define objective + PRD”
 - “Convert to prd.json”
 - “Run ml-ralph.sh”
@@ -183,6 +198,7 @@ git -C /tmp/ml-ralph-worktree commit -m "feat: update flowchart for ml-ralph"
 ```bash
 git -C /tmp/ml-ralph-worktree status --short
 ```
+
 Expected: clean working tree.
 
 **Step 2: (Optional) build flowchart**
@@ -192,6 +208,7 @@ cd /tmp/ml-ralph-worktree/flowchart
 npm install
 npm run build
 ```
+
 Expected: build succeeds.
 
 ---
