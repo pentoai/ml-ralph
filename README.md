@@ -1,6 +1,6 @@
 # ML-Ralph
 
-![ML-Ralph](https://raw.githubusercontent.com/JoaquinCampo/ml-ralph/main/ralph.webp)
+![ML-Ralph](https://raw.githubusercontent.com/JoaquinCampo/ml-ralph/main/ml-ralph.webp)
 
 ML-Ralph is an autonomous ML agent loop (Claude or Codex) that turns an ML project into an evidence‑first workflow. It keeps a living backlog in `prd.json`, enforces one story per iteration, and leaves an audit trail in `progress.jsonl` so each run is reproducible and reviewable. The goal is simple: fast, safe progress without losing context between iterations. Based on [Ralph](https://github.com/snarktank/ralph).
 
