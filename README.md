@@ -14,15 +14,20 @@ ML-Ralph is an autonomous ML agent loop (Claude or Codex) that turns a messy ML 
 
 ## Install
 
-```bash
-# From your project root
-mkdir -p scripts/ml-ralph
-cp /path/to/ml-ralph/ml-ralph.sh scripts/ml-ralph/
-cp /path/to/ml-ralph/CLAUDE.md CLAUDE.md
-cp /path/to/ml-ralph/CODEX.md CODEX.md
-cp /path/to/ml-ralph/AGENTS.md AGENTS.md
+Install the CLI once, then initialize each project.
 
-chmod +x scripts/ml-ralph/ml-ralph.sh
+```bash
+# From the ml-ralph repo
+uv tool install .
+
+# Or (after publishing) install from package index
+# uv tool install ml-ralph
+```
+
+In your project:
+
+```bash
+ml-ralph init
 ```
 
 ## Setup Weights & Biases (Required Before Running)
@@ -55,7 +60,7 @@ export WANDB_ENTITY="your-entity"
 3. Run the loop:
 
 ```bash
-./scripts/ml-ralph/ml-ralph.sh [--tool claude|codex] [--codex-safe] [max_iterations]
+ml-ralph run --tool codex --max-iterations 250
 ```
 
 Notes:
