@@ -37,7 +37,7 @@ Take a PRD (markdown or text) and convert it to `prd.json` in the ML-Ralph direc
         "Ruff format passes",
         "Mypy passes",
         "Pytest passes (if tests exist)",
-        "Evidence logged in progress.txt"
+        "Evidence logged in progress.jsonl"
       ],
       "priority": 1,
       "passes": false,

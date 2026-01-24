@@ -72,7 +72,7 @@ Each story must include:
 **Description:** As a [role], I want [outcome] so that [benefit].
 **Type:** discovery | experiment | evaluation | implementation | ops
 **Hypothesis:** If ..., then ... because ...
-**Evidence Required:** [What must appear in progress.txt or artifacts; include W&B run URL/ID for experiment/evaluation stories]
+**Evidence Required:** [What must appear in progress.jsonl or artifacts; include W&B run URL/ID for experiment/evaluation stories]
 
 **Acceptance Criteria:**
 - [ ] Specific, verifiable criterion
@@ -81,7 +81,7 @@ Each story must include:
 - [ ] Ruff format passes
 - [ ] Mypy passes
 - [ ] Pytest passes (if tests exist)
-- [ ] Evidence logged in progress.txt
+- [ ] Evidence logged in progress.jsonl
 ```
 
 **Important:**
@@ -111,7 +111,7 @@ Remaining questions that might alter the plan.
 PRDs are **living** documents. ML-Ralph may refine `prd.json` each iteration based on evidence:
 - add/split/reorder/supersede stories
 - never delete stories
-- log changes in `progress.txt`
+- log changes in `progress.jsonl`
 
 ---
 

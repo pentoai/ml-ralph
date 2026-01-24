@@ -66,7 +66,7 @@ const notes = [
   "acceptanceCriteria": [
     "Baseline metric logged",
     "Ruff/mypy/pytest pass",
-    "Evidence in progress.txt"
+    "Evidence in progress.jsonl"
   ],
   "passes": false
 }`,

@@ -38,7 +38,7 @@ if [[ "$TOOL" != "claude" && "$TOOL" != "codex" ]]; then
 fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PRD_FILE="$SCRIPT_DIR/prd.json"
-PROGRESS_FILE="$SCRIPT_DIR/progress.txt"
+PROGRESS_FILE="$SCRIPT_DIR/progress.jsonl"
 ARCHIVE_DIR="$SCRIPT_DIR/archive"
 LAST_BRANCH_FILE="$SCRIPT_DIR/.last-branch"
 
@@ -60,10 +60,9 @@ if [ -f "$PRD_FILE" ] && [ -f "$LAST_BRANCH_FILE" ]; then
     [ -f "$PROGRESS_FILE" ] && cp "$PROGRESS_FILE" "$ARCHIVE_FOLDER/"
     echo "   Archived to: $ARCHIVE_FOLDER"
     
-    # Reset progress file for new run
-    echo "# ML-Ralph Progress Log" > "$PROGRESS_FILE"
-    echo "Started: $(date)" >> "$PROGRESS_FILE"
-    echo "---" >> "$PROGRESS_FILE"
+    # Reset progress file for new run (jsonl)
+    : > "$PROGRESS_FILE"
+    echo "{\"timestamp\":\"$(date +%Y-%m-%dT%H:%M:%S%z)\",\"event\":\"session_start\",\"note\":\"Branch changed; new run initialized.\"}" >> "$PROGRESS_FILE"
   fi
 fi
 
@@ -75,11 +74,10 @@ if [ -f "$PRD_FILE" ]; then
   fi
 fi
 
-# Initialize progress file if it doesn't exist
+# Initialize progress file if it doesn't exist (jsonl)
 if [ ! -f "$PROGRESS_FILE" ]; then
-  echo "# ML-Ralph Progress Log" > "$PROGRESS_FILE"
-  echo "Started: $(date)" >> "$PROGRESS_FILE"
-  echo "---" >> "$PROGRESS_FILE"
+  : > "$PROGRESS_FILE"
+  echo "{\"timestamp\":\"$(date +%Y-%m-%dT%H:%M:%S%z)\",\"event\":\"session_start\",\"note\":\"New run initialized.\"}" >> "$PROGRESS_FILE"
 fi
 
 echo "Starting ML-Ralph - Tool: $TOOL - Max iterations: $MAX_ITERATIONS"

@@ -52,7 +52,7 @@ This lives in `CLAUDE.md` as a playbook + decision tree.
 
 - `prd.json` is a living backlog, refined every iteration based on evidence.
 - Allowed changes: add, split, reorder, supersede stories.
-- Every change must reference evidence and be logged in `progress.txt`.
+- Every change must reference evidence and be logged in `progress.jsonl`.
 - Never delete stories; use `supersededBy` for traceability.
 
 ## PRD Schema Additions
