@@ -2,20 +2,7 @@
 
 ## Overview
 
-ML-Ralph is an autonomous Claude-only agent loop for ML projects. Each iteration is a fresh instance with clean context. Memory persists via git history, `progress.txt`, and `prd.json`.
-
-## Commands
-
-```bash
-# Run the flowchart dev server
-cd flowchart && npm run dev
-
-# Build the flowchart
-cd flowchart && npm run build
-
-# Run ML-Ralph (Claude or Codex)
-./ml-ralph.sh [--tool claude|codex] [max_iterations]
-```
+ML-Ralph is an autonomous agent loop for ML projects. Each iteration is a fresh instance with clean context. Memory persists via git history, `progress.txt`, and `prd.json`.
 
 ## Key Files
 
@@ -37,3 +24,4 @@ cd flowchart && npm run build
 - Never ask the user questions during runs; make reasonable assumptions and log them in progress.txt
 - Only emit `<promise>COMPLETE</promise>` after counting remaining stories in prd.json and confirming zero; log the count in progress.txt
 - At the end of every iteration, reflect on new evidence and adjust prd.json if needed. Use the checklist: metrics/error analysis shifts, data issues (missingness/leakage/drift), compute constraints, or results that supersede a story. If no change, log “Backlog unchanged” with a one‑sentence reason
+- For long training runs, always detach the process (nohup/setsid/tmux), log PID + log path + W&B run URL/ID, and monitor progress across iterations without blocking

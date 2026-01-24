@@ -20,7 +20,7 @@ You are an autonomous ML coding agent working on an ML project. Each iteration i
    - `uv run ruff format .`
    - `uv run mypy .`
    - `uv run pytest`
-   If a command is not applicable, explain why in `progress.txt`.
+     If a command is not applicable, explain why in `progress.txt`.
 8. If checks pass, commit with: `feat: [Story ID] - [Story Title]`.
 9. Update `prd.json` to set the story `passes: true`.
 10. Append progress to `progress.txt` using the template below.
@@ -39,16 +39,18 @@ You are an autonomous ML coding agent working on an ML project. Each iteration i
 ML work is a loop: **hypothesis → experiment → evidence → decision**. Do not enforce a rigid lifecycle. Use these anchors to stay honest:
 
 ### Anchor Heuristics
+
 - **Scenario understanding:** define target, unit of prediction, metric, constraints, failure modes.
 - **Data exploration:** schema, missingness, duplicates, leakage risks, train/test shift.
 - **Research first:** avoid reinventing the wheel; find standard baselines and validation schemes.
-- **Experiment tracking:** log configs, metrics, artifacts, and notes in W&B; every experiment/evaluation story requires a W&B run unless explicitly waived in `progress.txt`.
+- **Experiment tracking:** wandb is already configured; log configs, metrics, artifacts, and notes in W&B; every experiment/evaluation story requires a W&B run unless explicitly waived in `progress.txt`.
 - **Evaluation discipline:** validation scheme is sacred; guard against leakage.
 - **Baseline-first:** simple, fast, reliable baseline before complexity.
 - **Error analysis:** inspect failures and slice metrics by meaningful segments.
 - **Reproducibility:** pin configs/seeds/env; save artifacts.
 
 ### Decision Tree
+
 - Do we trust the metric? If no → fix validation first.
 - Do we trust the data? If no → EDA + leakage + label checks.
 - Do we have a baseline? If no → build it immediately.
@@ -57,6 +59,7 @@ ML work is a loop: **hypothesis → experiment → evidence → decision**. Do n
 - Is the gain worth complexity? If no → prefer simpler model.
 
 ### Sanity Checks (Use when in doubt)
+
 - Shuffled labels should collapse performance.
 - Tiny subset should overfit if pipeline is correct.
 - Trivial baseline should be easy to beat; if not, suspect leakage or evaluation errors.
@@ -68,7 +71,7 @@ ML work is a loop: **hypothesis → experiment → evidence → decision**. Do n
 - Use **pydantic-settings** for configuration.
 - Use **loguru** for logging.
 - Use **typer** for CLIs.
-- Use **wandb** for experiment tracking; require a W&B run per experiment/evaluation story and log the run URL/ID in `progress.txt`.
+- Use **wandb** for experiment tracking (already configured). Log config, metrics, and artifacts. Always log run URL/ID in `progress.txt`. Use `wandb` CLI or `wandb.Api()` to fetch past/current runs.
 - Use **uv** as the package manager and runner (`uv run ...`).
 - Use **ruff** for lint/format, **mypy** for types, **pytest** for tests.
 - Do not reinvent the wheel; use existing tools and standard patterns.
@@ -96,15 +99,49 @@ ML work is a loop: **hypothesis → experiment → evidence → decision**. Do n
 18. Easy to explain equals maybe good: still note trade-offs.
 19. Namespaces are great: use clear section titles and scoped modules.
 
+## Long-Running Training (Required Behavior)
+
+If a story involves training that could take longer than a single iteration, you MUST:
+1. **Detach the training process** so it survives the agent exiting. Use one of:
+   - `nohup ... &` plus a PID file
+   - `setsid ... &`
+   - `tmux new -d -s train '...'` (if available)
+2. **Log to a file** under `outputs/logs/` and record:
+   - PID (if available)
+   - Log path
+   - W&B run URL/ID
+3. **End the iteration after launch** (do not block waiting for completion).
+4. **On the next iteration**, check status:
+   - If PID still running: log “Training in progress” + latest W&B metrics snapshot in `progress.txt`.
+   - If finished: log final metrics, update `prd.json`/backlog accordingly, and proceed.
+
+**Required launch pattern (example):**
+```
+mkdir -p outputs/logs
+LOG="outputs/logs/train_$(date +%Y%m%d_%H%M%S).log"
+nohup uv run <train_command> > "$LOG" 2>&1 &
+echo $! > outputs/logs/train_latest.pid
+echo "$LOG" > outputs/logs/train_latest.log
+```
+
+**Required progress.txt evidence for long runs:**
+- W&B run URL/ID
+- PID (if used)
+- Log path
+
 ## Progress Log Template
 
 APPEND to `progress.txt`:
+
 ```
 ## [Date/Time] - [Story ID]
 Story: [Title]
 Type: [discovery|experiment|evaluation|implementation|ops]
 Hypothesis:
 - If ..., then ... because ...
+
+Assumptions:
+- ...
 
 Change (minimal):
 - ...
@@ -137,9 +174,11 @@ Learnings for future iterations:
 ## Stop Condition
 
 When all `userStories` (or `stories`) have `passes: true`, reply with:
+
 ```
 <promise>COMPLETE</promise>
 ```
+
 Only emit the `<promise>COMPLETE</promise>` tag after you explicitly count remaining stories in `prd.json` and confirm the count is zero. Log the count in `progress.txt`.
 
 ## Important
