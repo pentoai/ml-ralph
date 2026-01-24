@@ -13,13 +13,14 @@ cd flowchart && npm run dev
 # Build the flowchart
 cd flowchart && npm run build
 
-# Run ML-Ralph (Claude-only)
-./ml-ralph.sh [max_iterations]
+# Run ML-Ralph (Claude or Codex)
+./ml-ralph.sh [--tool claude|codex] [max_iterations]
 ```
 
 ## Key Files
 
-- `ml-ralph.sh` - The ML-Ralph loop runner (Claude-only)
+- `ml-ralph.sh` - The ML-Ralph loop runner (Claude or Codex)
+- `codex.md` - Codex prompt passed via stdin (AGENTS.md is still auto-loaded)
 - `CLAUDE.md` - ML-centric agent instructions and heuristics (source of truth)
 - `prd.json.example` - Example ML PRD format
 - `skills/prd/` - ML PRD generator skill

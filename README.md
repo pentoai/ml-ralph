@@ -2,13 +2,13 @@
 
 ![ML-Ralph](ralph.webp)
 
-ML-Ralph is a Claude-only autonomous agent loop for ML projects. It keeps the proven Ralph pattern (fresh context per iteration, strict feedback loops) while embedding ML-engineer heuristics, evidence-first iteration, and a dynamic backlog.
+ML-Ralph is an autonomous agent loop for ML projects (Claude or Codex). It keeps the proven Ralph pattern (fresh context per iteration, strict feedback loops) while embedding ML-engineer heuristics, evidence-first iteration, and a dynamic backlog.
 
 Based on [Geoffrey Huntley's Ralph pattern](https://github.com/snarktank/ralph).
 
 ## Prerequisites
 
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`npm install -g @anthropic-ai/claude-code`)
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`npm install -g @anthropic-ai/claude-code`) **or** [Codex CLI](https://developers.openai.com/codex/cli/) (`npm i -g @openai/codex`)
 - `jq` installed (`brew install jq` on macOS)
 - A git repository for your ML project
 
@@ -51,7 +51,7 @@ Load the ralph skill and convert tasks/prd-[project].md to prd.json
 ### 3) Run ML-Ralph
 
 ```bash
-./scripts/ml-ralph/ml-ralph.sh [max_iterations]
+./scripts/ml-ralph/ml-ralph.sh [--tool claude|codex] [max_iterations]
 ```
 
 ML-Ralph will:
@@ -65,6 +65,8 @@ ML-Ralph will:
 7. Update `prd.json` to mark the story `passes: true`
 8. Append evidence to `progress.txt`
 9. Repeat until all stories pass or max iterations reached
+
+When using Codex, ML-Ralph passes `codex.md` via stdin and Codex still auto-loads `AGENTS.md` as project instructions.
 
 ## Key Files
 
