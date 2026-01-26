@@ -55,12 +55,26 @@ After gathering enough context, propose a PRD with:
 
 Show it to the user and ask for feedback.
 
-### 3. Refine Until Approved
-Iterate on the PRD based on user feedback until they say it's ready.
+### 3. Write the PRD When Asked
+When you have enough information AND the user:
+- Explicitly asks you to write/save/create the PRD, OR
+- Says the PRD looks good, OR
+- Approves your proposal
 
-### 4. Start Execution
-When user says "/start", "go", "begin", or similar:
-1. Write `.ml-ralph/prd.json` with the approved PRD
+Then **immediately write** `.ml-ralph/prd.json` with `"status": "draft"`. Don't wait for /start.
+
+This lets the user review the actual file and continue refining it through conversation.
+
+### 4. Refine Until Approved
+Continue iterating on the PRD based on user feedback:
+- Read their suggestions
+- Update `.ml-ralph/prd.json` (keeping `"status": "draft"`)
+- Show them the changes
+- Repeat until they're satisfied
+
+### 5. Start Execution
+When user says "/start", "go", "begin", "execute", or similar:
+1. Update `.ml-ralph/prd.json` with `"status": "approved"`
 2. Initialize `.ml-ralph/ralph.json` with phase: ORIENT
 3. Create empty `.ml-ralph/backlog.json` and `.ml-ralph/log.jsonl`
 4. Begin EXECUTION mode
@@ -233,6 +247,7 @@ ORIENT → RESEARCH → HYPOTHESIZE → EXECUTE → ANALYZE → VALIDATE → DEC
 - Is this good enough, or keep going?
 - What did I learn that changes future plans?
 - What's the next highest-leverage thing?
+- **Does the PRD need refinement based on new evidence?** (See PRD Refinement section)
 
 **Decision Framework:**
 - **KEEP** - Result is good, hypothesis validated, continue
@@ -246,7 +261,12 @@ ORIENT → RESEARCH → HYPOTHESIZE → EXECUTE → ANALYZE → VALIDATE → DEC
 - Remaining hypotheses to try
 - When to stop tuning and start ensembling
 
-**Output:** Log decision with reasoning, update backlog.
+**Required: PRD Refinement Check**
+Run through the PRD Refinement Checklist (see section below). Log either:
+- Changes made to `.ml-ralph/prd.json` with rationale
+- "PRD unchanged" with one-sentence explanation
+
+**Output:** Log decision with reasoning, update backlog, update PRD if needed.
 
 **MLE Mindset:** "Is the juice worth the squeeze?"
 
@@ -276,9 +296,61 @@ After processing, clear the command from inbox.json.
 
 ---
 
+## PRD Refinement (Required Each Iteration)
+
+The PRD is a **living contract**, not a fixed spec. ML work generates evidence that should inform future direction. Each iteration, during the DECIDE phase, you must:
+
+### 1. Review New Evidence
+Consider what you learned this iteration:
+- Did metrics reveal the problem is different than expected?
+- Did error analysis suggest new success criteria?
+- Did you discover new constraints (data quality, compute, etc.)?
+- Did research reveal approaches that should be in/out of scope?
+
+### 2. Propose PRD Updates (If Needed)
+**What CAN change:**
+- `success_criteria` - Refine metrics, adjust thresholds based on what's achievable
+- `constraints` - Add newly discovered constraints
+- `scope.in_scope` / `scope.out_of_scope` - Adjust based on learnings
+- `evaluation.validation_strategy` - Improve validation approach
+
+**What SHOULD NOT change (without user approval):**
+- `problem` - The core problem definition
+- `goal` - The high-level objective
+- `evaluation.metric` - The primary success metric
+
+### 3. Log All Changes
+Every PRD modification must be logged in `.ml-ralph/log.jsonl`:
+```json
+{
+  "ts": "...",
+  "type": "prd_update",
+  "changes": [
+    {"field": "success_criteria", "action": "added", "value": "F1 > 0.8 on rare class"},
+    {"field": "scope.out_of_scope", "action": "added", "value": "Real-time inference (batch only)"}
+  ],
+  "rationale": "Error analysis showed class imbalance is critical; latency constraints relaxed"
+}
+```
+
+### 4. Notify User of Significant Changes
+If you change success_criteria or constraints, mention it in your output so the user is aware. They can provide a `redirect` command if they disagree.
+
+### PRD Refinement Checklist (Use in DECIDE phase)
+- [ ] Did latest metrics suggest different success criteria?
+- [ ] Did error analysis reveal new constraints?
+- [ ] Did we find data issues that change what's feasible?
+- [ ] Did research reveal better approaches to include/exclude?
+- [ ] If changes needed: update prd.json and log them
+- [ ] If no changes: log "PRD unchanged" with one-sentence rationale
+
+**MLE Mindset:** "The best plan is informed by evidence, not ego."
+
+---
+
 ## File Formats
 
-### prd.json (The Contract)
+### prd.json (The Living Contract)
 ```json
 {
   "project": "project-name",
@@ -310,6 +382,8 @@ After processing, clear the command from inbox.json.
   }
 }
 ```
+
+**Note:** The PRD is a "living contract" - see PRD Refinement section below.
 
 ### ralph.json (Execution State)
 ```json

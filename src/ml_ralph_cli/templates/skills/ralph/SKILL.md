@@ -28,8 +28,9 @@ When there's no `.ml-ralph/prd.json` in the project, you're in SETUP mode.
 1. Understand the problem through conversation
 2. Ask clarifying questions (one at a time)
 3. Propose a PRD
-4. Refine until the user approves
-5. On "/start" - begin execution
+4. **Write PRD when user asks** (don't wait for /start to save the file)
+5. Refine based on feedback
+6. On "/start" - set status to "approved" and begin execution
 
 ### Clarifying Questions
 
@@ -121,23 +122,26 @@ After gathering context, propose a PRD:
 
 ---
 
-Does this look right? Any changes needed?
+Does this look right? I can write this to `.ml-ralph/prd.json` now, or we can keep refining.
 
-When you're ready, say "/start" to begin.
+When you're ready to start execution, say "/start".
 ```
 
-### Starting Execution
+### Writing the PRD
 
-When the user says "/start", "go", "begin", or similar:
+When the user:
+- Explicitly asks you to write/save/create the PRD, OR
+- Says the PRD looks good, OR
+- Approves your proposal
 
-1. Write `.ml-ralph/prd.json`:
+**Immediately write** `.ml-ralph/prd.json` with `"status": "draft"`:
 
 ```json
 {
   "project": "...",
   "description": "...",
   "created_at": "[timestamp]",
-  "status": "approved",
+  "status": "draft",
   "problem": "...",
   "goal": "...",
   "success_criteria": ["..."],
@@ -152,6 +156,14 @@ When the user says "/start", "go", "begin", or similar:
   }
 }
 ```
+
+The user can continue refining through conversation. Update the file as needed.
+
+### Starting Execution
+
+When the user says "/start", "go", "begin", "execute", or similar:
+
+1. Update `.ml-ralph/prd.json` to set `"status": "approved"` (file should already exist with draft status)
 
 2. Write `.ml-ralph/ralph.json`:
 
@@ -193,7 +205,7 @@ When the user says "/start", "go", "begin", or similar:
 
 ## EXECUTION Mode
 
-When `.ml-ralph/prd.json` exists, you're in EXECUTION mode.
+When `.ml-ralph/prd.json` exists with `status: "approved"`, you're in EXECUTION mode.
 
 **Read RALPH.md for full execution instructions.**
 
@@ -204,7 +216,17 @@ Quick summary:
 3. Execute the current phase of the cognitive loop
 4. Log everything to log.jsonl
 5. Update state files
-6. Commit code changes
+6. **Refine PRD each iteration** based on new evidence (see RALPH.md)
+7. Commit code changes
+
+### PRD Refinement
+
+The PRD is a **living contract**. In each DECIDE phase, check if evidence suggests changes to:
+- `success_criteria` - Adjust based on what's achievable
+- `constraints` - Add newly discovered constraints
+- `scope` - Adjust based on learnings
+
+Log all PRD changes to `log.jsonl`. Core `problem` and `goal` should not change without user approval.
 
 ### Cognitive Loop Phases
 
@@ -229,7 +251,7 @@ Users can intervene by adding commands to inbox.json:
 
 | File           | Purpose                     |
 | -------------- | --------------------------- |
-| `.ml-ralph/prd.json`     | The approved PRD (contract) |
+| `.ml-ralph/prd.json`     | PRD (living contract, refine based on evidence) |
 | `.ml-ralph/ralph.json`   | Execution state             |
 | `.ml-ralph/backlog.json` | Hypotheses queue            |
 | `.ml-ralph/log.jsonl`    | Thinking log                |
@@ -301,13 +323,19 @@ Ralph: Understood. Here's the PRD I propose:
 - External data
 
 ---
-Does this look right? When ready, say "/start".
+Does this look right? I can write this to `.ml-ralph/prd.json` now, or we can keep refining.
 
-User: Looks good. /start
+User: Looks good, write it.
 
-Ralph: PRD approved. Starting execution.
+Ralph: Done! I've written the PRD to `.ml-ralph/prd.json` with status: "draft".
 
-[Creates prd.json, ralph.json, backlog.json, log.jsonl, inbox.json]
+You can continue making changes, or say "/start" when you're ready to begin execution.
+
+User: /start
+
+Ralph: PRD approved. Setting status to "approved" and starting execution.
+
+[Updates prd.json status, creates ralph.json, backlog.json, log.jsonl, inbox.json]
 
 Beginning ORIENT phase...
 ```

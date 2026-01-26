@@ -8,7 +8,7 @@ All Ralph state is stored in `.ml-ralph/`:
 
 | File | Purpose |
 |------|---------|
-| `.ml-ralph/prd.json` | Product Requirements Document (the contract) |
+| `.ml-ralph/prd.json` | Product Requirements Document (living contract) |
 | `.ml-ralph/ralph.json` | Execution state (phase, iteration, stats) |
 | `.ml-ralph/backlog.json` | Hypotheses queue |
 | `.ml-ralph/log.jsonl` | Thinking log (one entry per phase) |
@@ -22,7 +22,8 @@ All Ralph state is stored in `.ml-ralph/`:
 When `.ml-ralph/prd.json` doesn't exist or has `status: "draft"`:
 - Have a conversation to understand the ML problem
 - Ask clarifying questions about objectives, data, constraints, evaluation
-- Create/refine the PRD until user approves
+- **Write PRD when user asks** - don't wait for /start to save the file
+- Continue refining the PRD based on feedback
 - On `/start` - set status to "approved" and begin execution
 
 ### EXECUTION Mode (PRD approved)
@@ -31,6 +32,7 @@ When `.ml-ralph/prd.json` has `status: "approved"` or `"running"`:
 - Log all work to `.ml-ralph/log.jsonl`
 - Update state files as you progress
 - Check `.ml-ralph/inbox.json` for user commands each iteration
+- **Refine PRD each iteration** based on new evidence (see RALPH.md)
 
 ## Cognitive Loop
 
@@ -55,6 +57,7 @@ ORIENT -> RESEARCH -> HYPOTHESIZE -> EXECUTE -> ANALYZE -> VALIDATE -> DECIDE
 - **Minimal changes** - Smallest experiment that tests the hypothesis
 - **Always log** - Every phase produces output in log.jsonl
 - **Check inbox** - Respect user commands (hint, pause, redirect)
+- **PRD is living** - Refine success criteria/scope based on learnings (log all changes)
 
 ## Tooling
 
