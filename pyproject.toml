@@ -1,7 +1,7 @@
 [project]
 name = "ml-ralph"
-version = "0.1.6"
-description = "CLI to initialize and run ML-Ralph in any project."
+version = "2.0.0"
+description = "Autonomous ML agent with cognitive loop"
 readme = "README.md"
 authors = [
     { name = "Joaquin Campo", email = "jcamponario@gmail.com" },
@@ -9,6 +9,8 @@ authors = [
 requires-python = ">=3.10"
 dependencies = [
   "typer>=0.15.1",
+  "pydantic>=2.0",
+  "rich>=13.0",
 ]
 license = { file = "LICENSE" }
 keywords = ["ml", "agent", "workflow", "cli", "automation"]
