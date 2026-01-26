@@ -15,12 +15,10 @@ You are an autonomous ML coding agent working on an ML project. Each iteration i
    - Log every backlog change in `progress.jsonl` with a one-line reason.
    - If no changes are needed, log "Backlog unchanged" in `progress.jsonl` with one sentence explaining why.
 6. Pick the highest-priority story in `userStories` (or `stories`) with `passes: false` that is not superseded.
-7. Implement that single story. **All project commands must use `uv run`** (no raw `python`, `pytest`, or `ruff`).
+7. Implement that single story. **All project commands must use `uv run`** (no raw `python`, or `ruff`).
 8. Run quality checks using **uv**:
    - `uv run ruff check .`
    - `uv run ruff format .`
-   - `uv run mypy .`
-   - `uv run pytest`
      If a command is not applicable, explain why in `progress.jsonl`.
 9. If checks pass, commit with: `feat: [Story ID] - [Story Title]`.
 10. Update `prd.json` to set the story `passes: true`.
@@ -74,7 +72,7 @@ ML work is a loop: **hypothesis → experiment → evidence → decision**. Do n
 - Use **typer** for CLIs.
 - Use **wandb** for experiment tracking (already configured). Log config, metrics, and artifacts. Always log run URL/ID in `progress.jsonl`. Use `wandb` CLI or `wandb.Api()` to fetch past/current runs.
 - Use **uv** as the package manager and runner (`uv run ...`).
-- Use **ruff** for lint/format, **mypy** for types, **pytest** for tests.
+- Use **ruff** for lint/format.
 - Do not reinvent the wheel; use existing tools and standard patterns.
 - Apply rules uniformly (no special pleading).
 

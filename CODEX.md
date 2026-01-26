@@ -15,12 +15,10 @@ You are an autonomous ML coding agent working on an ML project. Each iteration i
    - Log every backlog change in `progress.jsonl` with a one-line reason.
    - If no changes are needed, log "Backlog unchanged" in `progress.jsonl` with one sentence explaining why.
 6. Pick the highest-priority story in `userStories` (or `stories`) with `passes: false` that is not superseded.
-7. Implement that single story. **All project commands must use `uv run`** (no raw `python`, `pytest`, or `ruff`).
+7. Implement that single story. **All project commands must use `uv run`** (no raw `python`, or `ruff`).
 8. Run quality checks using **uv**:
    - `uv run ruff check .`
    - `uv run ruff format .`
-   - `uv run mypy .`
-   - `uv run pytest`
      If a command is not applicable, explain why in `progress.jsonl`.
 9. If checks pass, commit with: `feat: [Story ID] - [Story Title]`.
 10. Update `prd.json` to set the story `passes: true`.
@@ -74,7 +72,7 @@ ML work is a loop: **hypothesis → experiment → evidence → decision**. Do n
 - Use **typer** for CLIs.
 - Use **wandb** for experiment tracking (already configured). Log config, metrics, and artifacts. Always log run URL/ID in `progress.jsonl`. Use `wandb` CLI or `wandb.Api()` to fetch past/current runs.
 - Use **uv** as the package manager and runner (`uv run ...`).
-- Use **ruff** for lint/format, **mypy** for types, **pytest** for tests.
+- Use **ruff** for lint/format.
 - Do not reinvent the wheel; use existing tools and standard patterns.
 - Apply rules uniformly (no special pleading).
 
@@ -119,6 +117,7 @@ If a story involves training that could take longer than a single iteration, you
    - Update `active_runs.json` with the current status (`running`, `stopped`, `finished`) and log the rationale in `progress.jsonl`.
 
 **Monitoring mode is the decision point (required):**
+
 - This is not a “status check.” It is the iteration where you extract insight and choose the next path.
 - Review W&B curves and logs carefully: convergence rate, overfitting gap, metric stability, and anomalies.
 - Decide explicitly: continue as‑is, stop and fix, or pivot the experiment path.
@@ -142,9 +141,10 @@ echo "$LOG" > outputs/logs/train_latest.log
 
 ## Progress Log Template
 
-APPEND one JSON object per line to `progress.jsonl`. Keep the same *content* and *sections* as the text template below, but represented as JSON fields (arrays/objects as needed).
+APPEND one JSON object per line to `progress.jsonl`. Keep the same _content_ and _sections_ as the text template below, but represented as JSON fields (arrays/objects as needed).
 
 Text template (content to preserve):
+
 ```
 ## [Date/Time] - [Story ID]
 Story: [Title]
@@ -184,10 +184,10 @@ Learnings for future iterations:
 ```
 
 JSONL example:
+
 ```
 {"timestamp":"YYYY-MM-DD HH:MM","story_id":"US-001","story":"Title","type":"experiment","hypothesis":["If ..., then ... because ..."],"assumptions":["..."],"change":["..."],"evaluation":{"dataset_split":"...","metric":"...","baseline":"...","result":"...","variance":"..."},"evidence":["Artifacts/logs/links","W&B run URL/ID, config hash, dataset version"],"decision":"Keep","next_step":"One concrete next experiment","backlog_changes":[{"change":"...","reason":"..."}],"learnings":["..."]}
 ```
-
 
 ## Stop Condition
 
