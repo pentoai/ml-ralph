@@ -176,6 +176,7 @@ class Hypothesis(BaseModel):
     priority: int = 1  # Lower = higher priority
 
     hypothesis: str  # "If X, then Y, because Z"
+    rationale: Optional[str] = None  # Why we think this will work
     expected_outcome: str
     actual_outcome: Optional[str] = None
 

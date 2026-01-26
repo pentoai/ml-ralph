@@ -27,6 +27,7 @@ from ml_ralph_cli.schemas import (
     ChatRole,
     CommandType,
     CurrentState,
+    EvaluationConfig,
     Inbox,
     Phase,
     PRD,
@@ -38,15 +39,26 @@ from ml_ralph_cli.schemas import (
 app = typer.Typer(help="Ralph v2 - Autonomous ML Agent")
 console = Console()
 
-# File paths
-PRD_JSON = Path("prd.json")
-RALPH_JSON = Path("ralph.json")
-BACKLOG_JSON = Path("backlog.json")
-LOG_JSONL = Path("log.jsonl")
-CHAT_JSONL = Path("chat.jsonl")
-INBOX_JSON = Path("inbox.json")
-RALPH_MD = Path(__file__).parent / "templates" / "RALPH.md"
-SKILL_MD = Path(__file__).parent / "templates" / "skills" / "ralph" / "SKILL.md"
+# Directory and file paths
+ML_RALPH_DIR = Path(".ml-ralph")
+PRD_JSON = ML_RALPH_DIR / "prd.json"
+RALPH_JSON = ML_RALPH_DIR / "ralph.json"
+BACKLOG_JSON = ML_RALPH_DIR / "backlog.json"
+LOG_JSONL = ML_RALPH_DIR / "log.jsonl"
+CHAT_JSONL = ML_RALPH_DIR / "chat.jsonl"
+INBOX_JSON = ML_RALPH_DIR / "inbox.json"
+
+# Template paths (bundled with package)
+TEMPLATES_DIR = Path(__file__).parent / "templates"
+RALPH_MD_TEMPLATE = TEMPLATES_DIR / "RALPH.md"
+CLAUDE_MD_TEMPLATE = TEMPLATES_DIR / "CLAUDE.md"
+AGENTS_MD_TEMPLATE = TEMPLATES_DIR / "AGENTS.md"
+SKILL_MD_TEMPLATE = TEMPLATES_DIR / "skills" / "ralph" / "SKILL.md"
+
+# Target paths in project
+RALPH_MD = ML_RALPH_DIR / "RALPH.md"
+CLAUDE_MD = Path("CLAUDE.md")
+AGENTS_MD = Path("AGENTS.md")
 
 
 # =============================================================================
@@ -125,6 +137,97 @@ def get_mode() -> str:
 
 
 @app.command()
+def init(
+    force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing files"),
+):
+    """
+    Initialize Ralph in the current project.
+
+    Creates .ml-ralph/ directory with state files and copies CLAUDE.md/AGENTS.md to root.
+    """
+    # Check for existing CLAUDE.md or AGENTS.md (unless --force)
+    if not force:
+        conflicts = []
+        if CLAUDE_MD.exists():
+            conflicts.append("CLAUDE.md")
+        if AGENTS_MD.exists():
+            conflicts.append("AGENTS.md")
+
+        if conflicts:
+            console.print(
+                "[red]Cannot initialize: existing files would be overwritten[/red]"
+            )
+            for f in conflicts:
+                console.print(f"  - {f}")
+            console.print("\nUse --force to overwrite, or remove these files first.")
+            raise typer.Exit(1)
+
+    # Create .ml-ralph directory
+    ML_RALPH_DIR.mkdir(exist_ok=True)
+
+    # Copy RALPH.md to .ml-ralph/
+    if RALPH_MD_TEMPLATE.exists():
+        RALPH_MD.write_text(RALPH_MD_TEMPLATE.read_text())
+        console.print(f"[dim]Created {RALPH_MD}[/dim]")
+
+    # Copy CLAUDE.md to project root
+    if CLAUDE_MD_TEMPLATE.exists():
+        CLAUDE_MD.write_text(CLAUDE_MD_TEMPLATE.read_text())
+        console.print(f"[dim]Created {CLAUDE_MD}[/dim]")
+
+    # Copy AGENTS.md to project root
+    if AGENTS_MD_TEMPLATE.exists():
+        AGENTS_MD.write_text(AGENTS_MD_TEMPLATE.read_text())
+        console.print(f"[dim]Created {AGENTS_MD}[/dim]")
+
+    # Create empty state files
+    if not PRD_JSON.exists():
+        # Create a draft PRD
+        draft_prd = PRD(
+            project="",
+            description="",
+            problem="",
+            goal="",
+            evaluation=EvaluationConfig(metric="", validation_strategy=""),
+        )
+        save_prd(draft_prd)
+        console.print(f"[dim]Created {PRD_JSON}[/dim]")
+
+    if not BACKLOG_JSON.exists():
+        save_backlog(Backlog())
+        console.print(f"[dim]Created {BACKLOG_JSON}[/dim]")
+
+    if not INBOX_JSON.exists():
+        save_inbox(Inbox())
+        console.print(f"[dim]Created {INBOX_JSON}[/dim]")
+
+    # Touch log files
+    LOG_JSONL.touch()
+    console.print(f"[dim]Created {LOG_JSONL}[/dim]")
+
+    CHAT_JSONL.touch()
+    console.print(f"[dim]Created {CHAT_JSONL}[/dim]")
+
+    # Install skills
+    skills_dir = TEMPLATES_DIR / "skills"
+    if skills_dir.exists():
+        import shutil
+
+        for target_dir in [Path(".claude") / "skills", Path(".codex") / "skills"]:
+            target_dir.mkdir(parents=True, exist_ok=True)
+            for skill in skills_dir.iterdir():
+                if skill.is_dir():
+                    dest = target_dir / skill.name
+                    if dest.exists():
+                        shutil.rmtree(dest)
+                    shutil.copytree(skill, dest)
+            console.print(f"[dim]Installed skills to {target_dir}[/dim]")
+
+    console.print("\n[green]Ralph initialized![/green]")
+    console.print("Run 'ml-ralph chat' to start creating your PRD.")
+
+
+@app.command()
 def chat(
     tool: str = typer.Option("claude", help="Tool to use: claude or codex"),
 ):
@@ -151,21 +254,24 @@ def chat(
         )
     )
 
+    # Ensure .ml-ralph directory exists
+    ML_RALPH_DIR.mkdir(exist_ok=True)
+
     # Ensure chat.jsonl exists
     CHAT_JSONL.touch()
 
-    # Copy RALPH.md and SKILL.md to project if not exists
-    if not Path("RALPH.md").exists() and RALPH_MD.exists():
-        Path("RALPH.md").write_text(RALPH_MD.read_text())
+    # Copy RALPH.md to .ml-ralph/ if not exists
+    if not RALPH_MD.exists() and RALPH_MD_TEMPLATE.exists():
+        RALPH_MD.write_text(RALPH_MD_TEMPLATE.read_text())
 
     # Run interactive chat
-    prompt = """Read RALPH.md for your instructions. You are in SETUP mode.
+    prompt = """Read .ml-ralph/RALPH.md for your instructions. You are in SETUP mode.
 
 Start a conversation with the user to understand their ML problem and create a PRD.
 Ask clarifying questions one at a time. When you have enough information, propose a PRD.
-When the user says /start, create the necessary files and begin execution.
+When the user says /start, create the necessary files in .ml-ralph/ and begin execution.
 
-Check chat.jsonl for conversation history."""
+Check .ml-ralph/chat.jsonl for conversation history."""
 
     run_agent(tool, prompt, interactive=True)
 
@@ -190,6 +296,9 @@ def run(
         console.print("Run 'ralph chat' to continue the conversation.")
         raise typer.Exit(1)
 
+    # Ensure .ml-ralph directory exists
+    ML_RALPH_DIR.mkdir(exist_ok=True)
+
     # Initialize state if needed
     state = load_state()
     if state is None:
@@ -207,6 +316,10 @@ def run(
     LOG_JSONL.touch()
     if not INBOX_JSON.exists():
         save_inbox(Inbox())
+
+    # Ensure RALPH.md exists
+    if not RALPH_MD.exists() and RALPH_MD_TEMPLATE.exists():
+        RALPH_MD.write_text(RALPH_MD_TEMPLATE.read_text())
 
     console.print(
         Panel.fit(
@@ -251,16 +364,16 @@ def run(
         save_state(state)
 
         # Run the agent
-        prompt = """Read RALPH.md for your instructions. You are in EXECUTION mode.
+        prompt = """Read .ml-ralph/RALPH.md for your instructions. You are in EXECUTION mode.
 
-Read the state files:
-- prd.json (the contract)
-- ralph.json (current state)
-- backlog.json (hypotheses)
-- log.jsonl (thinking log)
-- inbox.json (user commands)
+Read the state files in .ml-ralph/:
+- .ml-ralph/prd.json (the contract)
+- .ml-ralph/ralph.json (current state)
+- .ml-ralph/backlog.json (hypotheses)
+- .ml-ralph/log.jsonl (thinking log)
+- .ml-ralph/inbox.json (user commands)
 
-Execute the current phase of the cognitive loop. Log your work to log.jsonl.
+Execute the current phase of the cognitive loop. Log your work to .ml-ralph/log.jsonl.
 Update state files as needed. Commit code changes."""
 
         result = run_agent(tool, prompt, interactive=False)
@@ -463,10 +576,19 @@ def resume(message: str = typer.Option("User resumed", help="Resume message")):
 
 
 @app.command()
-def reset(force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation")):
+def reset(
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
+    full: bool = typer.Option(
+        False, "--full", help="Also remove CLAUDE.md and AGENTS.md"
+    ),
+):
     """Reset Ralph state (keeps code, removes Ralph files)."""
     if not force:
-        if not typer.confirm("This will remove all Ralph state files. Continue?"):
+        msg = "This will remove all Ralph state files"
+        if full:
+            msg += " including CLAUDE.md and AGENTS.md"
+        msg += ". Continue?"
+        if not typer.confirm(msg):
             raise typer.Abort()
 
     files_to_remove = [
@@ -476,12 +598,21 @@ def reset(force: bool = typer.Option(False, "--force", "-f", help="Skip confirma
         LOG_JSONL,
         CHAT_JSONL,
         INBOX_JSON,
+        RALPH_MD,
     ]
+
+    if full:
+        files_to_remove.extend([CLAUDE_MD, AGENTS_MD])
 
     for f in files_to_remove:
         if f.exists():
             f.unlink()
             console.print(f"[dim]Removed {f}[/dim]")
+
+    # Remove .ml-ralph directory if empty
+    if ML_RALPH_DIR.exists() and not any(ML_RALPH_DIR.iterdir()):
+        ML_RALPH_DIR.rmdir()
+        console.print(f"[dim]Removed {ML_RALPH_DIR}[/dim]")
 
     console.print("[green]Ralph state reset.[/green]")
     console.print("Use 'ralph chat' to start fresh.")

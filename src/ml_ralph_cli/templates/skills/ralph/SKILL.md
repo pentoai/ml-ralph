@@ -21,7 +21,7 @@ Work autonomously through the cognitive loop until success criteria are met.
 
 ## SETUP Mode
 
-When there's no `prd.json` in the project, you're in SETUP mode.
+When there's no `.ml-ralph/prd.json` in the project, you're in SETUP mode.
 
 ### Your Job
 
@@ -130,7 +130,7 @@ When you're ready, say "/start" to begin.
 
 When the user says "/start", "go", "begin", or similar:
 
-1. Write `prd.json`:
+1. Write `.ml-ralph/prd.json`:
 
 ```json
 {
@@ -153,7 +153,7 @@ When the user says "/start", "go", "begin", or similar:
 }
 ```
 
-2. Write `ralph.json`:
+2. Write `.ml-ralph/ralph.json`:
 
 ```json
 {
@@ -175,7 +175,7 @@ When the user says "/start", "go", "begin", or similar:
 }
 ```
 
-3. Write empty `backlog.json`:
+3. Write empty `.ml-ralph/backlog.json`:
 
 ```json
 {
@@ -183,7 +183,7 @@ When the user says "/start", "go", "begin", or similar:
 }
 ```
 
-4. Create empty `log.jsonl` and `inbox.json`
+4. Create empty `.ml-ralph/log.jsonl` and `.ml-ralph/inbox.json`
 
 5. Say: "PRD approved. Starting execution. Beginning ORIENT phase..."
 
@@ -193,7 +193,7 @@ When the user says "/start", "go", "begin", or similar:
 
 ## EXECUTION Mode
 
-When `prd.json` exists, you're in EXECUTION mode.
+When `.ml-ralph/prd.json` exists, you're in EXECUTION mode.
 
 **Read RALPH.md for full execution instructions.**
 
@@ -229,12 +229,12 @@ Users can intervene by adding commands to inbox.json:
 
 | File           | Purpose                     |
 | -------------- | --------------------------- |
-| `prd.json`     | The approved PRD (contract) |
-| `ralph.json`   | Execution state             |
-| `backlog.json` | Hypotheses queue            |
-| `log.jsonl`    | Thinking log                |
+| `.ml-ralph/prd.json`     | The approved PRD (contract) |
+| `.ml-ralph/ralph.json`   | Execution state             |
+| `.ml-ralph/backlog.json` | Hypotheses queue            |
+| `.ml-ralph/log.jsonl`    | Thinking log                |
 | `chat.jsonl`   | Conversation history        |
-| `inbox.json`   | User commands               |
+| `.ml-ralph/inbox.json`   | User commands               |
 
 ### Commands
 

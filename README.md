@@ -19,7 +19,30 @@ uv tool install ml-ralph
 
 ## Quick Start
 
-### 1. Start a Conversation (SETUP Mode)
+### 1. Initialize Ralph in your project
+
+```bash
+ml-ralph init
+```
+
+This creates:
+```
+your-project/
+├── .ml-ralph/           # Ralph state directory
+│   ├── RALPH.md         # Full agent instructions
+│   ├── prd.json         # PRD (draft)
+│   ├── ralph.json       # Execution state
+│   ├── backlog.json     # Hypotheses
+│   ├── log.jsonl        # Thinking log
+│   ├── chat.jsonl       # Conversation history
+│   └── inbox.json       # User commands
+├── .claude/skills/ralph/  # Claude skill
+├── .codex/skills/ralph/   # Codex skill
+├── CLAUDE.md            # Claude instructions
+└── AGENTS.md            # Agent instructions
+```
+
+### 2. Start a Conversation (SETUP Mode)
 
 ```bash
 ml-ralph chat
@@ -27,7 +50,7 @@ ml-ralph chat
 
 Ralph will ask clarifying questions to understand your ML problem and create a PRD together. When the PRD is ready, say `/start` to begin execution.
 
-### 2. Run Autonomous Execution
+### 3. Run Autonomous Execution
 
 ```bash
 ml-ralph run
@@ -39,6 +62,7 @@ Ralph works through the cognitive loop until success criteria are met.
 
 | Command | Purpose |
 |---------|---------|
+| `ml-ralph init` | Initialize Ralph in current project |
 | `ml-ralph chat` | Interactive SETUP mode to create PRD |
 | `ml-ralph run` | Autonomous EXECUTION through cognitive loop |
 | `ml-ralph status` | Show current state (PRD, execution, backlog) |
@@ -46,7 +70,8 @@ Ralph works through the cognitive loop until success criteria are met.
 | `ml-ralph hint "msg"` | Send guidance during execution |
 | `ml-ralph pause` | Pause autonomous execution |
 | `ml-ralph resume` | Resume after pause |
-| `ml-ralph reset` | Wipe all Ralph state files |
+| `ml-ralph reset` | Remove state files (keeps CLAUDE.md, AGENTS.md) |
+| `ml-ralph reset --full` | Remove everything including CLAUDE.md, AGENTS.md |
 
 ## Options
 
@@ -57,6 +82,9 @@ ml-ralph run --tool codex
 
 # Set max iterations (default: 100)
 ml-ralph run --max-iterations 250
+
+# Force overwrite on init
+ml-ralph init --force
 ```
 
 ## Setup Weights & Biases (Required Before Running)
@@ -74,16 +102,19 @@ wandb login
 export WANDB_PROJECT="your-project-name"
 ```
 
-## Key Files
+## State Files
+
+All Ralph state is stored in `.ml-ralph/`:
 
 | File | Purpose |
 |------|---------|
-| `prd.json` | The approved PRD (contract) |
-| `ralph.json` | Execution state |
-| `backlog.json` | Hypotheses queue |
-| `log.jsonl` | Thinking log |
-| `chat.jsonl` | Conversation history |
-| `inbox.json` | User commands |
+| `.ml-ralph/prd.json` | The approved PRD (contract) |
+| `.ml-ralph/ralph.json` | Execution state |
+| `.ml-ralph/backlog.json` | Hypotheses queue |
+| `.ml-ralph/log.jsonl` | Thinking log |
+| `.ml-ralph/chat.jsonl` | Conversation history |
+| `.ml-ralph/inbox.json` | User commands |
+| `.ml-ralph/RALPH.md` | Full agent instructions |
 
 ## The Cognitive Loop
 
@@ -106,5 +137,12 @@ ORIENT → RESEARCH → HYPOTHESIZE → EXECUTE → ANALYZE → VALIDATE → DEC
 ```bash
 ml-ralph status
 ml-ralph log --tail 5
-cat prd.json | jq '.success_criteria'
+cat .ml-ralph/prd.json | jq '.success_criteria'
+```
+
+## Using as a Library
+
+```python
+from ml_ralph_cli import PRD, RalphState, Backlog, Hypothesis
+from ml_ralph_cli.schemas import EvaluationConfig, Phase, ProjectStatus
 ```

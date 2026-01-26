@@ -1,10 +1,5 @@
 # Ralph working files (generated during runs)
-prd.json
-ralph.json
-backlog.json
-log.jsonl
-chat.jsonl
-inbox.json
+.ml-ralph/
 progress.jsonl
 progress.txt
 .last-branch
