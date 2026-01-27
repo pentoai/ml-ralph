@@ -4,15 +4,6 @@ on:
   release:
     types: [published]
   workflow_dispatch:
-    inputs:
-      target:
-        description: 'Publish target'
-        required: true
-        default: 'testpypi'
-        type: choice
-        options:
-          - testpypi
-          - pypi
 
 jobs:
   build:
@@ -38,32 +29,9 @@ jobs:
           name: python-package-distributions
           path: dist/
 
-  publish-testpypi:
-    name: Publish to TestPyPI
-    needs: build
-    if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
-    runs-on: ubuntu-latest
-    environment:
-      name: testpypi
-      url: https://test.pypi.org/p/ml-ralph
-    permissions:
-      id-token: write
-    steps:
-      - name: Download distributions
-        uses: actions/download-artifact@v4
-        with:
-          name: python-package-distributions
-          path: dist/
-
-      - name: Publish to TestPyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          repository-url: https://test.pypi.org/legacy/
-
   publish-pypi:
     name: Publish to PyPI
     needs: build
-    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi')
     runs-on: ubuntu-latest
     environment:
       name: pypi
