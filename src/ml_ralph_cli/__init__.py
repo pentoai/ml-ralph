@@ -4,7 +4,7 @@ Ralph v2 - Autonomous ML Agent
 An ML agent that thinks like an experienced MLE.
 """
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 from .schemas import (
     # Enums
