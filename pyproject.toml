@@ -1,6 +1,6 @@
 [project]
 name = "ml-ralph"
-version = "0.2.0"
+version = "0.3.0"
 description = "Autonomous ML agent with cognitive loop"
 readme = "README.md"
 authors = [
