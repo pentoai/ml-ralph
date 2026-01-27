@@ -1,14 +1,18 @@
-name: Publish to TestPyPI
+name: Publish to PyPI
 
 on:
   release:
     types: [published]
   workflow_dispatch:
     inputs:
-      version:
-        description: 'Version to publish (optional, uses pyproject.toml version if empty)'
-        required: false
-        type: string
+      target:
+        description: 'Publish target'
+        required: true
+        default: 'testpypi'
+        type: choice
+        options:
+          - testpypi
+          - pypi
 
 jobs:
   build:
@@ -37,6 +41,7 @@ jobs:
   publish-testpypi:
     name: Publish to TestPyPI
     needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
     runs-on: ubuntu-latest
     environment:
       name: testpypi
@@ -54,3 +59,23 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: build
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi')
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/ml-ralph
+    permissions:
+      id-token: write
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
