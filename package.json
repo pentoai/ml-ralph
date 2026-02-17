@@ -1,0 +1,48 @@
+{
+  "name": "@pentoai/ml-ralph-ui",
+  "version": "0.2.0",
+  "description": "Autonomous ML engineering agent with TUI",
+  "module": "src/index.tsx",
+  "type": "module",
+  "bin": {
+    "ml-ralph": "./src/index.tsx"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "dev": "bun run src/index.tsx",
+    "typecheck": "bunx tsc --noEmit",
+    "test": "bun test",
+    "lint": "bunx @biomejs/biome check --write ."
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pentoai/ml-ralph-ui.git"
+  },
+  "author": "Pento AI",
+  "license": "MIT",
+  "devDependencies": {
+    "@biomejs/biome": "^2.3.13",
+    "@types/asciichart": "^1.5.8",
+    "@types/bun": "latest",
+    "@types/react": "^19.2.9",
+    "react-devtools-core": "^7.0.1",
+    "typescript": "^5.9.3"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@opentui/core": "^0.1.77",
+    "@opentui/react": "^0.1.77",
+    "asciichart": "^1.5.25",
+    "node-pty": "^1.1.0",
+    "react": "^19.2.4",
+    "zustand": "^5.0.10"
+  }
+}

@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Build
+dist/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Test
+coverage/
+opencode/
+
+# Ralph state (contains project-specific data)
+.ml-ralph/
+
+# MCP config (may contain API keys in headers)
+.mcp.json
+
+# Secrets (never commit)
+secrets.json
+*.secrets.json
