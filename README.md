@@ -21,48 +21,33 @@ That's it. Run it inside any ML project directory and the TUI will launch in tmu
 - [tmux](https://github.com/tmux/tmux) (`brew install tmux`)
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI, installed and authenticated
 
-## Usage
+## The cognitive framework
 
-ml-ralph operates in two modes, toggled with `Tab`:
+ml-ralph operates as a paranoid scientist. Its core assumption: results are probably misleading, data is probably corrupted, and conclusions should be broken before they're trusted. It allocates roughly 70% of effort to understanding and verification, 20% to strategy, and 10% to execution.
 
-**Planning** — Chat with Claude Code to define or refine your PRD. Review accumulated learnings and research from prior iterations.
-
-**Monitor** — Watch the agent execute stories in real-time. View experiment output, metrics, and training curves. Start, stop, and control the agent.
-
-### Keyboard shortcuts
-
-| Key | Action |
-| --- | --- |
-| `Tab` | Switch between Planning and Monitor |
-| `1` `2` `3` | Switch tabs in Planning mode |
-| `f` | Focus terminal pane |
-| `s` | Start / Stop agent |
-| `t` | Stop training job |
-| `w` | Open W&B dashboard |
-| `Esc` | Exit / Dismiss |
-| `q` | Quit |
-
-## How it works
-
-ml-ralph orchestrates Claude Code through a structured cognitive loop:
+The agent works through a 4-phase cognitive cycle:
 
 ```
-ORIENT → RESEARCH → HYPOTHESIZE → EXECUTE → ANALYZE → VALIDATE → DECIDE
-                         ↑                                         │
-                         └─────────────────────────────────────────┘
+UNDERSTAND → STRATEGIZE → EXECUTE → REFLECT
+     ↑                                  │
+     └──────────────────────────────────┘
 ```
 
-Each iteration, the agent reads project state, selects the next story, forms a hypothesis, runs a minimal experiment, analyzes results, and decides whether to keep, revert, or pivot. Learnings are extracted and persisted so future iterations build on past evidence.
+**Understand** — Verify data integrity (row counts, label distributions, sample inspection). Run exploratory analysis. Research prior art. Build a mental model and explicitly list all assumptions. Nothing happens until this is done.
 
-All project state is stored in `.ml-ralph/` inside your project directory.
+**Strategize** — Generate 3–5 competing hypotheses. For each: what's expected, why, and what will be learned. Think 5–6 steps ahead. Pick the path with the best learning-to-effort ratio. Run the smallest experiment that tests the hypothesis.
 
-## Development
+**Execute** — Run the experiment. Log metrics and observations as work happens, not after. Surprises are more valuable than confirmations.
 
-```bash
-bun install
-bun run dev
-bun test
-```
+**Reflect** — Verify results are real, not artifacts of bugs, leakage, or evaluation errors. Try to break your own result before trusting it. Then decide:
+
+- Too good? → Verify harder
+- Verified and promising? → Strategize next step
+- Surprised or confused? → Go back to Understand
+- Stuck after 2–3 experiments? → Strategic retreat to Understand
+- All success criteria met and verified? → Complete
+
+Strategic retreat — going back to understand when stuck — is a first-class concept, not a failure. Understanding is progress.
 
 ## License
 
