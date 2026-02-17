@@ -1,95 +1,131 @@
-# @pentoai/ml-ralph-ui
+# ml-ralph
 
-[![npm version](https://badge.fury.io/js/@pentoai%2Fml-ralph-ui.svg)](https://www.npmjs.com/package/@pentoai/ml-ralph-ui)
+[![npm version](https://img.shields.io/npm/v/@pentoai/ml-ralph.svg)](https://www.npmjs.com/package/@pentoai/ml-ralph)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-An autonomous ML engineering agent with a terminal user interface (TUI).
+An autonomous ML engineering agent with a terminal user interface. ml-ralph automates the experiment loop — planning, execution, analysis, and learning extraction — so you can iterate on ML projects faster.
 
-ml-ralph helps you iterate on ML projects by automating the experiment loop: planning, execution, analysis, and learning extraction. You interact with it through a clean TUI that lets you create PRDs, monitor agent execution, and review accumulated knowledge.
+You define your goals through a PRD. The agent works through stories autonomously, runs experiments, tracks metrics, and accumulates structured learnings across iterations.
 
-## Key Features
+## Install
 
-- **PRD-driven development**: Define your ML project goals, constraints, and stories through conversational chat with Claude Code
-- **Autonomous execution**: Agent runs continuously through stories until stopped, making decisions based on evidence
-- **Learning accumulation**: Structured insights extracted from every iteration, searchable and actionable
-- **Research integration**: Agent researches approaches and documents findings
-- **Training monitoring**: Track long-running jobs with W&B integration
+```bash
+bun add -g @pentoai/ml-ralph
+```
+
+Or run directly:
+
+```bash
+bunx @pentoai/ml-ralph
+```
+
+### Prerequisites
+
+- [Bun](https://bun.sh/) v1.0+
+- [tmux](https://github.com/tmux/tmux) (`brew install tmux`)
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI, installed and authenticated
+
+## Quick start
+
+```bash
+# Initialize a new project
+ml-ralph init my-project
+
+# Launch the TUI
+ml-ralph
+
+# Launch with agent teams (parallel experiments)
+ml-ralph --teams
+```
+
+## Usage
+
+ml-ralph operates in two modes, toggled with `Tab`:
+
+### Planning
+
+Chat with Claude Code to define or refine your PRD — project goals, success criteria, constraints, and stories. Review accumulated learnings and research from prior iterations.
+
+### Monitor
+
+Watch the agent execute stories in real-time. View experiment output, metrics, and training curves. Start, stop, and control the agent.
+
+### Keyboard shortcuts
+
+| Key | Action |
+| --- | --- |
+| `Tab` | Switch between Planning and Monitor |
+| `1` `2` `3` | Switch tabs in Planning mode |
+| `f` | Focus terminal pane |
+| `s` | Start / Stop agent |
+| `t` | Stop training job |
+| `w` | Open W&B dashboard |
+| `Esc` | Exit / Dismiss |
+| `q` | Quit |
+
+## How it works
+
+ml-ralph orchestrates Claude Code through a structured cognitive loop:
+
+```
+ORIENT → RESEARCH → HYPOTHESIZE → EXECUTE → ANALYZE → VALIDATE → DECIDE
+                         ↑                                         │
+                         └─────────────────────────────────────────┘
+```
+
+Each iteration, the agent reads project state, selects the next story, forms a hypothesis, runs a minimal experiment, analyzes results, and decides whether to keep, revert, or pivot. Learnings are extracted and persisted so future iterations build on past evidence.
+
+### State files
+
+All project state lives in `.ml-ralph/`:
+
+| File | Purpose |
+| --- | --- |
+| `config.json` | Project configuration |
+| `prd.json` | Product requirements document |
+| `learnings.jsonl` | Accumulated insights |
+| `research.jsonl` | Research findings |
+| `progress.jsonl` | Iteration logs |
+| `inbox.json` | User commands (hint, pause, redirect) |
 
 ## Architecture
 
-ml-ralph is built as a TUI using [OpenTUI](https://github.com/anomalyco/opentui) with [Bun](https://bun.sh/) as the runtime. It orchestrates [Claude Code](https://claude.ai/code) to perform actual ML engineering work.
-
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     ml-ralph TUI                            │
-│  ┌─────────────────────┐  ┌──────────────────────────────┐  │
-│  │     Planning        │  │         Monitor              │  │
-│  │  ┌───────┬───────┐  │  │  ┌─────────┬──────────────┐  │  │
-│  │  │  CC   │Learn- │  │  │  │ Agent   │ Experiments  │  │  │
-│  │  │ Chat  │ings/  │  │  │  │ Output  │ + Metrics    │  │  │
-│  │  │       │Research│  │  │  │         │              │  │  │
-│  │  └───────┴───────┘  │  │  └─────────┴──────────────┘  │  │
-│  └─────────────────────┘  └──────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-                    ┌───────────────┐
-                    │  Claude Code  │
-                    └───────────────┘
-                            │
-                            ▼
-                    ┌───────────────┐
-                    │   Codebase    │
-                    │   + W&B       │
-                    └───────────────┘
+┌──────────────────────────────────────────────────┐
+│  UI Layer (OpenTUI/React)                        │
+│  Planning screen · Monitor screen · Widgets      │
+├──────────────────────────────────────────────────┤
+│  Application Layer                               │
+│  AgentOrchestrator · State management            │
+├──────────────────────────────────────────────────┤
+│  Domain Layer                                    │
+│  Types · Validation · Story selection            │
+├──────────────────────────────────────────────────┤
+│  Infrastructure Layer                            │
+│  Claude Code client · File store · W&B · tmux    │
+└──────────────────────────────────────────────────┘
 ```
 
-## Two Modes
+Built with [OpenTUI](https://github.com/anthropics/opentui), [Bun](https://bun.sh/), and [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
 
-### Planning Mode
-
-- Chat with Claude Code to create/refine your PRD
-- View accumulated learnings from past iterations
-- Review research the agent has gathered
-- See your story backlog
-
-### Monitor Mode
-
-- Watch the agent execute stories in real-time
-- View experiment metrics and training curves
-- See current story and hypothesis
-- Control agent (start/stop)
-
-## Quick Start
+## Development
 
 ```bash
-# Run directly with bunx
-bunx @pentoai/ml-ralph-ui
+# Install dependencies
+bun install
 
-# Or install globally
-bun install -g @pentoai/ml-ralph-ui
-ml-ralph
+# Run in development
+bun run dev
+
+# Run tests
+bun test
+
+# Type check
+bun run typecheck
+
+# Lint
+bun run lint
 ```
-
-## Requirements
-
-- [Bun](https://bun.sh/) runtime
-- [Claude Code](https://claude.ai/code) CLI installed and authenticated
-
-## Documentation
-
-- [Architecture](docs/ARCHITECTURE.md) - System design and layers
-- [Data Models](docs/DATA_MODELS.md) - All type definitions
-- [File Layout](docs/FILE_LAYOUT.md) - Project file structure
-- [Prompts](docs/PROMPTS.md) - Claude Code system prompts
-- [MVP Plan](docs/MVP_PLAN.md) - Development phases
-
-## Tech Stack
-
-- **Runtime**: [Bun](https://bun.sh/)
-- **TUI Framework**: [OpenTUI](https://github.com/anomalyco/opentui)
-- **Language**: TypeScript
-- **Agent**: [Claude Code](https://claude.ai/code)
-- **Experiment Tracking**: [Weights & Biases](https://wandb.ai/)
 
 ## License
 

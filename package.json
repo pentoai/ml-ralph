@@ -1,5 +1,5 @@
 {
-  "name": "@pentoai/ml-ralph-ui",
+  "name": "@pentoai/ml-ralph",
   "version": "0.2.0",
   "description": "Autonomous ML engineering agent with TUI",
   "module": "src/index.tsx",
@@ -22,7 +22,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/pentoai/ml-ralph-ui.git"
+    "url": "https://github.com/pentoai/ml-ralph.git"
   },
   "author": "Pento AI",
   "license": "MIT",
