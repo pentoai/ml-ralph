@@ -27,12 +27,11 @@
     "noPropertyAccessFromIndexSignature": false,
 
     // Path aliases
-    "baseUrl": ".",
     "paths": {
-      "@domain/*": ["src/domain/*"],
-      "@infrastructure/*": ["src/infrastructure/*"],
-      "@application/*": ["src/application/*"],
-      "@ui/*": ["src/ui/*"]
+      "@domain/*": ["./src/domain/*"],
+      "@infrastructure/*": ["./src/infrastructure/*"],
+      "@application/*": ["./src/application/*"],
+      "@ui/*": ["./src/ui/*"]
     }
   },
   "include": ["src/**/*"],
