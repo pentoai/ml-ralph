@@ -9,6 +9,10 @@
         "noUnusedImports": "error",
         "noUnusedVariables": "warn"
       },
+      "suspicious": {
+        "noControlCharactersInRegex": "off",
+        "noArrayIndexKey": "off"
+      },
       "style": {
         "noNonNullAssertion": "off"
       }

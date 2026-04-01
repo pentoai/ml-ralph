@@ -1,6 +1,6 @@
 {
   "name": "@pentoai/ml-ralph",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Autonomous ML engineering agent with TUI",
   "module": "src/index.tsx",
   "type": "module",
@@ -15,7 +15,10 @@
     "dev": "bun run src/index.tsx",
     "typecheck": "bunx tsc --noEmit",
     "test": "bun test",
-    "lint": "bunx @biomejs/biome check --write ."
+    "lint": "bunx @biomejs/biome check --write .",
+    "lint:ci": "bunx @biomejs/biome check .",
+    "check": "bun run lint:ci && bun run typecheck",
+    "prepare": "husky"
   },
   "publishConfig": {
     "access": "public"
@@ -31,6 +34,7 @@
     "@types/asciichart": "^1.5.8",
     "@types/bun": "latest",
     "@types/react": "^19.2.9",
+    "husky": "^9.1.7",
     "react-devtools-core": "^7.0.1",
     "typescript": "^5.9.3"
   },

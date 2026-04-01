@@ -320,7 +320,7 @@ export async function appendEvent(
       ...event,
     };
 
-    const line = JSON.stringify(eventWithTs) + "\n";
+    const line = `${JSON.stringify(eventWithTs)}\n`;
 
     // Append to file
     const file = Bun.file(logPath);

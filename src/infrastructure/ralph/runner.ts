@@ -186,8 +186,7 @@ If the project is complete (success criteria met), output: <project_complete>`;
    */
   private async appendLogEvent(event: Record<string, unknown>): Promise<void> {
     const logPath = `${this.config.projectPath}/.ml-ralph/log.jsonl`;
-    const line =
-      JSON.stringify({ ts: new Date().toISOString(), ...event }) + "\n";
+    const line = `${JSON.stringify({ ts: new Date().toISOString(), ...event })}\n`;
     const file = Bun.file(logPath);
     const existing = (await file.exists()) ? await file.text() : "";
     await Bun.write(logPath, existing + line);
