@@ -1,4 +1,4 @@
-name: Auto Release
+name: Release & Publish
 
 on:
   push:
@@ -54,3 +54,26 @@ jobs:
             --title "v${{ steps.version.outputs.version }}" \
             --notes "${{ steps.notes.outputs.notes }}" \
             --target main
+
+      - uses: oven-sh/setup-bun@v2
+        if: steps.tag_check.outputs.exists == 'false'
+
+      - uses: actions/setup-node@v4
+        if: steps.tag_check.outputs.exists == 'false'
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        if: steps.tag_check.outputs.exists == 'false'
+        run: bun install --frozen-lockfile
+
+      - name: Lint & typecheck
+        if: steps.tag_check.outputs.exists == 'false'
+        run: bun run check
+
+      - name: Publish to npm
+        if: steps.tag_check.outputs.exists == 'false'
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
