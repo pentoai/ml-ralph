@@ -1,11 +1,13 @@
 #!/bin/sh
 
 # Auto version bump: patch on every commit
-# Skip if this commit was already a version bump (avoid infinite loop)
-COMMIT_MSG=$(git log -1 --pretty=%B)
-if echo "$COMMIT_MSG" | grep -q "^chore: bump version"; then
+# Use lock file to prevent re-entry from --amend
+LOCK_FILE="/tmp/.husky-version-bump-lock"
+if [ -f "$LOCK_FILE" ]; then
   exit 0
 fi
+touch "$LOCK_FILE"
+trap 'rm -f "$LOCK_FILE"' EXIT
 
 # Bump patch version
 CURRENT_VERSION=$(node -p "require('./package.json').version")
