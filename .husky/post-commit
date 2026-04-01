@@ -18,7 +18,7 @@ NEW_PATCH=$((PATCH + 1))
 NEW_VERSION="$MAJOR.$MINOR.$NEW_PATCH"
 
 # Update package.json version in place
-sed -i "s/\"version\": \"$CURRENT_VERSION\"/\"version\": \"$NEW_VERSION\"/" package.json
+node -e "const p=require('./package.json');p.version='$NEW_VERSION';require('fs').writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
 
 # Amend the current commit to include the version bump
 git add package.json
