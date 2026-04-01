@@ -173,7 +173,14 @@ export function App({ projectPath, enableTeams }: AppProps) {
         appendAgentOutput(event);
       });
     }
-  }, [config, projectPath, handleIterationChange, handleComplete]);
+  }, [
+    config,
+    projectPath,
+    handleIterationChange,
+    handleComplete,
+    appendAgentOutput,
+    teamsEnabled,
+  ]);
 
   // Handle mode changes - create/destroy tmux split
   useEffect(() => {
@@ -985,7 +992,7 @@ function HintDialog({
               <Box key={i}>
                 <Text color={colors.accentYellow}> {i + 1}. </Text>
                 <Text color={colors.textSecondary}>
-                  {hint.length > 45 ? hint.slice(0, 45) + "..." : hint}
+                  {hint.length > 45 ? `${hint.slice(0, 45)}...` : hint}
                 </Text>
               </Box>
             ))}

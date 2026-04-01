@@ -47,7 +47,7 @@ function parseSuccessCriteria(criteria: string[]): ParsedTarget[] {
   const targets: ParsedTarget[] = [];
   for (const c of criteria) {
     const match = c.match(/(\w[\w\s]*?)\s*(>=|<=|>|<|=)\s*([\d.]+)/i);
-    if (match && match[1] && match[2] && match[3]) {
+    if (match?.[1] && match[2] && match[3]) {
       targets.push({
         metricPattern: match[1].trim().toLowerCase(),
         operator: match[2] as ParsedTarget["operator"],
@@ -337,7 +337,7 @@ function GroupHeader({ group }: { group: ExperimentGroup }) {
   const sc = statusConfig[group.status];
   const text =
     group.hypothesisText.length > 40
-      ? group.hypothesisText.slice(0, 40) + "..."
+      ? `${group.hypothesisText.slice(0, 40)}...`
       : group.hypothesisText;
 
   return (
@@ -587,7 +587,7 @@ function HypothesisSparkline({
     (a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime(),
   );
   const values = chronological
-    .map((e) => (e.metrics ?? {})[keyMetricKey])
+    .map((e) => e.metrics?.[keyMetricKey])
     .filter((v): v is number => v !== undefined);
   if (values.length < 3) return null;
 
@@ -753,7 +753,7 @@ export function ExperimentsPanel({
     if (!selectedId && flatIds.length > 0) {
       setSelectedExperimentId(flatIds[0] ?? null);
     }
-  }, [flatIds.join(",")]);
+  }, [flatIds, selectedId, setExperimentFlatList, setSelectedExperimentId]);
 
   if (experiments.length === 0) {
     return (

@@ -14,9 +14,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: oven-sh/setup-bun@v2
+
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
 
-      - run: npm publish --provenance --access public
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Lint & typecheck
+        run: bun run check
+
+      - name: Publish
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

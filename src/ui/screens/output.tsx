@@ -95,7 +95,7 @@ export function OutputScreen({ scrollActive = true }: OutputScreenProps) {
   // Auto-follow
   useEffect(() => {
     if (following) setScrollPos(Math.max(0, total - maxVisible));
-  }, [total, following, maxVisible]);
+  }, [total, following]);
 
   // Scroll keys — reuse [ ] G pattern from activity feed
   useInput(

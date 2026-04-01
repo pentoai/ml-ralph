@@ -102,7 +102,8 @@ function computeVisibleLineBudget(
 function computeTextWidth(terminalColumns: number): number {
   return Math.max(
     MIN_WRAP_WIDTH,
-    Math.floor(terminalColumns * MONITOR_LEFT_PANEL_RATIO) - PANEL_CHROME_COLUMNS,
+    Math.floor(terminalColumns * MONITOR_LEFT_PANEL_RATIO) -
+      PANEL_CHROME_COLUMNS,
   );
 }
 
@@ -184,7 +185,10 @@ export function ActivityFeed({
   const { stdout } = useStdout();
   const [scrollPos, setScrollPos] = useState(0);
   const [following, setFollowing] = useState(true);
-  const visibleLineBudget = computeVisibleLineBudget(stdout?.rows ?? 24, maxVisible);
+  const visibleLineBudget = computeVisibleLineBudget(
+    stdout?.rows ?? 24,
+    maxVisible,
+  );
   const maxLineWidth = computeTextWidth(stdout?.columns ?? 120);
 
   // ── Convert log events to activities ──

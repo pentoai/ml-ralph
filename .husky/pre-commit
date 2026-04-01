@@ -1,0 +1,1 @@
+bunx @biomejs/biome check --write --unsafe --staged . && bun run typecheck

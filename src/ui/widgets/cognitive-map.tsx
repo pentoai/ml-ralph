@@ -64,10 +64,12 @@ function extractScoreWithKey(
   ];
   for (const key of preferred) {
     const val = metrics[key];
-    if (typeof val === "number" && isFinite(val)) return { score: val, key };
+    if (typeof val === "number" && Number.isFinite(val))
+      return { score: val, key };
   }
   for (const [key, val] of Object.entries(metrics)) {
-    if (typeof val === "number" && isFinite(val)) return { score: val, key };
+    if (typeof val === "number" && Number.isFinite(val))
+      return { score: val, key };
   }
   return null;
 }
@@ -214,7 +216,8 @@ function formatPhaseLine(
     const abbr = PHASE_ABBR[phase] || phase.slice(0, 3);
     return `${phase === currentPhase ? "*" : "o"} ${abbr}`;
   });
-  const suffix = retreatCount > 0 ? `  c${cycleCount} r${retreatCount}` : `  c${cycleCount}`;
+  const suffix =
+    retreatCount > 0 ? `  c${cycleCount} r${retreatCount}` : `  c${cycleCount}`;
   return `${parts.join(" - ")}${suffix}`;
 }
 
@@ -259,7 +262,7 @@ function buildHypothesisLines({
 
   for (let idx = 0; idx < recent.length; idx++) {
     const h = recent[idx]!;
-    const si = STATUS_ICONS[h.status] ?? STATUS_ICONS.active;
+    const si = STATUS_ICONS[h.status] ?? STATUS_ICONS.active!;
     const isLast = idx === recent.length - 1;
     const connector = isLast ? "\\" : "|";
 
