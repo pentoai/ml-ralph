@@ -3,14 +3,24 @@ name: CI
 on:
   pull_request:
     branches: [main]
+  # Push to main is kept so every main commit has a standalone CI status;
+  # release.yml also calls this workflow to gate publishing (a second run).
+  push:
+    branches: [main]
+  workflow_call:
 
 jobs:
   check:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
       - uses: oven-sh/setup-bun@v2
+
+      - name: Install tmux (required by src/infrastructure/tmux tests)
+        run: sudo apt-get update && sudo apt-get install -y tmux
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
