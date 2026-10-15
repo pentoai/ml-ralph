@@ -24,7 +24,7 @@ Usage:
 
 Options:
   --teams                    Enable parallel experiments via agent teams
-  --force                    With init: overwrite existing files
+  --force                    With init: overwrite template files (RALPH.md, CLAUDE.md, ...), keep project data
 
 Keyboard shortcuts (in TUI):
   Tab         Switch between Planning and Monitor modes
@@ -66,7 +66,7 @@ if (process.argv[2] === "init") {
   console.log(`Initialized ml-ralph project: ${name}`);
   if (result.filesCreated.length === 0) {
     console.log(
-      "Nothing to do: all files already exist (use --force to overwrite).",
+      "Nothing to do: all files already exist (use --force to overwrite templates).",
     );
   }
   for (const file of result.filesCreated) {

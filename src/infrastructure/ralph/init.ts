@@ -58,8 +58,13 @@ export async function initRalph(options: InitOptions): Promise<InitResult> {
   const filesCreated: string[] = [];
   const mlRalphDir = `${projectPath}/${ML_RALPH_DIR}`;
 
-  const writeFile = async (path: string, content: string) => {
-    if (!force && (await Bun.file(path).exists())) {
+  // Templates are overwritten with force; runtime data is only ever created
+  const writeFile = async (
+    path: string,
+    content: string,
+    overwrite = force,
+  ) => {
+    if (!overwrite && (await Bun.file(path).exists())) {
       return;
     }
     await Bun.write(path, content);
@@ -77,29 +82,21 @@ export async function initRalph(options: InitOptions): Promise<InitResult> {
       await writeFile(`${skillDir}/SKILL.md`, SKILL_MD);
     }
 
-    await writeFile(`${mlRalphDir}/log.jsonl`, "");
+    await writeFile(`${mlRalphDir}/log.jsonl`, "", false);
     await writeFile(
       `${mlRalphDir}/prd.json`,
       JSON.stringify({ ...DEFAULT_PRD, project: name }, null, 2),
+      false,
     );
     await writeFile(
       `${mlRalphDir}/kanban.json`,
       JSON.stringify(DEFAULT_KANBAN, null, 2),
+      false,
     );
 
-    // config.json and runs/ are read by the application store
-    const store = new JsonFileStore(projectPath);
-    if (force || !(await store.exists())) {
-      const config = createDefaultConfig(name);
-      if (options.enableTeams) {
-        config.agent.enableTeams = true;
-      }
-      await store.initialize(config);
-      filesCreated.push(
-        `${mlRalphDir}/config.json`,
-        `${mlRalphDir}/runs/active.json`,
-      );
-    }
+    filesCreated.push(
+      ...(await ensureStoreData(projectPath, name, options.enableTeams)),
+    );
 
     if (options.enableTeams) {
       const settingsFile = await enableAgentTeamsSettings(projectPath);
@@ -119,6 +116,39 @@ export async function initRalph(options: InitOptions): Promise<InitResult> {
       filesCreated,
     };
   }
+}
+
+/**
+ * Create config.json, runs/active.json and chat/ for the application store,
+ * leaving anything that already exists untouched. Returns the files created.
+ */
+async function ensureStoreData(
+  projectPath: string,
+  name: string,
+  enableTeams?: boolean,
+): Promise<string[]> {
+  const created: string[] = [];
+  const store = new JsonFileStore(projectPath);
+  const mlRalphDir = `${projectPath}/${ML_RALPH_DIR}`;
+
+  await mkdir(`${mlRalphDir}/chat`, { recursive: true });
+
+  if (!(await store.exists())) {
+    const config = createDefaultConfig(name);
+    if (enableTeams) {
+      config.agent.enableTeams = true;
+    }
+    await store.writeConfig(config);
+    created.push(`${mlRalphDir}/config.json`);
+  }
+
+  const activePath = `${mlRalphDir}/runs/active.json`;
+  if (!(await Bun.file(activePath).exists())) {
+    await store.writeActiveJobs([]);
+    created.push(activePath);
+  }
+
+  return created;
 }
 
 /**
@@ -177,6 +207,8 @@ export async function ensureInitialized(projectPath: string): Promise<boolean> {
   await enableAgentTeamsSettings(projectPath);
 
   if (initialized) {
+    const name = projectPath.split("/").pop() || "ml-project";
+    await ensureStoreData(projectPath, name);
     return true;
   }
 

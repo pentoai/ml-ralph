@@ -9,6 +9,8 @@ import { join, relative } from "node:path";
 import { ensureInitialized, initRalph } from "./init.ts";
 import { RALPH_MD } from "./templates.ts";
 
+const CLI_ENTRY = join(import.meta.dir, "../../index.tsx");
+
 const BASE_FILES = [
   ".claude/skills/ml-ralph/SKILL.md",
   ".codex/skills/ml-ralph/SKILL.md",
@@ -98,6 +100,32 @@ describe("initRalph", () => {
     expect(await Bun.file(`${dir}/.ml-ralph/RALPH.md`).text()).toBe(RALPH_MD);
   });
 
+  test("force keeps existing runtime data", async () => {
+    await initRalph({ projectPath: dir, name: "demo" });
+    const data = [
+      ".ml-ralph/log.jsonl",
+      ".ml-ralph/prd.json",
+      ".ml-ralph/kanban.json",
+      ".ml-ralph/config.json",
+      ".ml-ralph/runs/active.json",
+    ];
+    for (const file of data) {
+      await Bun.write(`${dir}/${file}`, `data ${file}`);
+    }
+    for (const file of [".ml-ralph/RALPH.md", "CLAUDE.md", "AGENTS.md"]) {
+      await Bun.write(`${dir}/${file}`, "edited");
+    }
+
+    await initRalph({ projectPath: dir, name: "demo", force: true });
+
+    for (const file of data) {
+      expect(await Bun.file(`${dir}/${file}`).text()).toBe(`data ${file}`);
+    }
+    expect(await Bun.file(`${dir}/.ml-ralph/RALPH.md`).text()).toBe(RALPH_MD);
+    expect(await Bun.file(`${dir}/CLAUDE.md`).text()).not.toBe("edited");
+    expect(await Bun.file(`${dir}/AGENTS.md`).text()).not.toBe("edited");
+  });
+
   test("keeps a pre-existing CLAUDE.md and fills in the rest", async () => {
     await Bun.write(`${dir}/CLAUDE.md`, "mine");
 
@@ -120,6 +148,19 @@ describe("ensureInitialized", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
+  test("adds config.json and runs/ to a project that already has RALPH.md", async () => {
+    await Bun.write(`${dir}/.ml-ralph/RALPH.md`, "mine");
+
+    expect(await ensureInitialized(dir)).toBe(true);
+
+    expect(await Bun.file(`${dir}/.ml-ralph/RALPH.md`).text()).toBe("mine");
+    expect(await Bun.file(`${dir}/.ml-ralph/config.json`).exists()).toBe(true);
+    expect(await Bun.file(`${dir}/.ml-ralph/runs/active.json`).exists()).toBe(
+      true,
+    );
+    expect(await Bun.file(`${dir}/CLAUDE.md`).exists()).toBe(false);
+  });
+
   test("first launch matches init output (plus teams settings)", async () => {
     expect(await ensureInitialized(dir)).toBe(true);
 
@@ -135,7 +176,7 @@ describe("ml-ralph init CLI", () => {
     const tuiDir = await mkdtemp(join(tmpdir(), "ml-ralph-tui-"));
     try {
       const proc = Bun.spawn(
-        ["bun", "run", "src/index.tsx", "init", "demo", cliDir, "--teams"],
+        ["bun", "run", CLI_ENTRY, "init", "demo", cliDir, "--teams"],
         { stdout: "pipe", stderr: "pipe" },
       );
       expect(await proc.exited).toBe(0);

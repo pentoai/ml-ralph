@@ -4,13 +4,22 @@ Directory structure for ml-ralph projects and the TUI codebase.
 
 ## Project Directory (.ml-ralph/)
 
-When ml-ralph is initialized in a project, it creates:
+When ml-ralph is initialized in a project (`ml-ralph init` or the TUI's first launch), it creates:
 
 ```
 your-ml-project/
+├── CLAUDE.md                     # Agent instructions (kept if it already exists)
+├── AGENTS.md                     # Agent instructions (kept if it already exists)
+├── .claude/skills/ml-ralph/
+│   └── SKILL.md                  # ml-ralph skill for Claude
+├── .codex/skills/ml-ralph/
+│   └── SKILL.md                  # ml-ralph skill for Codex
 ├── .ml-ralph/                    # ml-ralph data directory
+│   ├── RALPH.md                  # Agent prompt
 │   ├── config.json               # Project configuration
 │   ├── prd.json                  # PRD and stories
+│   ├── kanban.json               # Experiment kanban
+│   ├── log.jsonl                 # Agent event log (append-only)
 │   ├── progress.jsonl            # Iteration log (append-only)
 │   ├── learnings.jsonl           # Accumulated learnings (append-only)
 │   ├── research.jsonl            # Research items (append-only)
@@ -30,6 +39,8 @@ your-ml-project/
 ```
 
 ## File Descriptions
+
+Re-running init never overwrites existing files. With `--force` only the templates (`RALPH.md`, `CLAUDE.md`, `AGENTS.md`, the skills) are overwritten; the log, PRD, kanban, config and runs are created only if missing.
 
 ### `.ml-ralph/config.json`
 
