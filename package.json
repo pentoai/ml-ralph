@@ -1,6 +1,6 @@
 {
   "name": "@pentoai/ml-ralph",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "description": "Autonomous ML engineering agent with TUI",
   "module": "src/index.tsx",
   "type": "module",
@@ -9,7 +9,9 @@
   },
   "files": [
     "src",
-    "README.md"
+    "!src/**/*.test.ts",
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "dev": "bun run src/index.tsx",
@@ -37,9 +39,6 @@
     "husky": "^9.1.7",
     "react-devtools-core": "^7.0.1",
     "typescript": "^6.0.2"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
   },
   "dependencies": {
     "@opentui/core": "^0.1.95",
