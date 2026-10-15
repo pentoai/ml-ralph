@@ -139,7 +139,6 @@ export function TmuxPane({
       {/* Terminal content - index keys are fine here since lines have no stable identity */}
       <Box flexDirection="column" flexGrow={1} overflowY="hidden">
         {content.lines.map((line, index) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: terminal lines have no stable identity
           <Text key={index} wrap="truncate">
             {sanitizeTerminalLine(line) || " "}
           </Text>
