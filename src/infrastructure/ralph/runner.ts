@@ -35,10 +35,7 @@ export class RalphRunner {
   private currentProcess: Subprocess | null = null;
   private currentIteration = 0;
   private pendingHints: string[] = [];
-  private lastToolCall: {
-    name: string;
-    input: Record<string, unknown>;
-  } | null = null;
+  private lastToolCall: ToolCallRef | null = null;
 
   constructor(config: RunnerConfig) {
     this.config = {
@@ -245,40 +242,12 @@ If the project is complete (success criteria met), output: <project_complete>`;
         buffer = lines.pop() || "";
 
         for (const line of lines) {
-          if (!line.trim()) continue;
-
-          try {
-            const event = JSON.parse(line);
-            this.handleStreamEvent(event);
-
-            if (event.type === "result") {
-              fullResult = event.result || "";
-            }
-          } catch {
-            // Not JSON, emit as text
-            this.config.onOutput?.({
-              type: "text",
-              content: line,
-            });
-          }
+          fullResult = this.processLine(line, fullResult);
         }
       }
 
       // Process remaining buffer
-      if (buffer.trim()) {
-        try {
-          const event = JSON.parse(buffer);
-          this.handleStreamEvent(event);
-          if (event.type === "result") {
-            fullResult = event.result || "";
-          }
-        } catch {
-          this.config.onOutput?.({
-            type: "text",
-            content: buffer,
-          });
-        }
-      }
+      fullResult = this.processLine(buffer, fullResult);
     } finally {
       reader.releaseLock();
     }
@@ -305,139 +274,195 @@ If the project is complete (success criteria met), output: <project_complete>`;
   }
 
   /**
-   * Handle a streaming JSON event from Claude Code
+   * Parse one stdout line, emit its events and return the running result text
    */
-  private handleStreamEvent(event: Record<string, unknown>): void {
-    const eventType = event.type as string;
+  private processLine(line: string, fullResult: string): string {
+    const parsed = parseStreamLine(line, this.lastToolCall);
+    this.lastToolCall = parsed.lastToolCall;
+    for (const output of parsed.outputs) {
+      this.config.onOutput?.(output);
+    }
+    return parsed.result ?? fullResult;
+  }
+}
 
-    if (eventType === "assistant") {
-      const message = event.message as Record<string, unknown> | undefined;
-      const content =
-        (message?.content as Array<Record<string, unknown>>) || [];
+export interface ToolCallRef {
+  name: string;
+  input: Record<string, unknown>;
+}
 
-      for (const block of content) {
-        const blockType = block.type as string;
+/**
+ * Convert one parsed stream-json object into StreamEvents.
+ * Pure: takes the previous tool call (for pairing with tool_result) and
+ * returns the events to emit plus the updated tool call.
+ */
+export function parseStreamEvent(
+  event: Record<string, unknown>,
+  lastToolCall: ToolCallRef | null,
+): { outputs: StreamEvent[]; lastToolCall: ToolCallRef | null } {
+  const outputs: StreamEvent[] = [];
+  const eventType = event.type as string;
 
-        if (blockType === "text") {
-          const text = block.text as string;
-          if (text) {
-            this.config.onOutput?.({
-              type: "text",
-              content: text,
-            });
-          }
-        } else if (blockType === "tool_use") {
-          const toolName = block.name as string;
-          const toolInput = block.input as Record<string, unknown>;
+  if (eventType === "assistant") {
+    const message = event.message as Record<string, unknown> | undefined;
+    const content = (message?.content as Array<Record<string, unknown>>) || [];
 
-          // Track last tool call for pairing with tool_result
-          this.lastToolCall = { name: toolName, input: toolInput };
+    for (const block of content) {
+      const blockType = block.type as string;
 
-          let description = "";
-          if (toolName === "Bash") {
-            description =
-              (toolInput.description as string) ||
-              (toolInput.command as string)?.slice(0, 50) ||
-              "";
-          } else if (
-            toolName === "Read" ||
-            toolName === "Write" ||
-            toolName === "Edit"
-          ) {
-            description = toolInput.file_path as string;
-          } else if (toolName === "Glob" || toolName === "Grep") {
-            description = toolInput.pattern as string;
-          }
+      if (blockType === "text") {
+        const text = block.text as string;
+        if (text) {
+          outputs.push({ type: "text", content: text });
+        }
+      } else if (blockType === "tool_use") {
+        const toolName = block.name as string;
+        const toolInput = block.input as Record<string, unknown>;
 
-          // Detect team tools and enrich the event
-          let agentName: string | undefined;
-          let teamEvent: StreamEvent["teamEvent"];
+        // Track last tool call for pairing with tool_result
+        lastToolCall = { name: toolName, input: toolInput };
 
-          if (toolName === "TeamCreate") {
+        let description = "";
+        if (toolName === "Bash") {
+          description =
+            (toolInput.description as string) ||
+            (toolInput.command as string)?.slice(0, 50) ||
+            "";
+        } else if (
+          toolName === "Read" ||
+          toolName === "Write" ||
+          toolName === "Edit"
+        ) {
+          description = toolInput.file_path as string;
+        } else if (toolName === "Glob" || toolName === "Grep") {
+          description = toolInput.pattern as string;
+        }
+
+        // Detect team tools and enrich the event
+        let agentName: string | undefined;
+        let teamEvent: StreamEvent["teamEvent"];
+
+        if (toolName === "TeamCreate") {
+          teamEvent = "team_create";
+          agentName = "lead";
+          description = (toolInput.team_name as string) || "team";
+        } else if (toolName === "Task" && toolInput.team_name) {
+          teamEvent = "teammate_spawn";
+          agentName = (toolInput.name as string) || "teammate";
+          description = (toolInput.description as string) || "";
+        } else if (toolName === "SendMessage") {
+          teamEvent = "teammate_message";
+          agentName = (toolInput.recipient as string) || "teammate";
+          description =
+            (toolInput.summary as string) ||
+            (toolInput.content as string)?.slice(0, 50) ||
+            "";
+        } else if (toolName === "TaskUpdate") {
+          teamEvent = "task_update";
+          agentName = "lead";
+          description = (toolInput.status as string) || "";
+        } else if (toolName === "TaskCreate") {
+          teamEvent = "task_update";
+          agentName = "lead";
+          description = (toolInput.subject as string) || "";
+        }
+
+        outputs.push({
+          type: "tool_call",
+          content: description,
+          toolName,
+          toolInput,
+          agentName,
+          teamEvent,
+        });
+      }
+    }
+  } else if (eventType === "user") {
+    const message = event.message as Record<string, unknown> | undefined;
+    const content = (message?.content as Array<Record<string, unknown>>) || [];
+
+    for (const block of content) {
+      if ((block.type as string) === "tool_result") {
+        const isError = block.is_error as boolean;
+
+        // Enrich tool_result with team context from the last tool_call
+        let agentName: string | undefined;
+        let teamEvent: StreamEvent["teamEvent"];
+
+        if (lastToolCall) {
+          if (lastToolCall.name === "Task" && lastToolCall.input.team_name) {
+            teamEvent = "teammate_message";
+            agentName = (lastToolCall.input.name as string) || "teammate";
+          } else if (lastToolCall.name === "TeamCreate") {
             teamEvent = "team_create";
             agentName = "lead";
-            description = (toolInput.team_name as string) || "team";
-          } else if (toolName === "Task" && toolInput.team_name) {
-            teamEvent = "teammate_spawn";
-            agentName = (toolInput.name as string) || "teammate";
-            description = (toolInput.description as string) || "";
-          } else if (toolName === "SendMessage") {
+          } else if (lastToolCall.name === "SendMessage") {
             teamEvent = "teammate_message";
-            agentName = (toolInput.recipient as string) || "teammate";
-            description =
-              (toolInput.summary as string) ||
-              (toolInput.content as string)?.slice(0, 50) ||
-              "";
-          } else if (toolName === "TaskUpdate") {
+            agentName = (lastToolCall.input.recipient as string) || "teammate";
+          } else if (
+            lastToolCall.name === "TaskUpdate" ||
+            lastToolCall.name === "TaskCreate"
+          ) {
             teamEvent = "task_update";
             agentName = "lead";
-            description = (toolInput.status as string) || "";
-          } else if (toolName === "TaskCreate") {
-            teamEvent = "task_update";
-            agentName = "lead";
-            description = (toolInput.subject as string) || "";
           }
-
-          this.config.onOutput?.({
-            type: "tool_call",
-            content: description,
-            toolName,
-            toolInput,
-            agentName,
-            teamEvent,
-          });
         }
+
+        outputs.push({
+          type: "tool_result",
+          content: isError ? "failed" : "success",
+          isError,
+          agentName,
+          teamEvent,
+        });
       }
-    } else if (eventType === "user") {
-      const message = event.message as Record<string, unknown> | undefined;
-      const content =
-        (message?.content as Array<Record<string, unknown>>) || [];
-
-      for (const block of content) {
-        if ((block.type as string) === "tool_result") {
-          const isError = block.is_error as boolean;
-
-          // Enrich tool_result with team context from the last tool_call
-          let agentName: string | undefined;
-          let teamEvent: StreamEvent["teamEvent"];
-
-          if (this.lastToolCall) {
-            if (
-              this.lastToolCall.name === "Task" &&
-              this.lastToolCall.input.team_name
-            ) {
-              teamEvent = "teammate_message";
-              agentName =
-                (this.lastToolCall.input.name as string) || "teammate";
-            } else if (this.lastToolCall.name === "TeamCreate") {
-              teamEvent = "team_create";
-              agentName = "lead";
-            } else if (this.lastToolCall.name === "SendMessage") {
-              teamEvent = "teammate_message";
-              agentName =
-                (this.lastToolCall.input.recipient as string) || "teammate";
-            } else if (
-              this.lastToolCall.name === "TaskUpdate" ||
-              this.lastToolCall.name === "TaskCreate"
-            ) {
-              teamEvent = "task_update";
-              agentName = "lead";
-            }
-          }
-
-          this.config.onOutput?.({
-            type: "tool_result",
-            content: isError ? "failed" : "success",
-            isError,
-            agentName,
-            teamEvent,
-          });
-        }
-      }
-    } else if (eventType === "result") {
-      // Final result - nothing to emit
     }
   }
+  // "result" and other event types emit nothing here
+
+  return { outputs, lastToolCall };
+}
+
+export interface ParsedStreamLine {
+  outputs: StreamEvent[];
+  lastToolCall: ToolCallRef | null;
+  /** Final result text, set only for a "result" event */
+  result?: string;
+}
+
+/**
+ * Parse one raw stdout line from `claude --output-format stream-json`.
+ * Blank lines yield no output; non-JSON lines are surfaced as text.
+ */
+export function parseStreamLine(
+  line: string,
+  lastToolCall: ToolCallRef | null,
+): ParsedStreamLine {
+  if (!line.trim()) return { outputs: [], lastToolCall };
+
+  let event: unknown;
+  try {
+    event = JSON.parse(line);
+  } catch {
+    return { outputs: [{ type: "text", content: line }], lastToolCall };
+  }
+
+  if (typeof event !== "object" || event === null || Array.isArray(event)) {
+    return { outputs: [{ type: "text", content: line }], lastToolCall };
+  }
+
+  const record = event as Record<string, unknown>;
+  let parsed: ReturnType<typeof parseStreamEvent>;
+  try {
+    parsed = parseStreamEvent(record, lastToolCall);
+  } catch {
+    // Valid JSON with an unexpected shape: surface the raw line instead of aborting the loop
+    return { outputs: [{ type: "text", content: line }], lastToolCall };
+  }
+  if (record.type === "result") {
+    return { ...parsed, result: (record.result as string) || "" };
+  }
+  return parsed;
 }
 
 /**
@@ -446,3 +471,5 @@ If the project is complete (success criteria met), output: <project_complete>`;
 export function createRunner(config: RunnerConfig): RalphRunner {
   return new RalphRunner(config);
 }
+
+export const __testing = { parseStreamEvent, parseStreamLine };
