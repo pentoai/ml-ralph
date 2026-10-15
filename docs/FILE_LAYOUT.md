@@ -127,110 +127,33 @@ ml-ralph/
 ├── src/
 │   ├── index.tsx                    # Entry point
 │   │
-│   ├── domain/                      # Pure types & logic (NO deps)
-│   │   ├── types/
-│   │   │   ├── prd.ts               # PRD, Story, SuccessCriterion, DataSource
-│   │   │   ├── learning.ts          # Learning
-│   │   │   ├── research.ts          # ResearchItem, CodeSnippet
-│   │   │   ├── progress.ts          # ProgressEntry, Evidence, BacklogChange
-│   │   │   ├── job.ts               # TrainingJob
-│   │   │   ├── config.ts            # ProjectConfig
-│   │   │   ├── chat.ts              # ChatSession, ChatMessage, ToolCall
-│   │   │   ├── enums.ts             # All enum types
-│   │   │   └── index.ts             # Re-exports all types
-│   │   │
-│   │   ├── validation/
-│   │   │   ├── prd.ts               # validatePRD, validateStory
-│   │   │   ├── learning.ts          # validateLearning
-│   │   │   └── index.ts
-│   │   │
-│   │   └── logic/
-│   │       ├── story-selector.ts    # selectNextStory(stories) => Story | null
-│   │       ├── id-generator.ts      # generateStoryId, generateLearningId, etc.
-│   │       └── index.ts
+│   ├── domain/                      # Pure types & validation (NO deps)
+│   │   ├── types/                   # PRD, Story, Learning, Research, Job, Kanban, Config, Chat, enums
+│   │   └── validation/              # validatePRD, validateLearning
 │   │
 │   ├── infrastructure/              # External integrations
-│   │   ├── file-store/
-│   │   │   ├── types.ts             # FileStore interface
-│   │   │   ├── json-file-store.ts   # Implementation
+│   │   ├── ralph/
+│   │   │   ├── runner.ts            # RalphRunner: spawns claude per iteration, parses stream-json
+│   │   │   ├── init.ts              # initRalph / ensureInitialized
+│   │   │   ├── log-parser.ts        # Read/watch log.jsonl, prd.json, kanban.json
+│   │   │   ├── templates.ts         # Agent prompts and log event types
 │   │   │   └── index.ts
-│   │   │
-│   │   ├── claude/
-│   │   │   ├── types.ts             # ClaudeCodeClient interface, StreamEvent
-│   │   │   ├── client.ts            # Implementation (spawn + stream)
-│   │   │   ├── stream-parser.ts     # Parse CC JSON stream
-│   │   │   └── index.ts
-│   │   │
-│   │   ├── wandb/
-│   │   │   ├── types.ts             # WandBClient interface
-│   │   │   ├── client.ts            # Implementation
-│   │   │   └── index.ts
-│   │   │
-│   │   ├── process/
-│   │   │   ├── types.ts             # JobManager interface
-│   │   │   ├── job-manager.ts       # Implementation
-│   │   │   └── index.ts
-│   │   │
-│   │   └── prompts/
-│   │       ├── story-execution.ts   # System prompt for story execution
-│   │       ├── prd-creation.ts      # System prompt for PRD creation
-│   │       └── index.ts
+│   │   ├── tmux/                    # TmuxManager, TmuxLayoutManager
+│   │   └── file-store/              # JsonFileStore (config.json, runs/, JSONL files)
 │   │
 │   ├── application/                 # Orchestration layer
-│   │   ├── orchestrator/
-│   │   │   ├── types.ts             # AgentOrchestrator interface
-│   │   │   ├── orchestrator.ts      # Implementation
-│   │   │   └── index.ts
-│   │   │
-│   │   ├── state/
-│   │   │   ├── types.ts             # AppState interface
-│   │   │   ├── store.ts             # State management
-│   │   │   └── index.ts
-│   │   │
-│   │   └── commands/
-│   │       ├── start-agent.ts
-│   │       ├── stop-agent.ts
-│   │       ├── create-prd.ts
-│   │       └── index.ts
+│   │   ├── orchestrator/            # DefaultOrchestrator (wraps RalphRunner)
+│   │   └── state/                   # zustand store
 │   │
 │   └── ui/                          # OpenTUI components
 │       ├── app.tsx                  # Root component
-│       │
-│       ├── screens/
-│       │   ├── planning.tsx         # Planning mode screen
-│       │   └── monitor.tsx          # Monitor mode screen
-│       │
-│       ├── widgets/
-│       │   ├── chat-panel.tsx       # CC chat interface
-│       │   ├── story-list.tsx       # Story backlog list
-│       │   ├── agent-output.tsx     # Agent streaming output
-│       │   ├── metrics-chart.tsx    # Experiment metrics display
-│       │   ├── learnings-panel.tsx  # Learnings list
-│       │   ├── research-panel.tsx   # Research items list
-│       │   ├── current-task.tsx     # Current story/hypothesis
-│       │   ├── status-bar.tsx       # Bottom status bar
-│       │   └── tabs.tsx             # Tab navigation
-│       │
-│       ├── hooks/
-│       │   ├── use-orchestrator.ts  # Access orchestrator
-│       │   ├── use-state.ts         # Access app state
-│       │   └── use-file-watch.ts    # Watch file changes
-│       │
-│       └── theme/
-│           └── colors.ts            # Color definitions
+│       ├── ink.tsx                  # Ink-compatible Box/Text/useInput on OpenTUI
+│       ├── screens/                 # planning, monitor, output
+│       ├── widgets/                 # knowledge panel, kanban, hypotheses, experiments, activity feed, ...
+│       ├── hooks/                   # use-log-stream, use-ralph-state, use-tmux-layout, use-tmux-pane, ...
+│       └── theme/colors.ts          # Color definitions
 │
-└── tests/
-    ├── domain/                      # Unit tests (fast)
-    │   ├── validation/
-    │   └── logic/
-    │
-    ├── infrastructure/              # Integration tests
-    │   ├── file-store/
-    │   ├── claude/
-    │   └── wandb/
-    │
-    └── e2e/                         # End-to-end tests
-        └── flows/
+│   Tests are colocated as `*.test.ts` next to the code they test.
 ```
 
 ## Naming Conventions
@@ -241,7 +164,7 @@ ml-ralph/
 - **Interfaces**: Named `{Entity}` (PascalCase)
 - **Components**: `{widget-name}.tsx` (kebab-case files, PascalCase exports)
 - **Hooks**: `use-{name}.ts` (kebab-case)
-- **Tests**: `{module}.test.ts` colocated or in tests/
+- **Tests**: `{module}.test.ts` colocated with the module
 
 ### Directories
 
