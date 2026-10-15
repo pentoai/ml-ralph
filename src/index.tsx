@@ -19,11 +19,12 @@ ml-ralph - Autonomous ML engineering agent with TUI
 
 Usage:
   ml-ralph [project-path]    Launch TUI for the specified project (default: current directory)
-  ml-ralph init [name]       Initialize a new ml-ralph project
+  ml-ralph init [name] [path]  Initialize a new ml-ralph project (keeps existing files)
   ml-ralph --help            Show this help message
 
 Options:
   --teams                    Enable parallel experiments via agent teams
+  --force                    With init: overwrite template files (RALPH.md, CLAUDE.md, ...), keep project data
 
 Keyboard shortcuts (in TUI):
   Tab         Switch between Planning and Monitor modes
@@ -45,38 +46,33 @@ const enableTeams = process.argv.includes("--teams");
 
 // Check for init command
 if (process.argv[2] === "init") {
-  const name = process.argv[3] ?? "my-ml-project";
-  const targetPath = process.argv[4] ?? process.cwd();
-  const { JsonFileStore } = await import(
-    "./infrastructure/file-store/index.ts"
-  );
-  const { createDefaultConfig } = await import("./domain/types/index.ts");
+  const [name = "my-ml-project", targetPath = process.cwd()] = process.argv
+    .slice(3)
+    .filter((arg) => !arg.startsWith("-"));
+  const { initRalph } = await import("./infrastructure/ralph/index.ts");
 
-  const store = new JsonFileStore(targetPath);
-  const config = createDefaultConfig(name);
+  const result = await initRalph({
+    projectPath: targetPath,
+    name,
+    force: process.argv.includes("--force"),
+    enableTeams,
+  });
 
-  // Enable teams in the project config if --teams flag is passed
-  if (enableTeams) {
-    config.agent.enableTeams = true;
-  }
-
-  try {
-    await store.initialize(config);
-    console.log(`Initialized ml-ralph project: ${name}`);
-    console.log(`Created .ml-ralph/ directory with config.json`);
-    if (enableTeams) {
-      // Also write .claude/settings.json with the agent teams env var
-      const { enableAgentTeamsSettings } = await import(
-        "./infrastructure/ralph/index.ts"
-      );
-      await enableAgentTeamsSettings(targetPath);
-      console.log(`Enabled agent teams in .claude/settings.json`);
-    }
-    console.log(`\nRun 'ml-ralph' to start the TUI.`);
-  } catch (error) {
-    console.error("Failed to initialize project:", error);
+  if (!result.success) {
+    console.error("Failed to initialize project:", result.error);
     process.exit(1);
   }
+
+  console.log(`Initialized ml-ralph project: ${name}`);
+  if (result.filesCreated.length === 0) {
+    console.log(
+      "Nothing to do: all files already exist (use --force to overwrite templates).",
+    );
+  }
+  for (const file of result.filesCreated) {
+    console.log(`  created ${file}`);
+  }
+  console.log(`\nRun 'ml-ralph' to start the TUI.`);
 
   process.exit(0);
 }
