@@ -6,6 +6,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { TmuxLayoutManager } from "./layout-manager.ts";
 
 const TEST_TIMEOUT = 10000;
+const insideTmux = TmuxLayoutManager.isInsideTmux();
 
 describe("TmuxLayoutManager", () => {
   let manager: TmuxLayoutManager | null = null;
@@ -28,15 +29,9 @@ describe("TmuxLayoutManager", () => {
     expect(result === null || typeof result === "string").toBe(true);
   });
 
-  test(
+  test.if(insideTmux)(
     "initialize works when inside tmux",
     async () => {
-      // Skip if not in tmux
-      if (!TmuxLayoutManager.isInsideTmux()) {
-        console.log("Skipping test - not inside tmux");
-        return;
-      }
-
       manager = new TmuxLayoutManager({
         sessionName: "ml-ralph-test",
         cwd: process.cwd(),
@@ -49,15 +44,9 @@ describe("TmuxLayoutManager", () => {
     TEST_TIMEOUT,
   );
 
-  test(
+  test.if(insideTmux)(
     "enterPlanningMode creates split pane",
     async () => {
-      // Skip if not in tmux
-      if (!TmuxLayoutManager.isInsideTmux()) {
-        console.log("Skipping test - not inside tmux");
-        return;
-      }
-
       manager = new TmuxLayoutManager({
         sessionName: "ml-ralph-test",
         cwd: process.cwd(),
@@ -71,15 +60,9 @@ describe("TmuxLayoutManager", () => {
     TEST_TIMEOUT,
   );
 
-  test(
+  test.if(insideTmux)(
     "enterMonitorMode closes split pane",
     async () => {
-      // Skip if not in tmux
-      if (!TmuxLayoutManager.isInsideTmux()) {
-        console.log("Skipping test - not inside tmux");
-        return;
-      }
-
       manager = new TmuxLayoutManager({
         sessionName: "ml-ralph-test",
         cwd: process.cwd(),
