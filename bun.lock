@@ -21,9 +21,6 @@
         "react-devtools-core": "^7.0.1",
         "typescript": "^6.0.2",
       },
-      "peerDependencies": {
-        "typescript": "^5",
-      },
     },
   },
   "packages": {

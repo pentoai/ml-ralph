@@ -36,7 +36,7 @@ Keyboard shortcuts (in TUI):
   w           Open W&B dashboard (Monitor mode)
   q           Quit
 
-For more information, visit: https://github.com/ml-ralph/ml-ralph
+For more information, visit: https://github.com/pentoai/ml-ralph
 `);
   process.exit(0);
 }
