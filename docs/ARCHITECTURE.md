@@ -1,239 +1,146 @@
 # Architecture
 
-ml-ralph follows a clean layered architecture that separates concerns and enables testability.
+ml-ralph is a Bun + OpenTUI terminal app that launches the `claude` CLI in a loop (`RalphRunner`) and shows what the agent is doing. It follows a layered layout. Every module under `src/infrastructure` is imported by the running app, and `src/index.tsx` is the entry point.
 
 ## Layer Overview
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                              UI Layer                                    │
-│                       (OpenTUI/React Components)                         │
-│  - Screens (Planning, Monitor)                                          │
-│  - Widgets (StoryList, ChatPanel, MetricsChart)                         │
-│  - No business logic, just rendering + events                           │
+│                  (OpenTUI/React, src/ui)                                 │
+│  - app.tsx: modes (planning / monitor / output), dialogs, shortcuts     │
+│  - screens/: planning, monitor, output                                  │
+│  - widgets/: KnowledgePanel + PRD, kanban, hypotheses, experiments,     │
+│    learnings, research panels, activity feed, cognitive map, tmux pane  │
+│  - hooks/: useLogStream, useRalphState, useTmuxLayout, useTmuxPane      │
+│  - ink.tsx: Ink-style Box/Text/useInput shim on top of OpenTUI          │
 └─────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                          Application Layer                               │
-│                           (Orchestration)                                │
-│  - AgentOrchestrator (the "brain" - story selection, iteration loop)    │
-│  - UIState (what the UI needs to display)                               │
-│  - Commands (user actions → state changes)                              │
-└─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                            Domain Layer                                  │
-│                         (Business Logic)                                 │
-│  - Types (PRD, Story, Learning, Research, etc.)                         │
-│  - Validation (is this a valid PRD?)                                    │
-│  - Pure functions (selectNextStory, shouldSupersede)                    │
+│  - DefaultOrchestrator: thin wrapper around RalphRunner that fans out   │
+│    output / iteration / completion callbacks to the UI                  │
+│  - zustand store (useAppStore): mode, tabs, agent status, scroll state, │
+│    config, PRD, learnings, research, active jobs                        │
 └─────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                         Infrastructure Layer                             │
-│                        (External Concerns)                               │
-│  - FileStore (read/write .ml-ralph/ files)                              │
-│  - ClaudeCodeClient (spawn CC, parse stream)                            │
-│  - WandBClient (fetch metrics, runs)                                    │
-│  - ProcessManager (spawn/monitor training jobs)                         │
+│  - ralph/: RalphRunner, init, log parser, prompt templates              │
+│  - tmux/: TmuxManager, TmuxLayoutManager                                │
+│  - file-store/: JsonFileStore (config.json, runs/, learnings, ...)      │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                             Domain Layer                                 │
+│  - types/: PRD, Story, Learning, Research, Job, Kanban, Config, enums   │
+│  - validation/: PRD and learning validation                             │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Layer Rules
 
-### UI Layer
+### UI Layer (`src/ui`)
 
-- **Depends on**: Application layer only
-- **Contains**: React/OpenTUI components, hooks for state access
-- **Rules**:
-  - No business logic
-  - No direct infrastructure access
-  - Components receive data via props or hooks
-  - Events bubble up via callbacks
+- Depends on the application layer (store, orchestrator) and on the infrastructure `ralph/` and `tmux/` barrels for log and tmux types and hooks.
+- Components import `Box`, `Text` and `useInput` from `src/ui/ink.tsx`, not directly from OpenTUI.
+- `app.tsx` owns keyboard shortcuts and creates the `DefaultOrchestrator`.
 
-### Application Layer
+### Application Layer (`src/application`)
 
-- **Depends on**: Domain layer, Infrastructure interfaces
-- **Contains**: Orchestrator, state management, command handlers
-- **Rules**:
-  - Coordinates between UI and infrastructure
-  - Owns application state
-  - Implements use cases (start agent, create PRD, etc.)
+- `orchestrator/`: `DefaultOrchestrator` implements `AgentOrchestrator` by delegating to `RalphRunner`.
+- `state/`: the zustand store. It loads and persists data through `JsonFileStore`.
 
-### Domain Layer
+### Infrastructure Layer (`src/infrastructure`)
 
-- **Depends on**: Nothing (pure)
-- **Contains**: Types, validation, pure business logic
-- **Rules**:
-  - No external dependencies
-  - All functions are pure (input → output, no side effects)
-  - Types define the ubiquitous language
+- Does all file, process and tmux I/O.
+- `ralph/` is the core; `tmux/` and `file-store/` support it.
 
-### Infrastructure Layer
+### Domain Layer (`src/domain`)
 
-- **Depends on**: Domain types only
-- **Contains**: File I/O, Claude Code client, W&B client, process management
-- **Rules**:
-  - Implements interfaces defined by application layer
-  - Handles all external communication
-  - Converts external data to domain types
+- Pure types and validation. No I/O. The validators in `validation/` are not called by the app yet.
 
-## Dependency Flow
+## How a Run Works
 
-```
-UI → Application → Domain ← Infrastructure
-                     ↑
-                     └──────────────┘
-```
+1. `src/index.tsx` handles `--help`, `--teams` and `init`. Outside tmux it re-launches itself in a tmux session named `ml-ralph-<dir>`. Then it renders `<App>` through `createCliRenderer`.
+2. `App` calls `ensureInitialized(projectPath)` (`infrastructure/ralph/init.ts`). This writes any missing `.ml-ralph/` files, `CLAUDE.md`, `AGENTS.md` and the skills. `ml-ralph init` calls the same `initRalph`.
+3. `App` creates a `DefaultOrchestrator`. Pressing `s` calls `start()`, which runs `RalphRunner.start()`.
+4. `RalphRunner` loops up to `maxIterations` times. Each iteration spawns `claude --dangerously-skip-permissions --verbose -p <prompt> --output-format stream-json` in the project directory. With `--teams` it sets `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`. The prompt tells the agent to read `.ml-ralph/RALPH.md`, run one iteration and print `<iteration_complete>` or `<project_complete>`.
+5. The runner parses the stream-json output into `StreamEvent`s (text, tool calls, tool results, errors, iteration markers). The orchestrator passes them to the UI. The runner also appends `phase` events to `.ml-ralph/log.jsonl`.
+6. The agent itself appends events to `log.jsonl` and updates `prd.json` and `kanban.json`. The monitor and knowledge panels render these through `useLogStream` and `useRalphState`, which use `log-parser.ts` (`readLogFile`, `watchLogFile`, `readPrdFile`, `readKanbanFile`, `aggregateEvents`).
+7. In planning mode, `TmuxLayoutManager` splits the tmux window and an interactive `claude` session runs in the other pane. The TUI shows the knowledge tabs.
 
-- UI depends on Application
-- Application depends on Domain and Infrastructure interfaces
-- Infrastructure implements interfaces, depends on Domain types
-- Domain depends on nothing
+User hints (`h` while running) are queued with `addHint` and added to the prompt of the next iteration.
+
+## The `.ml-ralph/` Files
+
+| File                | Written by                                | Read by                                                       |
+| ------------------- | ----------------------------------------- | ------------------------------------------------------------- |
+| `RALPH.md`          | `init` (from `RALPH_MD`)                  | the agent, `isInitialized`                                    |
+| `prd.json`          | `init` (empty draft), then the agent      | PRD panel, `readPrdFile`                                      |
+| `kanban.json`       | `init` (empty), then the agent            | kanban panel, `readKanbanFile`                                |
+| `log.jsonl`         | the agent and `RalphRunner`, append-only  | `useLogStream` and all the log-driven panels                  |
+| `config.json`       | `init` (`JsonFileStore`)                  | zustand store                                                 |
+| `runs/active.json`  | `init` (`{"jobs": []}`)                   | zustand store (`activeJobs`)                                  |
+| `chat/`             | `init` creates the directory              | nothing yet                                                   |
+
+`learnings.jsonl`, `research.jsonl` and `runs/history.jsonl` are read by the store through `JsonFileStore` if they exist. The agent does not write them. It records learnings, research and experiments as events in `log.jsonl`, which is what the panels show.
+
+Experiment events in `log.jsonl` can carry `wandb_run_id` and `wandb_url`. The experiments panel renders them. There is no W&B API client.
+
+The `w` and `t` shortcuts (monitor mode) act on `activeJobs` from `runs/active.json`. Nothing in the app populates that file yet, so they do nothing until something writes training jobs there.
 
 ## Key Components
 
-### AgentOrchestrator
-
-The "brain" of ml-ralph. Manages the agent loop:
+### RalphRunner (`infrastructure/ralph/runner.ts`)
 
 ```typescript
-interface AgentOrchestrator {
-  // State
-  status: "idle" | "running" | "paused";
-  currentStory: Story | null;
-
-  // Control
-  start(): Promise<void>;
-  stop(): Promise<void>;
-
-  // Events (for UI)
-  onOutput: (callback: (line: string) => void) => void;
-  onStoryComplete: (callback: (story: Story) => void) => void;
-  onLearning: (callback: (learning: Learning) => void) => void;
+class RalphRunner {
+  start(): Promise<void>; // iteration loop
+  stop(): void; // kills the current claude process
+  isRunning(): boolean;
+  getCurrentIteration(): number;
+  setMaxIterations(n: number): void;
+  addHint(hint: string): void;
+  getPendingHintsCount(): number;
 }
 ```
 
-### ClaudeCodeClient
+Configured with callbacks (`onOutput`, `onIterationStart`, `onIterationEnd`, `onComplete`, `onError`).
 
-Spawns and communicates with Claude Code:
+### DefaultOrchestrator (`application/orchestrator/orchestrator.ts`)
 
-```typescript
-interface ClaudeCodeClient {
-  // Streaming execution
-  execute(prompt: string): AsyncIterable<StreamEvent>;
+Wraps one `RalphRunner` and exposes subscription methods that each return an unsubscribe function: `onOutput`, `onIterationChange`, `onComplete` and `onStoryComplete` (the last is part of the interface but nothing emits it). Also forwards `start`, `stop`, `isRunning`, `setMaxIterations` and `addHint`.
 
-  // Cancel running execution
-  cancel(): Promise<void>;
-}
+### Log parser (`infrastructure/ralph/log-parser.ts`)
 
-type StreamEvent =
-  | { type: "text"; content: string }
-  | { type: "tool_start"; tool: string; input: unknown }
-  | { type: "tool_end"; tool: string; output: unknown }
-  | { type: "error"; message: string }
-  | { type: "done" };
-```
+Reads and watches `log.jsonl`, `prd.json` and `kanban.json`. `aggregateEvents` builds a `LogSummary` (hypotheses with status, experiments, learnings, research, PRD changes, kanban history).
 
-### FileStore
+### Templates (`infrastructure/ralph/templates.ts`)
 
-Manages .ml-ralph/ directory:
+The agent's behaviour lives here as prompt text (`RALPH_MD`, `SKILL_MD`, `CLAUDE_MD`, `AGENTS_MD`), together with the TypeScript interfaces for log events. If you change a log event, update the interface in `templates.ts`, the parser in `log-parser.ts` and the `ralph-log-events` skill together.
 
-```typescript
-interface FileStore {
-  // PRD
-  readPRD(): Promise<PRD | null>;
-  writePRD(prd: PRD): Promise<void>;
+### JsonFileStore (`infrastructure/file-store/json-file-store.ts`)
 
-  // Progress
-  appendProgress(entry: ProgressEntry): Promise<void>;
-  readProgress(): Promise<ProgressEntry[]>;
+Typed reads and writes for `config.json`, `runs/active.json` and `runs/history.jsonl`, plus `prd.json`, the JSONL files and `chat/`. The store uses it for config, learnings, research and jobs.
 
-  // Learnings
-  appendLearning(learning: Learning): Promise<void>;
-  readLearnings(): Promise<Learning[]>;
+### Tmux (`infrastructure/tmux/`)
 
-  // Research
-  appendResearch(item: ResearchItem): Promise<void>;
-  readResearch(): Promise<ResearchItem[]>;
-
-  // Jobs
-  readActiveJobs(): Promise<TrainingJob[]>;
-  writeActiveJobs(jobs: TrainingJob[]): Promise<void>;
-
-  // Config
-  readConfig(): Promise<ProjectConfig>;
-  writeConfig(config: ProjectConfig): Promise<void>;
-
-  // Chat
-  readChatSession(id: string): Promise<ChatSession | null>;
-  writeChatSession(session: ChatSession): Promise<void>;
-}
-```
-
-## State Management
-
-Application state is managed centrally and flows down to UI:
-
-```typescript
-interface AppState {
-  // Mode
-  mode: "planning" | "monitor";
-
-  // Data
-  prd: PRD | null;
-  stories: Story[];
-  learnings: Learning[];
-  research: ResearchItem[];
-  activeJobs: TrainingJob[];
-
-  // Agent
-  agentStatus: "idle" | "running" | "paused";
-  currentStory: Story | null;
-  agentOutput: string[];
-
-  // Chat (planning mode)
-  chatMessages: ChatMessage[];
-
-  // UI
-  selectedTab: "learnings" | "research" | "stories";
-}
-```
+`TmuxManager` wraps tmux commands. `TmuxLayoutManager` builds the planning and monitor layouts. Both have tests that need a real `tmux` binary.
 
 ## Testing Strategy
 
-| Layer          | Test Type   | What to Test                          |
-| -------------- | ----------- | ------------------------------------- |
-| Domain         | Unit        | All pure functions, type validation   |
-| Infrastructure | Integration | File I/O, CC spawning, W&B API        |
-| Application    | Integration | Orchestrator flows, state transitions |
-| UI             | Snapshot    | Component rendering                   |
+Tests use `bun:test` and sit next to the code they test.
 
-## Error Handling
+| Area                          | What is tested                                              |
+| ----------------------------- | ----------------------------------------------------------- |
+| `infrastructure/ralph/`       | init, log parser, runner stream parsing                     |
+| `infrastructure/tmux/`        | manager and layout manager against a real tmux (unique sessions, killed in `afterEach`) |
+| `ui/`                         | Ink-compat shim, OpenTUI migration, widgets and formatters  |
 
-Errors are categorized and handled at appropriate layers:
+## Keeping the Layers Honest
 
-```typescript
-type DomainError =
-  | { type: "validation"; field: string; message: string }
-  | { type: "invalid_state"; message: string };
-
-type InfrastructureError =
-  | { type: "file_not_found"; path: string }
-  | { type: "claude_code_error"; message: string }
-  | { type: "wandb_error"; message: string }
-  | { type: "process_error"; message: string };
-
-type ApplicationError =
-  | { type: "agent_error"; message: string }
-  | { type: "command_failed"; command: string; reason: string };
-```
-
-- Domain errors: Validation failures, invalid business state
-- Infrastructure errors: External system failures
-- Application errors: Use case failures
-
-UI displays errors appropriately based on type and severity.
+A module under `src/infrastructure` that nothing imports from `src/index.tsx` is dead weight and misleads the next contributor. Delete it with its tests, or wire it in.

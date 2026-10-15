@@ -2,434 +2,161 @@
 
 ## Overview
 
-**Ralph** is an autonomous ML engineering agent designed to help teams iterate on machine learning projects by automating the experiment loop and accumulating knowledge. It works like an experienced Machine Learning Engineer, reasoning carefully, documenting decisions, and respecting user guidance.
+**ml-ralph** (`@pentoai/ml-ralph`) is a terminal app that runs an autonomous ML engineering agent. You run it with `bunx @pentoai/ml-ralph` inside an ML project. It launches the `claude` CLI in a loop and shows the agent's plan, experiments and learnings live. The agent works like an experienced ML engineer: it reasons carefully, documents decisions and respects user guidance.
 
-The project consists of two complementary components:
+This repository is the whole product. There is no separate Python agent. The agent's behaviour is prompt text in `src/infrastructure/ralph/templates.ts` (`RALPH_MD`, `SKILL_MD`, `CLAUDE_MD`, `AGENTS_MD`), which `init` writes into the user's project.
 
-1. **ml-ralph** (TypeScript/Bun) - Terminal User Interface
-2. **ml-ralph-agent** (Python) - Core agent logic and cognitive loop
+## Tech Stack
 
----
+- **Runtime**: Bun (no build step; the package ships `src/` and Bun runs the TSX)
+- **TUI framework**: OpenTUI (`@opentui/core`, `@opentui/react`) with React 19
+- **Ink-style API**: `src/ui/ink.tsx` is a compatibility shim. It keeps `Box`/`Text`/`useInput` on top of OpenTUI, and widgets import from it
+- **State**: zustand
+- **Language**: TypeScript (strict)
+- **Agent**: the `claude` CLI, spawned as a subprocess with `--output-format stream-json`
+- **Layout**: tmux (the app re-launches itself in a tmux session `ml-ralph-<dir>` and splits the window)
+- **Tooling**: Biome (`bun run lint:ci`), `tsc --noEmit`, `bun test`
 
-## ml-ralph (This Repository) - Terminal User Interface
-
-### Purpose
-
-A terminal user interface (TUI) built with Ink (React for terminals) that provides two interaction modes for working with the Ralph agent.
-
-### Tech Stack
-
-- **Runtime**: Bun
-- **TUI Framework**: Ink (React for terminals)
-- **Language**: TypeScript
-- **State Management**: Zustand
-- **Agent Integration**: Claude Code (via subprocess)
-- **Experiment Tracking**: Weights & Biases (W&B)
-- **Markdown Rendering**: ink-markdown
-
-### Architecture
-
-Ralph follows a clean layered architecture:
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                     UI Layer                            │
-│   (Ink/React Components - Planning & Monitor screens)   │
+│   (OpenTUI/React: app, screens, widgets, hooks)         │
 ├─────────────────────────────────────────────────────────┤
 │                  Application Layer                      │
-│   (AgentOrchestrator, UIState, Commands)               │
-├─────────────────────────────────────────────────────────┤
-│                    Domain Layer                         │
-│   (Pure types, validation, story selection logic)      │
+│   (DefaultOrchestrator, zustand store)                  │
 ├─────────────────────────────────────────────────────────┤
 │                Infrastructure Layer                     │
-│   (FileStore, ClaudeCodeClient, WandBClient, Process)  │
+│   (ralph: RalphRunner/init/log-parser/templates,        │
+│    tmux, file-store)                                    │
+├─────────────────────────────────────────────────────────┤
+│                    Domain Layer                         │
+│   (pure types and validation)                           │
 └─────────────────────────────────────────────────────────┘
 ```
 
-#### Layers Explained
+See `docs/ARCHITECTURE.md` for the details. In short:
 
-1. **UI Layer** (`src/ui/`)
-   - Planning and Monitor screens
-   - Widgets: chat panel, metrics, learnings, research, stories
-   - All state flows down via props/hooks
+- `src/index.tsx` handles `--help`, `--teams` and `init`, re-launches inside tmux, and renders `<App>`.
+- `src/ui/app.tsx` calls `ensureInitialized`, creates a `DefaultOrchestrator`, and owns the keyboard shortcuts.
+- `DefaultOrchestrator` (`src/application/orchestrator`) wraps `RalphRunner` and fans its callbacks out to the UI.
+- `RalphRunner` (`src/infrastructure/ralph/runner.ts`) runs up to N iterations. Each one spawns `claude --dangerously-skip-permissions --verbose -p <prompt> --output-format stream-json` in the project directory and parses the stream into `StreamEvent`s. With `--teams` it sets `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`.
+- `log-parser.ts` reads and watches `.ml-ralph/log.jsonl`, `prd.json` and `kanban.json`. The panels render what it returns.
 
-2. **Application Layer** (`src/application/`)
-   - `AgentOrchestrator`: The "brain" that manages the agent loop and story selection
-   - `UIState`: Manages what the UI needs to display
-   - Commands: Handle user actions and state transitions
+Every module under `src/infrastructure` is used by the running app. If you add one, wire it in. If you stop using one, delete it with its tests.
 
-3. **Domain Layer** (`src/domain/`)
-   - Pure types and validation
-   - Story selection logic
-   - No external dependencies
+## UI Modes
 
-4. **Infrastructure Layer** (`src/infrastructure/`)
-   - `FileStore`: Read/write `.ml-ralph/` configuration files
-   - `ClaudeCodeClient`: Spawn and communicate with Claude Code
-   - `WandBClient`: Fetch metrics from Weights & Biases
-   - `ProcessManager`: Manage training jobs
+`Tab` cycles through three modes.
 
-### Two UI Modes
+- **Planning**: the tmux window is split. An interactive `claude` session runs in the terminal pane, where you create or refine the PRD. The TUI shows the knowledge tabs (PRD, Kanban, Learnings, Research).
+- **Monitor**: live activity feed, cognitive map, and the knowledge panel (hypotheses, experiments with metrics charts and any W&B links the agent logged).
+- **Output**: the raw agent stream (text, tool calls, results, errors, iteration markers).
 
-#### Planning Mode
+## Keyboard Shortcuts
 
-- Chat with Claude Code to create or refine your PRD
-- View accumulated learnings from past iterations
-- Review research the agent has gathered
-- See your story backlog and prioritize work
+| Key         | Action                                                    |
+| ----------- | --------------------------------------------------------- |
+| `Tab`       | Cycle Planning, Monitor and Output modes                  |
+| `1`-`4`     | Switch tab: PRD, Kanban, Learnings, Research              |
+| `f` / `i`   | Focus the terminal pane (Planning mode)                   |
+| `s`         | Start or stop the agent (asks for confirmation)           |
+| `h`         | Add a hint for the next iteration (while the agent runs)  |
+| `j` / `k`   | Scroll                                                    |
+| `b`/`c`/`a` | Expand backlog / completed / abandoned (Kanban tab)       |
+| `t`         | Stop the active training job (Monitor mode)               |
+| `w`         | Open the W&B URL of a training job (Monitor mode)         |
+| `Esc`       | Dismiss errors or leave input mode                        |
+| `q`         | Quit (asks for confirmation)                              |
 
-#### Monitor Mode
+`t` and `w` act on `.ml-ralph/runs/active.json`. Nothing writes training jobs to that file yet, so they currently do nothing.
 
-- Watch the agent execute stories in real-time
-- View experiment metrics and training curves via W&B
-- See current story and hypothesis being tested
-- Control the agent (start/stop) and training jobs
+## CLI
 
-### Keyboard Shortcuts
+```
+ml-ralph [project-path]       Launch the TUI (default: current directory)
+ml-ralph init [name] [path]   Initialize a project, keeping existing files
+ml-ralph --teams              Enable parallel experiments via agent teams
+ml-ralph init --force         Overwrite template files, keep project data
+```
 
-| Key            | Action                                    |
-| -------------- | ----------------------------------------- |
-| `Tab`          | Switch between Planning and Monitor modes |
-| `1/2/3`        | Switch tabs in Planning mode              |
-| `i` or `Enter` | Enter chat input mode                     |
-| `Esc`          | Exit input mode / dismiss errors          |
-| `s`            | Start/Stop agent                          |
-| `t`            | Stop training job (Monitor mode)          |
-| `w`            | Open W&B dashboard                        |
-| `q`            | Quit                                      |
+`ml-ralph init` and the TUI's first launch both go through `initRalph` (`src/infrastructure/ralph/init.ts`). It creates:
 
-### File Structure
+- `.ml-ralph/RALPH.md` (agent prompt), `prd.json`, `kanban.json`, `log.jsonl`, `config.json`, `runs/active.json`, `chat/`
+- `CLAUDE.md` and `AGENTS.md` in the project root
+- `.claude/skills/ml-ralph/SKILL.md` and `.codex/skills/ml-ralph/SKILL.md`
+- with `--teams`, `.claude/settings.json` with agent teams enabled
+
+## The `.ml-ralph/` Files
+
+| File               | Format | Written by                             | Purpose                                                    |
+| ------------------ | ------ | -------------------------------------- | ---------------------------------------------------------- |
+| `RALPH.md`         | MD     | `init`                                 | The agent's instructions                                   |
+| `prd.json`         | JSON   | `init` (empty draft), then the agent   | The destination: problem, goal, success criteria, scope    |
+| `kanban.json`      | JSON   | `init` (empty), then the agent         | The journey: current focus, up next, backlog, completed, abandoned |
+| `log.jsonl`        | JSONL  | the agent and `RalphRunner`            | Append-only event log; everything the TUI shows comes from it |
+| `config.json`      | JSON   | `init`                                 | Project config (name, W&B project, agent and runtime settings) |
+| `runs/active.json` | JSON   | `init` (`{"jobs": []}`)                | Active training jobs, read by the store                    |
+
+`JsonFileStore` can also read `learnings.jsonl`, `research.jsonl` and `runs/history.jsonl` when they exist. The agent does not write them. It logs learnings, research and experiments as events in `log.jsonl`.
+
+### The agent's loop
+
+The agent alternates between four phases, logged as `phase` events:
+
+```
+UNDERSTAND → STRATEGIZE → EXECUTE → REFLECT
+```
+
+Other event types in `log.jsonl` include `thinking`, `mental_model`, `research`, `path_analysis`, `hypothesis`, `experiment`, `learning`, `decision`, `strategic_retreat`, `prd_updated`, `kanban_updated` and `parallel_*` events for agent teams. The TypeScript interfaces are at the bottom of `templates.ts`. The same events are documented in the `ralph-log-events` skill, and the file schemas are in the `ralph-file-schemas` skill. Change them together.
+
+Experiment events can carry `wandb_run_id` and `wandb_url`, and the experiments panel shows them. The agent is told to track every training run in W&B (using offline mode if the user is not logged in). The app has no W&B API client.
+
+### User control
+
+- Hints (`h`) are queued in the runner and added to the next iteration's prompt.
+- The agent stops when it prints `<project_complete>` or the iteration limit is reached.
+- The agent runs with `--dangerously-skip-permissions`, so run it in a project where that is acceptable.
+
+## Source Layout
 
 ```
 src/
+├── index.tsx                    # CLI entry: help, init, tmux re-launch, render <App>
 ├── ui/
-│   ├── app.tsx              # Main app component
-│   ├── screens/
-│   │   ├── planning.tsx     # Planning mode screen
-│   │   └── monitor.tsx      # Monitor mode screen
-│   ├── widgets/
-│   │   ├── chat-panel.tsx   # Claude Code chat interface
-│   │   ├── learnings.tsx    # Learnings display
-│   │   ├── research.tsx     # Research findings
-│   │   ├── stories.tsx      # Story backlog
-│   │   └── metrics.tsx      # W&B metrics display
-│   └── hooks/
-│       └── index.ts         # React hooks
+│   ├── app.tsx                  # Modes, dialogs, shortcuts, orchestrator wiring
+│   ├── ink.tsx                  # Ink-compatible Box/Text/useInput on OpenTUI
+│   ├── screens/                 # planning, monitor, output
+│   ├── widgets/                 # knowledge panel, kanban, hypotheses, experiments, activity feed, ...
+│   ├── hooks/                   # use-log-stream, use-ralph-state, use-tmux-layout, use-tmux-pane, ...
+│   └── theme/colors.ts
 ├── application/
-│   └── orchestrator/
-│       ├── orchestrator.ts  # Agent orchestration logic
-│       └── types.ts         # Orchestrator types
+│   ├── orchestrator/            # DefaultOrchestrator (wraps RalphRunner)
+│   └── state/                   # zustand store
 ├── domain/
-│   └── types.ts             # Core domain types
+│   ├── types/                   # PRD, Story, Learning, Research, Job, Kanban, Config, enums
+│   └── validation/              # PRD and learning validation
 └── infrastructure/
-    ├── file-store/          # File system operations
-    ├── wandb/               # W&B integration
-    └── process/             # Process management
+    ├── ralph/                   # runner, init, log-parser, templates
+    ├── tmux/                    # TmuxManager, TmuxLayoutManager
+    └── file-store/              # JsonFileStore
 ```
 
----
-
-## ml-ralph-agent (Python Package)
-
-### Purpose
-
-The core agent logic that runs through a structured cognitive loop, integrating with Claude Code or Codex CLIs.
-
-**Repository**: `github.com/pentoai/ML-Ralph`
-**Package**: `pip install ml-ralph` or `uv tool install ml-ralph`
-**Version**: 0.3.0
-
-### Tech Stack
-
-- **CLI Framework**: Typer
-- **Terminal Output**: Rich
-- **Python**: 3.10+
-- **Integration**: Claude/Codex CLI via subprocess streaming
-
-### CLI Commands
-
-#### `ml-ralph init`
-
-Initialize Ralph in a project:
-
-- Creates `.ml-ralph/` directory structure
-- Sets up templates (RALPH.md, prd.json placeholders)
-- Installs skills for Claude Code and Codex CLIs
-- Copies configuration files to project root
-
-#### `ml-ralph run`
-
-Execute the autonomous loop:
-
-- Runs up to N iterations (default: 100)
-- Integrates with Claude Code CLI via streaming JSON protocol
-- Displays tool invocations and progress in real-time
-- Automatically handles exit conditions
-
-### The 7-Phase Cognitive Loop
-
-Ralph works through a structured cycle, looping from DECIDE back to HYPOTHESIZE:
-
-```
-ORIENT → RESEARCH → HYPOTHESIZE → EXECUTE → ANALYZE → VALIDATE → DECIDE
-                         ↑                                         │
-                         └─────────────────────────────────────────┘
-```
-
-#### Phase Definitions
-
-1. **ORIENT** - Understand the problem, constraints, failure modes
-2. **RESEARCH** - Learn from existing knowledge, find SOTA approaches
-3. **HYPOTHESIZE** - Form testable bets with expected outcomes
-4. **EXECUTE** - Implement minimal changes, run experiments
-5. **ANALYZE** - Examine results, find failure patterns
-6. **VALIDATE** - Check for leakage, ensure results are trustworthy
-7. **DECIDE** - Keep/revert/pivot, update PRD based on evidence
-
-### Two Operational Modes
-
-#### SETUP Mode (Interactive PRD Creation)
-
-- Triggered when no `prd.json` exists
-- Agent asks clarifying questions one at a time
-- User provides ML problem context
-- Agent writes `.ml-ralph/prd.json` when ready
-- Status transitions to "approved" when user says `/start`
-
-#### EXECUTION Mode (Autonomous Loop)
-
-- Triggered when `prd.json` exists with `status: "approved"`
-- Agent works autonomously through cognitive loop
-- Each iteration: reads state files, executes one phase, updates logs
-- Checks `inbox.json` for user commands each iteration
-- Updates PRD based on evidence (refinement)
-- Stops when all success criteria are met → outputs `<promise>COMPLETE</promise>`
-
-### MLE Mindset (Core Principles)
-
-- **Evidence over intuition** - Log what you observed, not what you expected
-- **One hypothesis at a time** - No simultaneous testing
-- **Minimal changes** - Smallest experiment to test hypothesis
-- **Skepticism** - Metrics suspicious until proven trustworthy
-- **Error-driven** - Find patterns in failures
-
-### User Control via Inbox
-
-Commands written to `inbox.json`:
-
-- `hint` - Provide guidance without stopping
-- `pause` - Pause execution
-- `resume` - Resume execution
-- `redirect` - Change direction
-
----
-
-## Core Data Models
-
-### PRD (Product Requirements Document)
-
-```typescript
-interface PRD {
-  projectName: string;
-  description: string;
-  goals: string[];
-  successCriteria: SuccessCriterion[];
-  constraints: string[];
-  scope: {
-    inScope: string[];
-    outOfScope: string[];
-  };
-  dataSources: DataSource[];
-  evaluationStrategy: EvaluationStrategy;
-  stories: Story[];
-  status: "draft" | "approved" | "completed";
-}
-```
-
-### Story
-
-```typescript
-interface Story {
-  id: string;
-  type: "discovery" | "experiment" | "evaluation" | "implementation" | "ops";
-  title: string;
-  description: string;
-  hypothesis?: string; // Format: "If X, then Y because Z"
-  state: "pending" | "in_progress" | "done" | "superseded";
-  createdAt: string;
-  completedAt?: string;
-}
-```
-
-### Learning
-
-```typescript
-interface Learning {
-  id: string;
-  insight: string;
-  implications: string[];
-  category:
-    | "data"
-    | "model"
-    | "evaluation"
-    | "infrastructure"
-    | "domain"
-    | "process";
-  impact: "high" | "medium" | "low";
-  confidence: "proven" | "likely" | "speculative";
-  sourceStory?: string;
-  sourceExperiment?: string;
-  wandbRunId?: string;
-  createdAt: string;
-}
-```
-
-### Progress Log Entry
-
-```typescript
-interface ProgressEntry {
-  iteration: number;
-  phase: string;
-  hypothesis: string;
-  assumptions: string[];
-  changes: string[];
-  metrics: {
-    baseline: Record<string, number>;
-    result: Record<string, number>;
-  };
-  decision: "keep" | "revert" | "investigate";
-  evidence: {
-    wandbArtifacts?: string[];
-    logs?: string[];
-    commits?: string[];
-  };
-  timestamp: string;
-}
-```
-
-### Research
-
-```typescript
-interface Research {
-  id: string;
-  type:
-    | "paper"
-    | "documentation"
-    | "tutorial"
-    | "stackoverflow"
-    | "blog"
-    | "repo";
-  title: string;
-  url?: string;
-  summary: string;
-  keyTakeaways: string[];
-  codeSnippets?: string[];
-  relatedStories: string[];
-  createdAt: string;
-}
-```
-
-### Training Job
-
-```typescript
-interface TrainingJob {
-  id: string;
-  pid: number;
-  command: string;
-  logPath: string;
-  wandbRunId?: string;
-  wandbUrl?: string;
-  status: "running" | "completed" | "failed" | "stopped";
-  startedAt: string;
-  endedAt?: string;
-}
-```
-
----
-
-## State Files (`.ml-ralph/` Directory)
-
-| File                     | Format | Purpose                                           |
-| ------------------------ | ------ | ------------------------------------------------- |
-| `config.json`            | JSON   | Project configuration                             |
-| `prd.json`               | JSON   | Current PRD (the contract)                        |
-| `ralph.json`             | JSON   | Current execution state (phase, iteration, stats) |
-| `backlog.json`           | JSON   | Queue of hypotheses to test                       |
-| `learnings.jsonl`        | JSONL  | Extracted insights (one per line)                 |
-| `research.jsonl`         | JSONL  | Research findings                                 |
-| `progress.jsonl`         | JSONL  | Iteration logs (thinking log)                     |
-| `chat.jsonl`             | JSONL  | Conversation history                              |
-| `inbox.json`             | JSON   | User commands (hint, pause, redirect, resume)     |
-| `runs/active.json`       | JSON   | Currently running training jobs                   |
-| `runs/history.jsonl`     | JSONL  | Completed training jobs                           |
-| `chat/prd-session.jsonl` | JSONL  | PRD chat session history                          |
-
----
-
-## Workflow
-
-1. **Initialize**: `ml-ralph init` creates `.ml-ralph/` directory with config
-2. **Plan**: Chat with Claude Code in Planning Mode to refine your PRD
-3. **Execute**: Agent autonomously works through stories, runs experiments
-4. **Monitor**: Watch execution in Monitor Mode, see metrics and learnings
-5. **Learn**: Accumulated insights inform next iteration's decisions
-
----
-
-## Long-Running Job Support
-
-Ralph handles training jobs that outlast individual iterations:
-
-- Detach processes via `nohup`, `setsid`, or `tmux`
-- Track via `outputs/logs/active_runs.json` with PID, log path, W&B URL
-- Next iterations enter "monitoring mode" to observe and decide
-- Jobs survive agent exit/iteration boundaries
-
----
-
-## Integration Points
-
-### Claude Code Integration
-
-- Spawned as subprocess with `--output-format stream-json`
-- Restricted tools: `Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`
-- Real-time streaming of tool invocations and responses
-
-### Weights & Biases Integration
-
-- Fetch experiment metrics
-- Display training curves
-- Link runs to stories and learnings
-- Open dashboard via keyboard shortcut
-
----
-
-## Default Tooling (Agent Instructions)
-
-When Ralph runs experiments, it defaults to:
-
-- `uv` - Package management
-- `ruff` - Linting & formatting
-- `wandb` - Experiment tracking
-- `pydantic` - Data models
-- `loguru` - Logging
-- `typer` - CLI building
-
----
-
-## Key Files Reference
-
-### In ml-ralph (TypeScript TUI)
-
-- `src/ui/app.tsx` - Main application entry
-- `src/ui/screens/planning.tsx` - Planning mode screen
-- `src/application/orchestrator/orchestrator.ts` - Agent orchestration
-- `package.json` - Dependencies and scripts
-
-### In ml-ralph-agent (Python)
-
-- `ml_ralph/cli.py` - CLI entry points
-- `ml_ralph/runner.py` - Agent execution loop
-- `templates/RALPH.md` - Full agent instructions
-- `templates/CLAUDE.md` - Project instructions template
+## Development
+
+- Install: `bun install --frozen-lockfile`
+- Run: `bun run dev` (needs tmux and an authenticated `claude` CLI)
+- Check: `bun run check` (Biome and `tsc --noEmit`)
+- Test: `bun test` (the tmux tests need a real tmux binary)
+- Do not edit `version` in `package.json`; `.husky/post-commit` bumps it.
+
+## Key Files
+
+- `src/index.tsx`: entry point
+- `src/ui/app.tsx`: main component
+- `src/application/orchestrator/orchestrator.ts`: `DefaultOrchestrator`
+- `src/infrastructure/ralph/runner.ts`: the agent loop
+- `src/infrastructure/ralph/templates.ts`: agent prompts and log event types
+- `src/infrastructure/ralph/log-parser.ts`: log, PRD and kanban parsing
+- `docs/knowledge/CLAUDE_CLI_STREAM_JSON.md`: notes on the stream-json protocol

@@ -3,13 +3,6 @@
  */
 
 export {
-  type ChatMessage,
-  type ToolCall,
-  type UseChatOptions,
-  type UseChatResult,
-  useClaudeChat,
-} from "./use-claude-chat.ts";
-export {
   type UseLogStreamOptions,
   type UseLogStreamResult,
   useLogStream,
