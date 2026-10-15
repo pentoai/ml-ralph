@@ -9,7 +9,11 @@ permissions:
   id-token: write
 
 jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
   release:
+    needs: ci
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -67,10 +71,6 @@ jobs:
       - name: Install dependencies
         if: steps.tag_check.outputs.exists == 'false'
         run: bun install --frozen-lockfile
-
-      - name: Lint & typecheck
-        if: steps.tag_check.outputs.exists == 'false'
-        run: bun run check
 
       - name: Publish to npm
         if: steps.tag_check.outputs.exists == 'false'
