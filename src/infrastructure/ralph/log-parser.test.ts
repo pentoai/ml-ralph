@@ -102,7 +102,7 @@ describe("aggregateEvents", () => {
       });
       const summary = aggregateEvents([hypothesis("H1", "1"), decision]);
       expect(summary.hypotheses[0]?.status).toBe(action);
-      expect(summary.hypotheses[0]?.decision).toEqual(decision as never);
+      expect(summary.hypotheses[0]?.decision).toMatchObject(decision);
     }
   });
 
@@ -464,7 +464,7 @@ describe("log file I/O", () => {
   test("readPrdFile and readKanbanFile parse valid files", async () => {
     await Bun.write(join(dir, ".ml-ralph", "prd.json"), '{"project":"p"}');
     await Bun.write(join(dir, ".ml-ralph", "kanban.json"), '{"backlog":[]}');
-    expect(await readPrdFile(dir)).toEqual({ project: "p" } as never);
-    expect(await readKanbanFile(dir)).toEqual({ backlog: [] } as never);
+    expect(await readPrdFile(dir)).toMatchObject({ project: "p" });
+    expect(await readKanbanFile(dir)).toMatchObject({ backlog: [] });
   });
 });

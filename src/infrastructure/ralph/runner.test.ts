@@ -366,6 +366,32 @@ describe("parseStreamLine", () => {
     ]);
   });
 
+  test("valid JSON with an unexpected shape falls back to raw text", () => {
+    const lines = [
+      JSON.stringify(assistant([{ type: "tool_use", id: "t", name: "Bash" }])),
+      JSON.stringify(assistant([null])),
+      JSON.stringify({ type: "assistant", message: { content: 5 } }),
+      JSON.stringify({ type: "user", message: { content: [null] } }),
+    ];
+    for (const line of lines) {
+      const parsed = parseStreamLine(line, null);
+      expect(parsed.outputs).toEqual([{ type: "text", content: line }]);
+    }
+  });
+
+  test("string content does not throw and emits nothing", () => {
+    for (const type of ["assistant", "user"]) {
+      const line = JSON.stringify({ type, message: { content: "oops" } });
+      expect(parseStreamLine(line, null).outputs).toEqual([]);
+    }
+  });
+
+  test("unexpected shape keeps the previous lastToolCall", () => {
+    const prev = { name: "Read", input: { file_path: "/a" } };
+    const line = JSON.stringify(assistant([null]));
+    expect(parseStreamLine(line, prev).lastToolCall).toBe(prev);
+  });
+
   test("result lines return the final result text and emit nothing", () => {
     const line = JSON.stringify({
       type: "result",

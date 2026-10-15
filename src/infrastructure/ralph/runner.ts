@@ -452,7 +452,13 @@ export function parseStreamLine(
   }
 
   const record = event as Record<string, unknown>;
-  const parsed = parseStreamEvent(record, lastToolCall);
+  let parsed: ReturnType<typeof parseStreamEvent>;
+  try {
+    parsed = parseStreamEvent(record, lastToolCall);
+  } catch {
+    // Valid JSON with an unexpected shape: surface the raw line instead of aborting the loop
+    return { outputs: [{ type: "text", content: line }], lastToolCall };
+  }
   if (record.type === "result") {
     return { ...parsed, result: (record.result as string) || "" };
   }
