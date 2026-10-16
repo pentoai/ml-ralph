@@ -3,13 +3,15 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { mkdir, rename } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { validateEvalContract } from "../../domain/validation/index.ts";
 import {
   describeEvalChanges,
   findEvalChanges,
   readEvalLock,
+  sha256,
 } from "./eval-lock.ts";
 import {
   EVALS_DIR,
@@ -21,7 +23,9 @@ import type { EvalEvent } from "./templates.ts";
 
 /** Per-seed timeout when the contract does not set eval_timeout_seconds */
 export const DEFAULT_EVAL_TIMEOUT_SECONDS = 3600;
-const EVALUATE_PATH = ".ml-ralph/eval/evaluate.py";
+const EVAL_DIR = ".ml-ralph/eval";
+/** Tells evaluate.py where its original directory is, since it runs from a copy */
+export const EVAL_DIR_ENV = "ML_RALPH_EVAL_DIR";
 const MAX_STDERR_CHARS = 300;
 
 export interface EvalCommandResult {
@@ -81,6 +85,7 @@ function parseScore(stdout: string): number | null {
 async function runSeed(
   argv: string[],
   cwd: string,
+  env: Record<string, string | undefined>,
   seed: number,
   timeoutSeconds: number,
 ): Promise<SeedRun> {
@@ -88,6 +93,7 @@ async function runSeed(
   try {
     proc = Bun.spawn(argv, {
       cwd,
+      env,
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
@@ -202,10 +208,32 @@ export async function runEvalCommand(
     );
   }
 
+  // Read each locked file once and check those bytes against the lock, so
+  // nothing can be swapped in between the check and the run
+  const readLocked = async (name: "evaluate.py" | "contract.json") => {
+    try {
+      const bytes = new Uint8Array(
+        await Bun.file(join(projectDir, EVAL_DIR, name)).arrayBuffer(),
+      );
+      return sha256(bytes) === lock.files[name] ? bytes : null;
+    } catch {
+      return null;
+    }
+  };
+  const [evaluateBytes, contractBytes] = await Promise.all([
+    readLocked("evaluate.py"),
+    readLocked("contract.json"),
+  ]);
+  if (!evaluateBytes || !contractBytes) {
+    return fail(
+      "Locked eval files changed while the eval was starting. Nothing was run.",
+    );
+  }
+
   let contract: ReturnType<typeof validateEvalContract>;
   try {
     contract = validateEvalContract(
-      await Bun.file(`${projectDir}/.ml-ralph/eval/contract.json`).json(),
+      JSON.parse(new TextDecoder().decode(contractBytes)),
     );
   } catch {
     return fail("contract.json could not be read. Nothing was run.");
@@ -234,29 +262,42 @@ export async function runEvalCommand(
     created_at: new Date().toISOString(),
   };
 
+  // Run the verified bytes from a private copy, not the file in the project
+  const privateDir = await mkdtemp(join(tmpdir(), "ml-ralph-eval-"));
   const scores: EvalSeedScore[] = [];
   let metrics: EvalMetrics | undefined;
-  for (const seed of seeds) {
-    const run = await runSeed(
-      [
-        python,
-        EVALUATE_PATH,
-        "--candidate",
-        candidatePath,
-        "--split",
-        split,
-        "--seed",
-        String(seed),
-      ],
-      projectDir,
-      seed,
-      timeoutSeconds,
-    );
-    if (!run.ok) {
-      metrics = { ...base, status: "failed", reason: run.reason };
-      break;
+  try {
+    const script = join(privateDir, "evaluate.py");
+    await writeFile(script, evaluateBytes, { mode: 0o400 });
+    const env = {
+      ...process.env,
+      [EVAL_DIR_ENV]: join(projectDir, EVAL_DIR),
+    };
+    for (const seed of seeds) {
+      const run = await runSeed(
+        [
+          python,
+          script,
+          "--candidate",
+          candidatePath,
+          "--split",
+          split,
+          "--seed",
+          String(seed),
+        ],
+        projectDir,
+        env,
+        seed,
+        timeoutSeconds,
+      );
+      if (!run.ok) {
+        metrics = { ...base, status: "failed", reason: run.reason };
+        break;
+      }
+      scores.push({ seed, score: run.score });
     }
-    scores.push({ seed, score: run.score });
+  } finally {
+    await rm(privateDir, { recursive: true, force: true });
   }
   metrics ??= {
     ...base,

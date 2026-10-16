@@ -129,10 +129,19 @@ Before each iteration `RalphRunner` re-hashes `.ml-ralph/eval/evaluate.py` and `
 The agent does not compute the scores anything trusts. It runs `ml-ralph eval <path>` (dispatched in `src/index.tsx` before the TUI starts, like `log`), which:
 
 1. refuses, running nothing, unless `lock.json` is well-formed and `findEvalChanges` finds no difference between the locked files and their hashes;
-2. runs the locked `evaluate.py` once per contract seed in a subprocess killed after `eval_timeout_seconds`;
+2. reads `evaluate.py` and `contract.json` once, checks those bytes against the lock, copies `evaluate.py` to a private temporary directory (removed afterwards) and runs that copy once per contract seed in a subprocess killed after `eval_timeout_seconds`. Editing the project's `evaluate.py` after the check changes nothing that runs; the script finds its original directory through `ML_RALPH_EVAL_DIR` instead of `__file__`;
 3. writes `.ml-ralph/evals/<eval_id>/metrics.json` (format in [DATA_MODELS.md](./DATA_MODELS.md#eval-metrics)) and appends a runner-only `eval` event to `log.jsonl`.
 
-On the read side `readEvalMetrics` only opens `.ml-ralph/evals/<id>/metrics.json`, and `useRalphState` exposes the ids with `status: "ok"` as `verifiedEvalIds`. The experiments panel marks the metrics of an experiment as unverified unless its `eval_id` is in that set, and the "best" in its summary line only counts verified experiments. Hypotheses and cognitive-map panels still show the agent-reported numbers. Promotion and completion gates that consume these files are a later change.
+On the read side `readEvalMetrics` only opens `.ml-ralph/evals/<id>/metrics.json`. `readVerifiedEvals` returns the evals with `status: "ok"` as `eval_id -> { mean, std, seeds }`; `useRalphState` keeps an `EvalCache` across its 2-second polls, so an eval already read (ok or failed) is not opened again and only new directories cost a read, and also reads `primary_metric` and `direction` from the contract (`readEvalScoring`).
+
+What the TUI treats as verified is the eval's `mean` from `metrics.json`, never a number from the experiment event (`ui/widgets/experiment-verification.ts`):
+
+- the experiments panel row and details show `eval <mean>` in green for an experiment whose `eval_id` names a finished eval. If the number the agent reported under the contract's `primary_metric` differs from that mean (beyond rounding), the row shows `eval 0.81 ≠ 0.95` and the details say so. The numbers the agent reported are listed separately, in yellow, as "Reported by the agent (not verified)", and without a finished eval the row reads `auc: 0.95 unverified`;
+- the summary line counts experiments without a finished eval as unverified, and its "best eval" (and the target check) uses eval means only, in the contract's direction; the sparkline plots eval means;
+- the hypotheses panel shows the eval mean of the latest experiment and labels the agent's numbers "Reported";
+- the cognitive map and the activity feed read only `log.jsonl` and cannot check anything on disk, so they label what the agent logged: a trailing `?` on the cognitive map (which no longer marks a best), `(reported)` on `experiment` and `parallel_result` lines. `parallel_result` events carry no `eval_id`, so their metrics are never verified.
+
+Promotion and completion gates that consume these files are a later change and must read scores from `metrics.json` only, never from the `experiment` event.
 
 ### Verifier (`infrastructure/ralph/verifier.ts`)
 

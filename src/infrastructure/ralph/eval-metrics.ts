@@ -4,6 +4,10 @@
 
 import { readdir, realpath } from "node:fs/promises";
 import { join } from "node:path";
+import {
+  type EvalDirection,
+  validateEvalContract,
+} from "../../domain/validation/index.ts";
 
 /** Where `ml-ralph eval` writes one directory per eval, relative to the project */
 export const EVALS_DIR = ".ml-ralph/evals";
@@ -83,32 +87,95 @@ export async function readEvalMetrics(
   }
 }
 
-/** Ids of the evals under .ml-ralph/evals/ that finished with status ok */
-export async function readVerifiedEvalIds(
+/** What the TUI shows for a finished eval; read from the runner's metrics.json only */
+export interface EvalSummary {
+  mean: number;
+  std: number;
+  seeds: number;
+}
+
+/** eval_id -> summary, for the evals that finished with status ok */
+export type VerifiedEvals = ReadonlyMap<string, EvalSummary>;
+
+/**
+ * Remembers evals already read, so a poll only opens directories it has not
+ * seen. metrics.json is written once, by rename, so a finished eval (ok or
+ * failed) never needs a second read; a directory with no readable
+ * metrics.json yet is retried on the next poll.
+ */
+export interface EvalCache {
+  /** Project the entries belong to; a different project starts over */
+  projectPath?: string;
+  ok: Map<string, EvalSummary>;
+  failed: Set<string>;
+}
+
+export const createEvalCache = (): EvalCache => ({
+  ok: new Map(),
+  failed: new Set(),
+});
+
+/** The evals under .ml-ralph/evals/ that finished with status ok */
+export async function readVerifiedEvals(
   projectPath: string,
-): Promise<Set<string>> {
-  const ids = new Set<string>();
+  cache: EvalCache = createEvalCache(),
+): Promise<VerifiedEvals> {
+  if (cache.projectPath !== projectPath) {
+    cache.projectPath = projectPath;
+    cache.ok.clear();
+    cache.failed.clear();
+  }
   let names: string[];
   try {
     names = await readdir(join(projectPath, EVALS_DIR));
   } catch {
-    return ids;
+    cache.ok.clear();
+    cache.failed.clear();
+    return new Map();
   }
+  const present = new Set(names);
+  for (const id of [...cache.ok.keys()])
+    if (!present.has(id)) cache.ok.delete(id);
+  for (const id of [...cache.failed])
+    if (!present.has(id)) cache.failed.delete(id);
+
   for (const name of names) {
-    if ((await readEvalMetrics(projectPath, name))?.status === "ok") {
-      ids.add(name);
+    if (cache.ok.has(name) || cache.failed.has(name)) continue;
+    const metrics = await readEvalMetrics(projectPath, name);
+    if (metrics?.status === "ok") {
+      cache.ok.set(name, {
+        mean: metrics.mean,
+        std: metrics.std,
+        seeds: metrics.scores.length,
+      });
+    } else if (metrics?.status === "failed") {
+      cache.failed.add(name);
     }
   }
-  return ids;
+  return new Map(cache.ok);
 }
 
-/** True when the experiment's eval_id is one of the runner's finished evals */
-export function isExperimentVerified(
-  experiment: { eval_id?: unknown },
-  verifiedEvalIds: ReadonlySet<string>,
-): boolean {
-  return (
-    typeof experiment.eval_id === "string" &&
-    verifiedEvalIds.has(experiment.eval_id)
-  );
+/** The contract fields the TUI needs to read an eval mean */
+export interface EvalScoring {
+  primaryMetric: string;
+  direction: EvalDirection;
+}
+
+/** primary_metric and direction from .ml-ralph/eval/contract.json, null if unusable */
+export async function readEvalScoring(
+  projectPath: string,
+): Promise<EvalScoring | null> {
+  try {
+    const result = validateEvalContract(
+      await Bun.file(join(projectPath, ".ml-ralph/eval/contract.json")).json(),
+    );
+    return result.valid
+      ? {
+          primaryMetric: result.contract.primary_metric,
+          direction: result.contract.direction,
+        }
+      : null;
+  } catch {
+    return null;
+  }
 }

@@ -86,7 +86,7 @@ An independent read-only verifier judges each promotion candidate; this event re
 ```jsonl
 {"ts":"...","type":"eval","eval_id":"eval-lq3k2m-9f3a1c","status":"ok","candidate":"submissions/h001.csv","mean":0.832,"std":0.004}
 ```
-`ml-ralph eval <path>` writes this after scoring a candidate. Put its `eval_id` in your `experiment` event; metrics without a runner `eval_id` show as unverified. Never write anything under `.ml-ralph/evals/` yourself.
+`ml-ralph eval <path>` writes this after scoring a candidate. Put its `eval_id` in your `experiment` event; the TUI shows that eval's mean as the result, lists your own numbers as unverified, and flags a `primary_metric` number that disagrees with the eval. Without a real `eval_id` your metrics are unverified. Never write anything under `.ml-ralph/evals/` yourself.
 
 ```jsonl
 {"ts":"...","type":"contract_relocked","changes":[{"file":"evaluate.py","kind":"edited"}],"files":{"evaluate.py":"<sha256>","contract.json":"<sha256>"}}

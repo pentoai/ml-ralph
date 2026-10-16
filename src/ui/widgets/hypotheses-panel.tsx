@@ -2,12 +2,20 @@
  * Hypotheses panel - displays hypotheses from log.jsonl with visual styling
  */
 
-import type { HypothesisWithStatus } from "../../infrastructure/ralph/index.ts";
+import type {
+  EvalScoring,
+  HypothesisWithStatus,
+  VerifiedEvals,
+} from "../../infrastructure/ralph/index.ts";
 import { Box, Text } from "../ink.tsx";
 import { colors } from "../theme/colors.ts";
+import { assessExperiment } from "./experiment-verification.ts";
 
 interface HypothesesPanelProps {
   hypotheses: HypothesisWithStatus[];
+  /** Finished runner evals; only their means are shown as verified */
+  evals: VerifiedEvals;
+  scoring: EvalScoring | null;
   offset?: number;
   limit?: number;
 }
@@ -28,6 +36,8 @@ function ExperimentProgress({ count }: { count: number }) {
 
 export function HypothesesPanel({
   hypotheses,
+  evals,
+  scoring,
   offset = 0,
   limit = 5,
 }: HypothesesPanelProps) {
@@ -71,7 +81,12 @@ export function HypothesesPanel({
 
       {/* Hypotheses list */}
       {displayHypotheses.map((h) => (
-        <HypothesisCard key={h.id} hypothesis={h} />
+        <HypothesisCard
+          key={h.id}
+          hypothesis={h}
+          evals={evals}
+          scoring={scoring}
+        />
       ))}
     </Box>
   );
@@ -79,9 +94,11 @@ export function HypothesesPanel({
 
 interface HypothesisCardProps {
   hypothesis: HypothesisWithStatus;
+  evals: VerifiedEvals;
+  scoring: EvalScoring | null;
 }
 
-function HypothesisCard({ hypothesis }: HypothesisCardProps) {
+function HypothesisCard({ hypothesis, evals, scoring }: HypothesisCardProps) {
   const defaultConfig = {
     color: colors.accentYellow,
     icon: "○",
@@ -105,6 +122,9 @@ function HypothesisCard({ hypothesis }: HypothesisCardProps) {
   const latestExperiment =
     hypothesis.experiments[hypothesis.experiments.length - 1];
   const metrics = latestExperiment?.metrics;
+  const trust = latestExperiment
+    ? assessExperiment(latestExperiment, evals, scoring)
+    : null;
 
   return (
     <Box
@@ -146,10 +166,22 @@ function HypothesisCard({ hypothesis }: HypothesisCardProps) {
           </Box>
         )}
 
+        {trust?.eval && (
+          <Box>
+            <Text color={colors.textMuted}>Eval: </Text>
+            <Text color={colors.accentGreen}>
+              {scoring?.primaryMetric ?? "score"} mean{" "}
+              {trust.eval.mean.toFixed(3)}
+            </Text>
+          </Box>
+        )}
+
         {metrics && (
           <Box>
-            <Text color={colors.textMuted}>Results: </Text>
-            <Text color={colors.accentGreen}>
+            <Text color={colors.textMuted}>
+              {trust?.eval ? "Reported: " : "Reported (unverified): "}
+            </Text>
+            <Text color={colors.accentYellow}>
               {Object.entries(metrics)
                 .map(
                   ([k, v]) =>

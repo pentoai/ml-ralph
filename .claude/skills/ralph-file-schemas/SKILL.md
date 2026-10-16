@@ -81,7 +81,7 @@ All fields are required. `seeds` is a non-empty array of integers, `holdout_gap_
 
 ### evals/ (runner-written scores)
 
-Submit a candidate with `ml-ralph eval <path>`: the runner runs the locked `evaluate.py` over every contract seed and writes `.ml-ralph/evals/<eval_id>/metrics.json` (`eval_id`, `contract_hash`, `candidate`, per-seed `scores`, `mean`, `std`, `status`). Never create or edit files there or write a metrics file yourself; log the `eval_id` in your `experiment` event.
+Submit a candidate with `ml-ralph eval <path>`: the runner runs a private copy of the locked `evaluate.py` over every contract seed (find files beside it through `ML_RALPH_EVAL_DIR`, not `__file__`) and writes `.ml-ralph/evals/<eval_id>/metrics.json` (`eval_id`, `contract_hash`, `candidate`, per-seed `scores`, `mean`, `std`, `status`). Never create or edit files there or write a metrics file yourself; log the `eval_id` in your `experiment` event.
 
 ---
 

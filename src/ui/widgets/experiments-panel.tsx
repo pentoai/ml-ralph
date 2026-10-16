@@ -5,21 +5,30 @@
 import * as asciichart from "asciichart";
 import { useEffect } from "react";
 import { useAppStore } from "../../application/state/index.ts";
-import {
-  type ExperimentEvent,
-  type HypothesisWithStatus,
-  isExperimentVerified,
+import type {
+  EvalScoring,
+  ExperimentEvent,
+  HypothesisWithStatus,
+  VerifiedEvals,
 } from "../../infrastructure/ralph/index.ts";
 import { Box, Text } from "../ink.tsx";
 import { colors } from "../theme/colors.ts";
+import {
+  assessExperiment,
+  type ExperimentTrust,
+  evalFor,
+  summarizeExperiments,
+} from "./experiment-verification.ts";
 
 // --- Types ---
 
 interface ExperimentsPanelProps {
   hypotheses: HypothesisWithStatus[];
   experiments: ExperimentEvent[];
-  /** Runner evals under .ml-ralph/evals/; a metric without one is unverified */
-  verifiedEvalIds: ReadonlySet<string>;
+  /** Finished runner evals under .ml-ralph/evals/; only their means are verified */
+  evals: VerifiedEvals;
+  /** primary_metric and direction from contract.json */
+  scoring: EvalScoring | null;
   successCriteria: string[];
   selectedId: string | null;
   expandedId: string | null;
@@ -258,11 +267,13 @@ function flattenGroupIds(groups: ExperimentGroup[]): string[] {
  */
 function SummaryHeader({
   experiments,
-  verifiedEvalIds,
+  evals,
+  scoring,
   targets,
 }: {
   experiments: ExperimentEvent[];
-  verifiedEvalIds: ReadonlySet<string>;
+  evals: VerifiedEvals;
+  scoring: EvalScoring | null;
   targets: ParsedTarget[];
 }) {
   const totalExps = experiments.length;
@@ -270,31 +281,18 @@ function SummaryHeader({
     experiments.map((e) => e.hypothesis_id).filter(Boolean),
   ).size;
 
-  const unverified = experiments.filter(
-    (e) => !isExperimentVerified(e, verifiedEvalIds),
-  ).length;
-
-  // Only runner-scored experiments can be "best"
-  let bestKey = "";
-  let bestVal = -Infinity;
-  let bestName = "";
-  for (const exp of experiments) {
-    if (!isExperimentVerified(exp, verifiedEvalIds)) continue;
-    const km = getKeyMetric(exp.metrics ?? {});
-    if (km) {
-      const lb = isLowerBetter(km.key);
-      const better = lb ? km.value < bestVal : km.value > bestVal;
-      if (bestKey === "" || better) {
-        bestKey = km.key;
-        bestVal = km.value;
-        bestName = exp.name || exp.hypothesis_id;
-      }
-    }
-  }
+  const { unverified, best } = summarizeExperiments(
+    experiments,
+    evals,
+    scoring,
+  );
+  const bestKey = scoring?.primaryMetric ?? "eval";
+  const bestVal = best?.mean ?? 0;
+  const bestName = best?.name ?? "";
 
   let targetMet: boolean | null = null;
   let targetStr = "";
-  if (bestKey && targets.length > 0) {
+  if (best && scoring && targets.length > 0) {
     const t = findTarget(bestKey, targets);
     if (t) {
       targetMet = meetsTarget(bestVal, t);
@@ -315,9 +313,9 @@ function SummaryHeader({
           {unverified} unverified
         </Text>
       )}
-      {bestKey && (
+      {best && (
         <Text color={colors.textSecondary}>
-          {"   best: "}
+          {"   best eval: "}
           <Text color={colors.accentGreen} bold>
             {shortenKey(bestKey)} {formatNumber(bestVal)}
           </Text>
@@ -396,13 +394,15 @@ function ExperimentRow({
   isSelected,
   isExpanded,
   delta,
-  verified,
+  lowerBetter,
+  trust,
 }: {
   experiment: ExperimentEvent;
   isSelected: boolean;
   isExpanded: boolean;
   delta: string;
-  verified: boolean;
+  lowerBetter: boolean;
+  trust: ExperimentTrust;
 }) {
   const timeAgo = formatRelativeTime(experiment.ts);
   const keyMetric = getKeyMetric(experiment.metrics ?? {});
@@ -411,10 +411,8 @@ function ExperimentRow({
 
   // Delta arrow direction
   let deltaDisplay = "";
-  if (delta && keyMetric) {
-    const good = isLowerBetter(keyMetric.key)
-      ? delta.startsWith("-")
-      : delta.startsWith("+");
+  if (delta) {
+    const good = lowerBetter ? delta.startsWith("-") : delta.startsWith("+");
     deltaDisplay = `${good ? "▲" : "▼"}${delta}`;
   }
 
@@ -438,13 +436,22 @@ function ExperimentRow({
 
       {/* Key metric — always COL_METRIC wide */}
       <Box width={COL_METRIC}>
-        {keyMetric ? (
-          <Text
-            color={verified ? colors.accentGreen : colors.accentYellow}
-            bold={verified}
-          >
+        {trust.eval ? (
+          <Text>
+            <Text color={colors.accentGreen} bold>
+              eval {formatNumber(trust.eval.mean)}
+            </Text>
+            {trust.mismatch && trust.reported !== null ? (
+              <Text color={colors.accentYellow}>
+                {" ≠ "}
+                {formatNumber(trust.reported)}
+              </Text>
+            ) : null}
+          </Text>
+        ) : keyMetric ? (
+          <Text color={colors.accentYellow}>
             {shortenKey(keyMetric.key)}: {formatNumber(keyMetric.value)}
-            {verified ? "" : " unverified"}
+            {" unverified"}
           </Text>
         ) : (
           <Text color={colors.textMuted}>{"—"}</Text>
@@ -523,13 +530,11 @@ function MetricRow({
   value,
   prevValue,
   targets,
-  verified,
 }: {
   metricKey: string;
   value: number;
   prevValue: number | null;
   targets: ParsedTarget[];
-  verified: boolean;
 }) {
   const lowerBetter = isLowerBetter(metricKey);
   const isNormalized = value >= 0 && value <= 1;
@@ -558,9 +563,7 @@ function MetricRow({
         />
       </Box>
       <Box width={DETAIL_COL_VAL}>
-        <Text color={verified ? colors.accentGreen : colors.accentYellow}>
-          {formatNumber(value)}
-        </Text>
+        <Text color={colors.accentYellow}>{formatNumber(value)}</Text>
       </Box>
       <Box width={DETAIL_COL_DELTA}>
         {delta ? (
@@ -572,16 +575,9 @@ function MetricRow({
         )}
       </Box>
       {target ? (
-        <Text
-          color={
-            verified && meetsTarget(value, target)
-              ? colors.accentGreen
-              : colors.accentYellow
-          }
-        >
+        <Text color={colors.accentYellow}>
           {target.operator}
-          {target.value}{" "}
-          {!verified ? "?" : meetsTarget(value, target) ? "✓" : "○"}
+          {target.value} ?
         </Text>
       ) : (
         <Text color={colors.textMuted}> </Text>
@@ -591,31 +587,21 @@ function MetricRow({
 }
 
 /**
- * Sparkline of a single metric across experiments in the same hypothesis.
- * Only rendered when there are 3+ data points — this is the one section
- * that legitimately has nothing to show for small groups.
+ * Sparkline of the runner eval means across the verified experiments of one
+ * hypothesis. Only rendered when there are 3+ data points.
  */
 function HypothesisSparkline({
   experiments,
+  evals,
 }: {
   experiments: ExperimentEvent[];
+  evals: VerifiedEvals;
 }) {
-  if (experiments.length < 3) return null;
-
-  const keyMetricKey = (() => {
-    for (const exp of experiments) {
-      const km = getKeyMetric(exp.metrics ?? {});
-      if (km) return km.key;
-    }
-    return null;
-  })();
-  if (!keyMetricKey) return null;
-
   const chronological = [...experiments].sort(
     (a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime(),
   );
   const values = chronological
-    .map((e) => e.metrics?.[keyMetricKey])
+    .map((e) => evalFor(e, evals)?.mean)
     .filter((v): v is number => v !== undefined);
   if (values.length < 3) return null;
 
@@ -627,7 +613,7 @@ function HypothesisSparkline({
     return (
       <Box flexDirection="column" marginTop={1}>
         <Text color={colors.textMuted} bold>
-          {shortenKey(keyMetricKey)} trend ({values.length} experiments):
+          eval mean trend ({values.length} experiments):
         </Text>
         <Text color={colors.accentBlue}>{chart}</Text>
       </Box>
@@ -635,6 +621,17 @@ function HypothesisSparkline({
   } catch {
     return null;
   }
+}
+
+function evalTarget(
+  scoring: EvalScoring | null,
+  mean: number,
+  targets: ParsedTarget[],
+): string {
+  const target = scoring ? findTarget(scoring.primaryMetric, targets) : null;
+  return target
+    ? `  ${target.operator}${target.value} ${meetsTarget(mean, target) ? "✓" : "○"}`
+    : "";
 }
 
 /**
@@ -655,13 +652,17 @@ function ExperimentDetails({
   prevExperiment,
   groupExperiments,
   targets,
-  verified,
+  evals,
+  scoring,
+  trust,
 }: {
   experiment: ExperimentEvent;
   prevExperiment: ExperimentEvent | null;
   groupExperiments: ExperimentEvent[];
   targets: ParsedTarget[];
-  verified: boolean;
+  evals: VerifiedEvals;
+  scoring: EvalScoring | null;
+  trust: ExperimentTrust;
 }) {
   const metrics = Object.entries(experiment.metrics ?? {});
   const prevMetrics = prevExperiment?.metrics ?? {};
@@ -700,12 +701,38 @@ function ExperimentDetails({
         )}
       </Box>
 
-      {/* 3. Metrics — always present as section */}
+      {/* 3. Runner eval — the only verified number */}
       <Box flexDirection="column" marginBottom={1}>
-        <Text color={verified ? colors.textMuted : colors.accentYellow} bold>
-          {verified
-            ? `Metrics (runner eval ${experiment.eval_id}):`
-            : "Metrics (unverified: no runner eval_id under .ml-ralph/evals/):"}
+        {trust.eval ? (
+          <>
+            <Text color={colors.textMuted} bold>
+              Runner eval {experiment.eval_id}:
+            </Text>
+            <Text color={colors.accentGreen}>
+              {scoring?.primaryMetric ?? "score"} mean{" "}
+              {formatNumber(trust.eval.mean)} ± {formatNumber(trust.eval.std)}{" "}
+              over {trust.eval.seeds} seed{trust.eval.seeds === 1 ? "" : "s"}
+              {evalTarget(scoring, trust.eval.mean, targets)}
+            </Text>
+            {trust.mismatch && trust.reported !== null && (
+              <Text color={colors.accentYellow}>
+                Agent reported {formatNumber(trust.reported)} for this metric;
+                the eval says {formatNumber(trust.eval.mean)}.
+              </Text>
+            )}
+          </>
+        ) : (
+          <Text color={colors.accentYellow} bold>
+            Unverified: no finished runner eval under .ml-ralph/evals/ for this
+            experiment.
+          </Text>
+        )}
+      </Box>
+
+      {/* 4. Metrics the agent reported — never shown as verified */}
+      <Box flexDirection="column" marginBottom={1}>
+        <Text color={colors.textMuted} bold>
+          Reported by the agent (not verified):
         </Text>
         {metrics.length > 0 ? (
           metrics.map(([key, value]) => (
@@ -715,7 +742,6 @@ function ExperimentDetails({
               value={value}
               prevValue={prevMetrics[key] ?? null}
               targets={targets}
-              verified={verified}
             />
           ))
         ) : (
@@ -723,8 +749,8 @@ function ExperimentDetails({
         )}
       </Box>
 
-      {/* 4. Sparkline — only when meaningful (3+ data points) */}
-      <HypothesisSparkline experiments={groupExperiments} />
+      {/* Sparkline — only when meaningful (3+ verified evals) */}
+      <HypothesisSparkline experiments={groupExperiments} evals={evals} />
 
       {/* 5. Observations — always present as section */}
       <Box flexDirection="column" marginTop={1}>
@@ -767,7 +793,8 @@ function ExperimentDetails({
 export function ExperimentsPanel({
   hypotheses,
   experiments,
-  verifiedEvalIds,
+  evals,
+  scoring,
   successCriteria,
   selectedId,
   expandedId,
@@ -841,7 +868,8 @@ export function ExperimentsPanel({
     <Box flexDirection="column" paddingX={1}>
       <SummaryHeader
         experiments={experiments}
-        verifiedEvalIds={verifiedEvalIds}
+        evals={evals}
+        scoring={scoring}
         targets={targets}
       />
       <Text color={colors.textMuted}>{"─".repeat(70)}</Text>
@@ -863,19 +891,13 @@ export function ExperimentsPanel({
                 i < group.experiments.length - 1
                   ? (group.experiments[i + 1] ?? null)
                   : null;
-              const keyMetric = getKeyMetric(exp.metrics ?? {});
-              const prevKeyMetric = prevExp
-                ? getKeyMetric(prevExp.metrics ?? {})
-                : null;
-
-              let delta = "";
-              if (
-                keyMetric &&
-                prevKeyMetric &&
-                keyMetric.key === prevKeyMetric.key
-              ) {
-                delta = computeDelta(keyMetric.value, prevKeyMetric.value);
-              }
+              const trust = assessExperiment(exp, evals, scoring);
+              const prevEval = prevExp ? evalFor(prevExp, evals) : null;
+              const delta =
+                trust.eval && prevEval
+                  ? computeDelta(trust.eval.mean, prevEval.mean)
+                  : "";
+              const lowerBetter = scoring?.direction === "min";
 
               return (
                 <Box key={id} flexDirection="column">
@@ -884,7 +906,8 @@ export function ExperimentsPanel({
                     isSelected={isSelected}
                     isExpanded={isExpanded}
                     delta={delta}
-                    verified={isExperimentVerified(exp, verifiedEvalIds)}
+                    lowerBetter={lowerBetter}
+                    trust={trust}
                   />
                   {isExpanded && (
                     <ExperimentDetails
@@ -892,7 +915,9 @@ export function ExperimentsPanel({
                       prevExperiment={prevExp}
                       groupExperiments={group.experiments}
                       targets={targets}
-                      verified={isExperimentVerified(exp, verifiedEvalIds)}
+                      evals={evals}
+                      scoring={scoring}
+                      trust={trust}
                     />
                   )}
                 </Box>

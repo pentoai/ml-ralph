@@ -121,7 +121,7 @@ function formatContent(event: RalphEvent): string {
       case "experiment": {
         const metrics = (e.metrics ?? {}) as Record<string, unknown>;
         const name = String(e.name || "experiment");
-        return `${name} ${primaryMetric(metrics)}`;
+        return `${name} ${primaryMetric(metrics)} (reported)`;
       }
 
       case "learning":
@@ -209,7 +209,7 @@ function formatContent(event: RalphEvent): string {
       case "parallel_result": {
         const metrics = (e.metrics ?? {}) as Record<string, unknown>;
         const agent = String(e.agent ?? "?");
-        return `[${agent}] ${e.hypothesis_id ?? "?"}: ${primaryMetric(metrics)}`;
+        return `[${agent}] ${e.hypothesis_id ?? "?"}: ${primaryMetric(metrics)} (reported)`;
       }
 
       case "parallel_synthesis":

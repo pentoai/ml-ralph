@@ -7,9 +7,10 @@ import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  isExperimentVerified,
+  createEvalCache,
   readEvalMetrics,
-  readVerifiedEvalIds,
+  readEvalScoring,
+  readVerifiedEvals,
 } from "./eval-metrics.ts";
 
 const hash = "a".repeat(64);
@@ -62,7 +63,7 @@ describe("readEvalMetrics", () => {
     for (const id of ["x", "y", "outside", "..", "../..", "../outside", ""]) {
       expect(await readEvalMetrics(dir, id)).toBeNull();
     }
-    expect(await readVerifiedEvalIds(dir)).toEqual(new Set());
+    expect(await readVerifiedEvals(dir)).toEqual(new Map());
   });
 
   test("ignores an id that escapes the directory or a symlink out of it", async () => {
@@ -88,7 +89,7 @@ describe("readEvalMetrics", () => {
     const empty = await mkdtemp(join(tmpdir(), "ml-ralph-metrics-empty-"));
     try {
       expect(await readEvalMetrics(empty, "eval-1")).toBeNull();
-      expect(await readVerifiedEvalIds(empty)).toEqual(new Set());
+      expect(await readVerifiedEvals(empty)).toEqual(new Map());
     } finally {
       await rm(empty, { recursive: true, force: true });
     }
@@ -108,15 +109,72 @@ describe("verified evals", () => {
       status: "failed",
       reason: "seed 0: timed out",
     });
-    const ids = await readVerifiedEvalIds(dir);
-    expect(ids).toEqual(new Set(["eval-ok"]));
+    const evals = await readVerifiedEvals(dir);
+    expect([...evals.keys()]).toEqual(["eval-ok"]);
+    expect(evals.get("eval-ok")).toEqual({ mean: 0.8, std: 0, seeds: 1 });
   });
 
-  test("an experiment is verified only by an existing eval_id", () => {
-    const ids = new Set(["eval-ok"]);
-    expect(isExperimentVerified({ eval_id: "eval-ok" }, ids)).toBe(true);
-    expect(isExperimentVerified({ eval_id: "eval-made-up" }, ids)).toBe(false);
-    expect(isExperimentVerified({}, ids)).toBe(false);
-    expect(isExperimentVerified({ eval_id: 7 }, ids)).toBe(false);
+  test("an eval already read is not read again, and a half-written one is retried", async () => {
+    const cache = createEvalCache();
+    await writeEval("eval-1", metrics("eval-1"));
+    expect([...(await readVerifiedEvals(dir, cache)).keys()]).toEqual([
+      "eval-1",
+    ]);
+
+    // Rewriting the file in place changes nothing: finished evals are final
+    await writeEval("eval-1", metrics("eval-1", { mean: 0.99 }));
+    expect((await readVerifiedEvals(dir, cache)).get("eval-1")?.mean).toBe(0.8);
+
+    // A directory without a readable metrics.json yet is looked at again
+    await Bun.write(join(dir, ".ml-ralph/evals/eval-2/metrics.json.tmp"), "{");
+    expect([...(await readVerifiedEvals(dir, cache)).keys()]).toEqual([
+      "eval-1",
+    ]);
+    await writeEval("eval-2", metrics("eval-2", { mean: 0.7 }));
+    expect((await readVerifiedEvals(dir, cache)).get("eval-2")?.mean).toBe(0.7);
+
+    // A removed eval stops being verified
+    await rm(join(dir, ".ml-ralph/evals/eval-1"), { recursive: true });
+    expect([...(await readVerifiedEvals(dir, cache)).keys()]).toEqual([
+      "eval-2",
+    ]);
+  });
+
+  test("a cache never carries evals over to another project", async () => {
+    const cache = createEvalCache();
+    await writeEval("eval-1", metrics("eval-1"));
+    expect((await readVerifiedEvals(dir, cache)).size).toBe(1);
+    const other = await mkdtemp(join(tmpdir(), "ml-ralph-metrics-other-"));
+    try {
+      expect((await readVerifiedEvals(other, cache)).size).toBe(0);
+    } finally {
+      await rm(other, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("readEvalScoring", () => {
+  test("reads primary_metric and direction from a valid contract only", async () => {
+    expect(await readEvalScoring(dir)).toBeNull();
+    await Bun.write(join(dir, ".ml-ralph/eval/contract.json"), "{}");
+    expect(await readEvalScoring(dir)).toBeNull();
+    await Bun.write(
+      join(dir, ".ml-ralph/eval/contract.json"),
+      JSON.stringify({
+        primary_metric: "rmse",
+        direction: "min",
+        search_split: "cv",
+        seeds: [0],
+        protocol: "p",
+        success_threshold: 1,
+        holdout_gap_threshold: 0.1,
+        eval_timeout_seconds: 10,
+        baseline_score: 2,
+      }),
+    );
+    expect(await readEvalScoring(dir)).toEqual({
+      primaryMetric: "rmse",
+      direction: "min",
+    });
   });
 });

@@ -23,8 +23,9 @@ ap.add_argument("--candidate")
 ap.add_argument("--split")
 ap.add_argument("--seed", type=int)
 a = ap.parse_args()
-with open(os.path.join(os.path.dirname(__file__), "calls.jsonl"), "a") as f:
-    f.write(json.dumps({"argv": sys.argv[1:], "cwd": os.getcwd()}) + "\\n")
+ED = os.environ["ML_RALPH_EVAL_DIR"]
+with open(os.path.join(ED, "calls.jsonl"), "a") as f:
+    f.write(json.dumps({"argv": sys.argv[1:], "cwd": os.getcwd(), "script": os.path.abspath(__file__)}) + "\\n")
 mode = open(a.candidate).read().strip()
 if mode == "ok":
     print("training noise")
@@ -42,9 +43,13 @@ elif mode == "fail-second-seed":
     if a.seed == 1:
         sys.exit(1)
     print(json.dumps({"score": 0.7}))
+elif mode == "swap":
+    with open(os.path.join(ED, "evaluate.py"), "w") as f:
+        f.write("print('{\\"score\\": 999}')\\n")
+    print(json.dumps({"score": 0.5}))
 elif mode == "hang":
     child = subprocess.Popen(["sleep", "60"])
-    with open(os.path.join(os.path.dirname(__file__), "child.pid"), "w") as f:
+    with open(os.path.join(ED, "child.pid"), "w") as f:
         f.write(str(child.pid))
     time.sleep(60)
 `;
@@ -87,7 +92,9 @@ const calls = async () => {
   return (await file.text())
     .trim()
     .split("\n")
-    .map((l) => JSON.parse(l) as { argv: string[]; cwd: string });
+    .map(
+      (l) => JSON.parse(l) as { argv: string[]; cwd: string; script: string },
+    );
 };
 
 const logEvents = async () => {
@@ -120,7 +127,7 @@ describe("success", () => {
     expect(metrics.status).toBe("ok");
     expect(result.stdout).toContain(metrics.eval_id);
 
-    expect(await calls()).toEqual([
+    expect((await calls()).map(({ argv, cwd }) => ({ argv, cwd }))).toEqual([
       ...[0, 1, 2].map((seed) => ({
         argv: [
           "--candidate",
@@ -182,6 +189,38 @@ describe("success", () => {
     expect(result.code).toBe(0);
     expect((result.metrics as EvalMetricsOk).candidate).toBe("sub/c.txt");
     expect((await calls())[0]?.cwd).toBe(dir);
+  });
+
+  test("runs a private copy of the verified bytes, not the file in the project", async () => {
+    await setup();
+    const result = await runEvalCommand([await candidate("ok")], { cwd: dir });
+    expect(result.code).toBe(0);
+
+    const scripts = (await calls()).map((c) => c.script);
+    expect(scripts).toHaveLength(3);
+    for (const script of scripts) {
+      expect(script).not.toBe(evalFile("evaluate.py"));
+      expect(script.startsWith(dir)).toBe(false);
+      expect(await Bun.file(script).exists()).toBe(false);
+    }
+  });
+
+  test("swapping evaluate.py on disk mid-eval does not change what runs", async () => {
+    await setup();
+    const result = await runEvalCommand([await candidate("swap")], {
+      cwd: dir,
+    });
+
+    const metrics = result.metrics as EvalMetricsOk;
+    expect(metrics.scores.map((s) => s.score)).toEqual([0.5, 0.5, 0.5]);
+    expect(metrics.evaluate_hash).toBe(
+      (
+        (await Bun.file(evalFile("lock.json")).json()) as {
+          files: Record<string, string>;
+        }
+      ).files["evaluate.py"] as string,
+    );
+    expect(await Bun.file(evalFile("evaluate.py")).text()).toContain("999");
   });
 
   test("std is 0 with a single seed", async () => {

@@ -17,16 +17,21 @@ export {
   relockEvalContract,
 } from "./eval-lock.ts";
 export type {
+  EvalCache,
   EvalMetrics,
   EvalMetricsFailed,
   EvalMetricsOk,
+  EvalScoring,
   EvalSeedScore,
+  EvalSummary,
+  VerifiedEvals,
 } from "./eval-metrics.ts";
 export {
+  createEvalCache,
   EVALS_DIR,
-  isExperimentVerified,
   readEvalMetrics,
-  readVerifiedEvalIds,
+  readEvalScoring,
+  readVerifiedEvals,
 } from "./eval-metrics.ts";
 export type { InitOptions, InitResult } from "./init.ts";
 export {

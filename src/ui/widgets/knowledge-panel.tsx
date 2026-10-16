@@ -33,7 +33,7 @@ export function KnowledgePanel() {
   } = useAppStore();
 
   // Read Ralph state from .ml-ralph files
-  const { prd, log, kanban, verifiedEvalIds, isLoaded } = useRalphState({
+  const { prd, log, kanban, evals, scoring, isLoaded } = useRalphState({
     projectPath: projectPath || process.cwd(),
     pollInterval: 2000,
   });
@@ -106,6 +106,8 @@ export function KnowledgePanel() {
               {activeTab === "hypotheses" && (
                 <HypothesesPanel
                   hypotheses={log?.hypotheses ?? []}
+                  evals={evals}
+                  scoring={scoring}
                   offset={scrollOffset}
                   limit={ITEMS_PER_PAGE}
                 />
@@ -141,7 +143,8 @@ export function KnowledgePanel() {
                 <ExperimentsPanel
                   hypotheses={log?.hypotheses ?? []}
                   experiments={log?.experiments ?? []}
-                  verifiedEvalIds={verifiedEvalIds}
+                  evals={evals}
+                  scoring={scoring}
                   successCriteria={prd?.success_criteria ?? []}
                   selectedId={selectedExperimentId}
                   expandedId={expandedExperimentId}
