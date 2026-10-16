@@ -198,6 +198,41 @@ describe("checkEvalGate", () => {
     expect(error).toContain("contract.json is invalid");
   });
 
+  test("refuses to re-lock when lock.json disappears after being created", async () => {
+    await setup({ contract: CONTRACT });
+    expect(await checkEvalGate(dir)).toEqual({ ok: true });
+
+    await Bun.write(evalPath("evaluate.py"), "print('cheat')\n");
+    await rm(evalPath("lock.json"));
+
+    const gate = await checkEvalGate(dir);
+    expect(gate.ok).toBe(false);
+    expect(gate.ok === false && gate.error).toContain("removed");
+    expect(await Bun.file(evalPath("lock.json")).exists()).toBe(false);
+  });
+
+  test.each([
+    "blocked",
+    "complete",
+    "weird",
+  ])("treats a %s PRD as past SETUP and refuses without a lock", async (status) => {
+    await setup({ status, contract: CONTRACT });
+    const gate = await checkEvalGate(dir);
+    expect(gate.ok).toBe(false);
+    expect(gate.ok === false && gate.error).toContain(status);
+    expect(await Bun.file(evalPath("lock.json")).exists()).toBe(false);
+  });
+
+  test("lets a blocked PRD run when its lock is valid", async () => {
+    await setup({ contract: CONTRACT });
+    await lockEvalContract(dir);
+    await Bun.write(
+      join(dir, ".ml-ralph/prd.json"),
+      JSON.stringify({ project: "p", status: "blocked" }),
+    );
+    expect(await checkEvalGate(dir)).toEqual({ ok: true });
+  });
+
   test("refuses a completed PRD that has no lock", async () => {
     await setup({ status: "complete", contract: CONTRACT });
     expect((await checkEvalGate(dir)).ok).toBe(false);

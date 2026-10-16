@@ -84,7 +84,7 @@ The eval contract. In SETUP the agent drafts `evaluate.py` and `contract.json` w
 }
 ```
 
-Locking fails, with an error naming the file or field, when `contract.json` is missing or invalid, `baseline_score` is missing, or `evaluate.py` does not exist. After SETUP the runner refuses to start an iteration without `lock.json` and the TUI shows the reason. The holdout data location is deliberately not part of the contract. Detecting edits to locked files during a run is not implemented yet.
+Locking fails, with an error naming the file or field, when `contract.json` is missing or invalid, `baseline_score` is missing, or `evaluate.py` does not exist. Only a draft or missing PRD counts as SETUP; any other status (including `blocked`) needs a valid lock. An existing `lock.json` must be well-formed and still cover a valid contract and an existing `evaluate.py`. The runner writes `.ml-ralph/eval-lock.created` when it creates the lock; if `lock.json` later disappears the runner refuses instead of silently locking the current files again (remove the marker to re-lock deliberately). The runner refuses to start an iteration without a usable lock and the TUI shows the reason. The holdout data location is deliberately not part of the contract. Detecting edits to locked files during a run is not implemented yet.
 
 ### `.ml-ralph/progress.jsonl`
 

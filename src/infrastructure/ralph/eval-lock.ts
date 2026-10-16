@@ -24,6 +24,7 @@ const sha256 = (data: Uint8Array) =>
 const CONTRACT_PATH = ".ml-ralph/eval/contract.json";
 const EVALUATE_PATH = ".ml-ralph/eval/evaluate.py";
 const LOCK_PATH = ".ml-ralph/eval/lock.json";
+const LOCK_MARKER_PATH = ".ml-ralph/eval-lock.created";
 const HEX_SHA256 = /^[0-9a-f]{64}$/;
 
 /**
@@ -103,6 +104,7 @@ export async function lockEvalContract(
     `${projectPath}/${LOCK_PATH}`,
     `${JSON.stringify(lock, null, 2)}\n`,
   );
+  await Bun.write(`${projectPath}/${LOCK_MARKER_PATH}`, `${lock.locked_at}\n`);
   return { ok: true, lock };
 }
 
@@ -143,16 +145,18 @@ async function checkExistingLock(projectPath: string): Promise<string | null> {
 }
 
 /**
- * Decide whether an iteration may start. During SETUP (no approved PRD) it
- * always may. Once the PRD is approved, a missing lock.json is created from
- * the eval files and an existing one must be well-formed and still cover
- * valid files; otherwise the returned error is the reason to refuse.
+ * Decide whether an iteration may start. Only a draft or missing PRD counts as
+ * SETUP and always may. Past SETUP (approved, complete, blocked, anything
+ * else) an existing lock.json must be well-formed and still cover valid files.
+ * A missing lock is created once, for an approved PRD; if one was created
+ * before and has since disappeared, the gate refuses rather than re-locking
+ * whatever the eval files hold now. The returned error is the reason to refuse.
  */
 export async function checkEvalGate(
   projectPath: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const prd = await readPrdFile(projectPath);
-  if (prd?.status !== "approved" && prd?.status !== "complete") {
+  if (!prd || prd.status === "draft") {
     return { ok: true };
   }
 
@@ -165,15 +169,24 @@ export async function checkEvalGate(
     };
   }
 
+  if (await Bun.file(`${projectPath}/${LOCK_MARKER_PATH}`).exists()) {
+    return {
+      ok: false,
+      error: `Refusing to run: ${LOCK_PATH} was removed after the eval contract was locked. Restore it, or if the eval files were changed on purpose, remove ${LOCK_MARKER_PATH} to lock them again.`,
+    };
+  }
+
   const locked =
     prd.status === "approved"
       ? await lockEvalContract(projectPath)
-      : { ok: false as const, error: "" };
+      : {
+          ok: false as const,
+          error: `prd.json: status is "${prd.status}", not "approved"`,
+        };
   if (locked.ok) return { ok: true };
 
-  const reason = locked.error ? `: ${locked.error}` : "";
   return {
     ok: false,
-    error: `Refusing to run: no eval lock (${LOCK_PATH})${reason}`,
+    error: `Refusing to run: no eval lock (${LOCK_PATH}): ${locked.error}`,
   };
 }
