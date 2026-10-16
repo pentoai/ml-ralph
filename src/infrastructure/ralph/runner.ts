@@ -3,7 +3,20 @@
  */
 
 import type { Subprocess } from "bun";
-import { checkEvalGate } from "./eval-lock.ts";
+import {
+  checkEvalGate,
+  describeEvalChanges,
+  type EvalChange,
+  type EvalLock,
+  findEvalChanges,
+  readEvalLock,
+  relockEvalContract,
+} from "./eval-lock.ts";
+
+export type RunCompleteReason =
+  | "project_complete"
+  | "max_iterations"
+  | "contract_changed";
 
 export interface RunnerConfig {
   projectPath: string;
@@ -12,7 +25,12 @@ export interface RunnerConfig {
   onOutput?: (event: StreamEvent) => void;
   onIterationStart?: (iteration: number) => void;
   onIterationEnd?: (iteration: number, result: string) => void;
-  onComplete?: (reason: "project_complete" | "max_iterations") => void;
+  onComplete?: (reason: RunCompleteReason) => void;
+  /**
+   * A locked eval file changed; the run is paused until resolveContractChange
+   * is called. `relockError` is set when the previous re-lock attempt failed.
+   */
+  onContractChanged?: (changes: EvalChange[], relockError?: string) => void;
   onError?: (error: Error) => void;
 }
 
@@ -30,6 +48,8 @@ export interface StreamEvent {
     | "task_update";
 }
 
+export type ContractDecision = "relock" | "stop";
+
 export class RalphRunner {
   private config: RunnerConfig;
   private running = false;
@@ -37,6 +57,9 @@ export class RalphRunner {
   private currentIteration = 0;
   private pendingHints: string[] = [];
   private lastToolCall: ToolCallRef | null = null;
+  private pinnedHashes: EvalLock["files"] | null = null;
+  private contractDecision: ((d: ContractDecision | null) => void) | null =
+    null;
 
   constructor(config: RunnerConfig) {
     this.config = {
@@ -67,6 +90,7 @@ export class RalphRunner {
 
     this.running = true;
     this.currentIteration = 0;
+    this.pinnedHashes = null;
 
     const basePrompt = `Read .ml-ralph/RALPH.md for instructions.
 
@@ -79,11 +103,15 @@ If the project is complete (success criteria met), output: <project_complete>`;
       for (let i = 1; i <= this.config.maxIterations!; i++) {
         if (!this.running) break;
 
+        if (!(await this.verifyContract())) return;
+
         const gate = await checkEvalGate(this.config.projectPath);
         if (!gate.ok) {
           this.config.onError?.(new Error(gate.error));
           return;
         }
+        this.pinnedHashes ??=
+          (await readEvalLock(this.config.projectPath))?.files ?? null;
 
         this.currentIteration = i;
         this.config.onIterationStart?.(i);
@@ -126,10 +154,83 @@ If the project is complete (success criteria met), output: <project_complete>`;
    */
   stop(): void {
     this.running = false;
+    this.settleContractDecision(null);
     if (this.currentProcess) {
       this.currentProcess.kill();
       this.currentProcess = null;
     }
+  }
+
+  /**
+   * Re-hash the locked eval files before an iteration. On a mismatch, pause
+   * until the user re-locks (then log it and continue) or stops the run.
+   * Returns false when the run must end.
+   *
+   * The hashes are pinned in memory from the first lock seen in this run, so an
+   * agent that edits an eval file and rewrites lock.json to match still pauses.
+   */
+  private async verifyContract(): Promise<boolean> {
+    const projectPath = this.config.projectPath;
+    let relockError: string | undefined;
+
+    while (this.running) {
+      const expected =
+        this.pinnedHashes ?? (await readEvalLock(projectPath))?.files;
+      const changes = expected
+        ? await findEvalChanges(projectPath, expected)
+        : [];
+      if (changes.length === 0) return true;
+
+      const onContractChanged = this.config.onContractChanged;
+      if (!onContractChanged) {
+        this.config.onError?.(
+          new Error(
+            `Locked eval file changed: ${describeEvalChanges(changes)}`,
+          ),
+        );
+        return false;
+      }
+
+      const decision = await new Promise<ContractDecision | null>((resolve) => {
+        this.contractDecision = resolve;
+        onContractChanged(changes, relockError);
+      });
+      if (decision === null) return false;
+      if (decision === "stop") {
+        this.config.onComplete?.("contract_changed");
+        return false;
+      }
+
+      const relocked = await relockEvalContract(projectPath);
+      if (!relocked.ok) {
+        relockError = relocked.error;
+        continue;
+      }
+      this.pinnedHashes = relocked.lock.files;
+      await this.appendLogEvent({
+        type: "contract_relocked",
+        changes,
+        files: relocked.lock.files,
+      });
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Answer the pause raised by onContractChanged. Returns false when the run
+   * is not waiting for a decision.
+   */
+  resolveContractChange(decision: ContractDecision): boolean {
+    return this.settleContractDecision(decision);
+  }
+
+  private settleContractDecision(decision: ContractDecision | null): boolean {
+    const resolve = this.contractDecision;
+    if (!resolve) return false;
+    this.contractDecision = null;
+    resolve(decision);
+    return true;
   }
 
   /**
@@ -199,7 +300,7 @@ If the project is complete (success criteria met), output: <project_complete>`;
   /**
    * Run a single iteration
    */
-  private async runIteration(prompt: string): Promise<string> {
+  protected async runIteration(prompt: string): Promise<string> {
     // Inject an initial log event so the TUI shows something immediately
     await this.appendLogEvent({
       type: "phase",

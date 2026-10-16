@@ -55,7 +55,7 @@ Always log changes with rationale!
 
 ## eval/ (The Eval Contract)
 
-Drafted in SETUP with the user. Once `prd.json` is `approved`, the runner validates and locks it. Never edit these files after the lock.
+Drafted in SETUP with the user. Once `prd.json` is `approved`, the runner validates and locks it. Never edit these files after the lock: the runner re-hashes them before every iteration and pauses the run for the user if one changed or was deleted.
 
 | File | Written by | Purpose |
 |------|------------|---------|

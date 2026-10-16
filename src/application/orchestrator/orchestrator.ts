@@ -4,7 +4,10 @@
 
 import type { Story } from "../../domain/types/index.ts";
 import {
+  describeEvalChanges,
+  type EvalChange,
   RalphRunner,
+  type RunCompleteReason,
   type StreamEvent,
 } from "../../infrastructure/ralph/index.ts";
 import type {
@@ -16,7 +19,11 @@ import type {
 type StoryCompleteCallback = (story: Story, result: StoryResult) => void;
 type OutputCallback = (event: StreamEvent) => void;
 type IterationCallback = (iteration: number) => void;
-type CompleteCallback = (reason: "project_complete" | "max_iterations") => void;
+type CompleteCallback = (reason: RunCompleteReason) => void;
+type ContractChangeCallback = (
+  changes: EvalChange[],
+  relockError?: string,
+) => void;
 
 export class DefaultOrchestrator implements AgentOrchestrator {
   private runner: RalphRunner;
@@ -24,6 +31,7 @@ export class DefaultOrchestrator implements AgentOrchestrator {
   private outputCallbacks: Set<OutputCallback> = new Set();
   private iterationCallbacks: Set<IterationCallback> = new Set();
   private completeCallbacks: Set<CompleteCallback> = new Set();
+  private contractChangeCallbacks: Set<ContractChangeCallback> = new Set();
 
   constructor(config: OrchestratorConfig) {
     this.runner = new RalphRunner({
@@ -33,6 +41,16 @@ export class DefaultOrchestrator implements AgentOrchestrator {
       onOutput: (event) => this.emitOutput(event),
       onIterationStart: (iteration) => this.emitIterationChange(iteration),
       onComplete: (reason) => this.emitComplete(reason),
+      onContractChanged: (changes, relockError) => {
+        this.emitOutput({
+          type: "error",
+          content: `Run paused: locked eval file changed (${describeEvalChanges(changes)})`,
+          isError: true,
+        });
+        for (const callback of this.contractChangeCallbacks) {
+          callback(changes, relockError);
+        }
+      },
       onError: (error) => {
         this.emitOutput({
           type: "error",
@@ -72,6 +90,19 @@ export class DefaultOrchestrator implements AgentOrchestrator {
     return this.runner.getPendingHintsCount();
   }
 
+  relockContract(): boolean {
+    return this.runner.resolveContractChange("relock");
+  }
+
+  stopForContractChange(): boolean {
+    return this.runner.resolveContractChange("stop");
+  }
+
+  onContractChange(callback: ContractChangeCallback): () => void {
+    this.contractChangeCallbacks.add(callback);
+    return () => this.contractChangeCallbacks.delete(callback);
+  }
+
   onStoryComplete(callback: StoryCompleteCallback): () => void {
     this.storyCompleteCallbacks.add(callback);
     return () => this.storyCompleteCallbacks.delete(callback);
@@ -104,7 +135,7 @@ export class DefaultOrchestrator implements AgentOrchestrator {
     }
   }
 
-  private emitComplete(reason: "project_complete" | "max_iterations"): void {
+  private emitComplete(reason: RunCompleteReason): void {
     for (const callback of this.completeCallbacks) {
       callback(reason);
     }
