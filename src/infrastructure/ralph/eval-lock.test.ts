@@ -106,6 +106,15 @@ describe("lockEvalContract", () => {
     expect(result.ok === false && result.error).toContain("baseline_score");
   });
 
+  test("reports both the contract and evaluate.py problems", async () => {
+    const { baseline_score: _omit, ...noBaseline } = CONTRACT;
+    await setup({ contract: noBaseline, evaluate: false });
+    const result = await lockEvalContract(dir);
+    const error = result.ok ? "" : result.error;
+    expect(error).toContain("baseline_score");
+    expect(error).toContain("evaluate.py does not exist");
+  });
+
   test("fails naming evaluate.py when it does not exist", async () => {
     await setup({ contract: CONTRACT, evaluate: false });
     const result = await lockEvalContract(dir);
@@ -138,6 +147,55 @@ describe("checkEvalGate", () => {
     expect(gate.ok).toBe(false);
     expect(gate.ok === false && gate.error).toContain("lock.json");
     expect(gate.ok === false && gate.error).toContain("contract.json");
+  });
+
+  test("passes when an existing lock is well-formed and files are valid", async () => {
+    await setup({ contract: CONTRACT });
+    await lockEvalContract(dir);
+    expect(await checkEvalGate(dir)).toEqual({ ok: true });
+  });
+
+  test.each([
+    ["empty", ""],
+    ["not JSON", "{nope"],
+    ["JSON null", "null"],
+    ["empty object", "{}"],
+    [
+      "missing a hash",
+      JSON.stringify({ locked_at: new Date().toISOString(), files: {} }),
+    ],
+    [
+      "non-hex hash",
+      JSON.stringify({
+        locked_at: new Date().toISOString(),
+        files: { "evaluate.py": "x", "contract.json": "y" },
+      }),
+    ],
+    [
+      "bad lock time",
+      JSON.stringify({
+        locked_at: "never",
+        files: { "evaluate.py": sha("a"), "contract.json": sha("b") },
+      }),
+    ],
+  ])("refuses a malformed lock.json (%s)", async (_name, content) => {
+    await setup({ contract: CONTRACT });
+    await Bun.write(evalPath("lock.json"), content);
+    const gate = await checkEvalGate(dir);
+    expect(gate.ok).toBe(false);
+    expect(gate.ok === false && gate.error).toContain("lock.json");
+  });
+
+  test("refuses a well-formed lock whose files are gone or invalid", async () => {
+    await setup({ contract: CONTRACT });
+    await lockEvalContract(dir);
+    await rm(evalPath("evaluate.py"));
+    await Bun.write(evalPath("contract.json"), JSON.stringify({}));
+    const gate = await checkEvalGate(dir);
+    expect(gate.ok).toBe(false);
+    const error = gate.ok ? "" : gate.error;
+    expect(error).toContain("evaluate.py does not exist");
+    expect(error).toContain("contract.json is invalid");
   });
 
   test("refuses a completed PRD that has no lock", async () => {

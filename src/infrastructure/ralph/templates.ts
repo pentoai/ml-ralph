@@ -215,8 +215,8 @@ When \`prd.json\` doesn't exist or has \`status: "draft"\`:
 3. Write \`prd.json\` with \`status: "draft"\`
 4. Refine based on feedback
 5. Draft the eval contract WITH the user (see "Eval Contract" below)
-6. When user says "go/start", set \`status: "approved"\`
-7. Initialize \`kanban.json\` with first planned tasks
+6. Initialize \`kanban.json\` with first planned tasks (while the PRD is still a draft)
+7. When user says "go/start", set \`status: "approved"\` as your LAST action and end the iteration immediately with \`<iteration_complete>\` — do no EXECUTION work in that iteration. The runner locks the eval files when the next iteration starts.
 
 #### Eval Contract (SETUP)
 Before approval, write \`.ml-ralph/eval/evaluate.py\` and \`.ml-ralph/eval/contract.json\` together with the user, run the baseline once, and record its score as \`baseline_score\` in the contract:
