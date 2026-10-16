@@ -157,6 +157,21 @@ export const LOG_EVENT_SCHEMAS: Record<string, LogEventSchema> = {
   parallel_synthesis: {
     fields: { winner: str, reason: str, merged_branch: str },
   },
+  contract_relocked: {
+    runnerOnly: true,
+    fields: {
+      changes: objects({
+        file: oneOf("evaluate.py", "contract.json"),
+        kind: oneOf("edited", "deleted"),
+      }),
+      files: {
+        spec: {
+          kind: "object",
+          fields: { "evaluate.py": str, "contract.json": str },
+        },
+      },
+    },
+  },
   verifier_verdict: {
     runnerOnly: true,
     fields: {

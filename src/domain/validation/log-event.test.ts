@@ -149,9 +149,44 @@ describe("schema coverage", () => {
     }
   });
 
-  test("verifier_verdict is runner-only and not offered to the agent", () => {
-    expect(isRunnerOnlyEvent("verifier_verdict")).toBe(true);
+  test.each([
+    "verifier_verdict",
+    "contract_relocked",
+  ])("%s is runner-only and not offered to the agent", (type) => {
+    expect(isRunnerOnlyEvent(type)).toBe(true);
+    expect(logEventTypes()).not.toContain(type);
+  });
+
+  test("agent event types are not runner-only", () => {
     expect(isRunnerOnlyEvent("phase")).toBe(false);
-    expect(logEventTypes()).not.toContain("verifier_verdict");
+  });
+});
+
+describe("contract_relocked", () => {
+  const sha = "a".repeat(64);
+  const relocked = {
+    changes: [{ file: "evaluate.py", kind: "edited" }],
+    files: { "evaluate.py": sha, "contract.json": sha },
+  };
+
+  test("accepts what the runner writes", () => {
+    expect(validateLogEvent("contract_relocked", relocked).valid).toBe(true);
+  });
+
+  test.each(["changes", "files"])("names %s when it is missing", (field) => {
+    const { [field as keyof typeof relocked]: _omit, ...rest } = relocked;
+    expect(errorsOf("contract_relocked", rest).map((e) => e.field)).toEqual([
+      field,
+    ]);
+  });
+
+  test("rejects bad change entries and missing hashes", () => {
+    expect(
+      errorsOf("contract_relocked", {
+        ...relocked,
+        changes: [{ file: "train.py", kind: "edited" }],
+        files: { "evaluate.py": sha },
+      }).map((e) => e.field),
+    ).toEqual(["changes[0].file", "files.contract.json"]);
   });
 });

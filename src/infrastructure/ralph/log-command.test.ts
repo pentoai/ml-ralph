@@ -159,6 +159,20 @@ describe("rejections append nothing", () => {
     );
   });
 
+  test("a forged contract_relocked event", async () => {
+    const sha = "a".repeat(64);
+    await expectRejected(
+      await log(
+        "contract_relocked",
+        JSON.stringify({
+          changes: [],
+          files: { "evaluate.py": sha, "contract.json": sha },
+        }),
+      ),
+      "runner only",
+    );
+  });
+
   test("no .ml-ralph directory", async () => {
     const empty = await mkdtemp(join(tmpdir(), "ml-ralph-empty-"));
     try {
