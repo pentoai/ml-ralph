@@ -12,6 +12,7 @@ import {
   readKanbanFile,
   readLogFile,
   readPrdFile,
+  readVerifiedEvalIds,
 } from "../../infrastructure/ralph/index.ts";
 
 export interface UseRalphStateOptions {
@@ -27,6 +28,8 @@ export interface UseRalphStateResult {
   log: LogSummary | null;
   /** The current Kanban (working plan) */
   kanban: Kanban | null;
+  /** Ids of the runner evals under .ml-ralph/evals/ that finished ok */
+  verifiedEvalIds: ReadonlySet<string>;
   /** Whether initial load is complete */
   isLoaded: boolean;
   /** Any error that occurred */
@@ -43,6 +46,9 @@ export function useRalphState(
   const [prd, setPrd] = useState<PRD | null>(null);
   const [log, setLog] = useState<LogSummary | null>(null);
   const [kanban, setKanban] = useState<Kanban | null>(null);
+  const [verifiedEvalIds, setVerifiedEvalIds] = useState<ReadonlySet<string>>(
+    new Set(),
+  );
   const [isLoaded, setIsLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -60,6 +66,8 @@ export function useRalphState(
       // Read Kanban
       const kanbanData = await readKanbanFile(projectPath);
       setKanban(kanbanData);
+
+      setVerifiedEvalIds(await readVerifiedEvalIds(projectPath));
 
       setError(null);
       setIsLoaded(true);
@@ -88,6 +96,7 @@ export function useRalphState(
     prd,
     log,
     kanban,
+    verifiedEvalIds,
     isLoaded,
     error,
     refresh,

@@ -39,7 +39,7 @@ The examples below show stored lines; pass everything except `ts` as the JSON ar
 
 ### Experiments & Results
 ```jsonl
-{"ts":"...","type":"experiment","hypothesis_id":"H-001","metrics":{"auc":0.77,"precision":0.65},"observations":"Improvement on recent data but degradation on older samples","surprises":"Temporal features hurt pre-2020 data"}
+{"ts":"...","type":"experiment","hypothesis_id":"H-001","eval_id":"eval-lq3k2m-9f3a1c","metrics":{"auc":0.77,"precision":0.65},"observations":"Improvement on recent data but degradation on older samples","surprises":"Temporal features hurt pre-2020 data"}
 ```
 
 ### Learnings & Decisions
@@ -84,6 +84,11 @@ The runner writes these. Never write one yourself: a forged event has no effect 
 An independent read-only verifier judges each promotion candidate; this event records its verdict. A failed run is logged as `reject` with reason `verifier_error` and checks `unknown`. You only see the verdict and one line of reason in your next prompt. The full output in `.ml-ralph/verifier/` is not for you to read.
 
 ```jsonl
+{"ts":"...","type":"eval","eval_id":"eval-lq3k2m-9f3a1c","status":"ok","candidate":"submissions/h001.csv","mean":0.832,"std":0.004}
+```
+`ml-ralph eval <path>` writes this after scoring a candidate. Put its `eval_id` in your `experiment` event; metrics without a runner `eval_id` show as unverified. Never write anything under `.ml-ralph/evals/` yourself.
+
+```jsonl
 {"ts":"...","type":"contract_relocked","changes":[{"file":"evaluate.py","kind":"edited"}],"files":{"evaluate.py":"<sha256>","contract.json":"<sha256>"}}
 ```
 Before each iteration the runner re-hashes the locked eval files. A change or deletion pauses the run, and the user either re-locks (this event) or stops the run. Never edit locked files yourself.
@@ -102,7 +107,7 @@ See RALPH.md for when and how to use these events.
 | `research` | source, key_insights, relevance |
 | `path_analysis` | paths, chosen, rationale |
 | `hypothesis` | id, claim (string), expected_delta (number), rubrics (non-empty array), kill_criterion (string) |
-| `experiment` | hypothesis_id, metrics, observations |
+| `experiment` | hypothesis_id, metrics, observations (+ eval_id from `ml-ralph eval`) |
 | `learning` | insight, source |
 | `decision` | hypothesis_id, action, reason |
 | `strategic_retreat` | trigger, action, focus |
@@ -111,6 +116,7 @@ See RALPH.md for when and how to use these events.
 | `status` | status, reason (+ evidence if complete, + approaches_tried if blocked) |
 | `devils_advocate` | conclusion, attacks, survived, next_action |
 | `limitation_claim` | claim, devils_advocate_id, validation_attempts, confidence, user_approved |
+| `eval` (runner-only) | eval_id, status, candidate (+ mean, std or reason) |
 | `verifier_verdict` (runner-only) | id, verdict, checks, reason, output_path (+ model) |
 | `contract_relocked` (runner-only) | changes, files |
 

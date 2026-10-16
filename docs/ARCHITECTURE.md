@@ -124,6 +124,16 @@ Before each iteration `RalphRunner` re-hashes `.ml-ralph/eval/evaluate.py` and `
 - **Limits.** The check runs before each iteration, so an edit made in the last iteration of a run is only caught when the next run starts. An agent with shell access can still rewrite `lock.json`, the marker and the eval files between runs; that needs the lock to live outside the project, which this change does not do.
 - **Without a handler.** If no `onContractChanged` callback is configured, the runner reports the change through `onError` and ends the run instead of waiting forever.
 
+### Runner-owned scoring (`infrastructure/ralph/eval-command.ts`, `eval-metrics.ts`)
+
+The agent does not compute the scores anything trusts. It runs `ml-ralph eval <path>` (dispatched in `src/index.tsx` before the TUI starts, like `log`), which:
+
+1. refuses, running nothing, unless `lock.json` is well-formed and `findEvalChanges` finds no difference between the locked files and their hashes;
+2. runs the locked `evaluate.py` once per contract seed in a subprocess killed after `eval_timeout_seconds`;
+3. writes `.ml-ralph/evals/<eval_id>/metrics.json` (format in [DATA_MODELS.md](./DATA_MODELS.md#eval-metrics)) and appends a runner-only `eval` event to `log.jsonl`.
+
+On the read side `readEvalMetrics` only opens `.ml-ralph/evals/<id>/metrics.json`, and `useRalphState` exposes the ids with `status: "ok"` as `verifiedEvalIds`. The experiments panel marks the metrics of an experiment as unverified unless its `eval_id` is in that set, and the "best" in its summary line only counts verified experiments. Hypotheses and cognitive-map panels still show the agent-reported numbers. Promotion and completion gates that consume these files are a later change.
+
 ### Verifier (`infrastructure/ralph/verifier.ts`)
 
 `verifyCandidate` checks a promotion candidate in a separate `claude -p` session, so the agent that produced a result does not grade it. Nothing in the loop calls it yet: the promotion and completion gates that will call it before every promotion are a later change.

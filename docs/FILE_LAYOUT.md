@@ -23,6 +23,8 @@ your-ml-project/
 │   ├── progress.jsonl            # Iteration log (append-only)
 │   ├── learnings.jsonl           # Accumulated learnings (append-only)
 │   ├── research.jsonl            # Research items (append-only)
+│   ├── evals/
+│   │   └── <eval_id>/metrics.json    # Runner-written scores from `ml-ralph eval` (see DATA_MODELS.md)
 │   ├── eval/
 │   │   ├── evaluate.py           # Eval script (drafted in SETUP, locked on PRD approval)
 │   │   ├── contract.json         # Eval contract (see DATA_MODELS.md)

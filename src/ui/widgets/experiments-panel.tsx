@@ -5,9 +5,10 @@
 import * as asciichart from "asciichart";
 import { useEffect } from "react";
 import { useAppStore } from "../../application/state/index.ts";
-import type {
-  ExperimentEvent,
-  HypothesisWithStatus,
+import {
+  type ExperimentEvent,
+  type HypothesisWithStatus,
+  isExperimentVerified,
 } from "../../infrastructure/ralph/index.ts";
 import { Box, Text } from "../ink.tsx";
 import { colors } from "../theme/colors.ts";
@@ -17,6 +18,8 @@ import { colors } from "../theme/colors.ts";
 interface ExperimentsPanelProps {
   hypotheses: HypothesisWithStatus[];
   experiments: ExperimentEvent[];
+  /** Runner evals under .ml-ralph/evals/; a metric without one is unverified */
+  verifiedEvalIds: ReadonlySet<string>;
   successCriteria: string[];
   selectedId: string | null;
   expandedId: string | null;
@@ -255,9 +258,11 @@ function flattenGroupIds(groups: ExperimentGroup[]): string[] {
  */
 function SummaryHeader({
   experiments,
+  verifiedEvalIds,
   targets,
 }: {
   experiments: ExperimentEvent[];
+  verifiedEvalIds: ReadonlySet<string>;
   targets: ParsedTarget[];
 }) {
   const totalExps = experiments.length;
@@ -265,10 +270,16 @@ function SummaryHeader({
     experiments.map((e) => e.hypothesis_id).filter(Boolean),
   ).size;
 
+  const unverified = experiments.filter(
+    (e) => !isExperimentVerified(e, verifiedEvalIds),
+  ).length;
+
+  // Only runner-scored experiments can be "best"
   let bestKey = "";
   let bestVal = -Infinity;
   let bestName = "";
   for (const exp of experiments) {
+    if (!isExperimentVerified(exp, verifiedEvalIds)) continue;
     const km = getKeyMetric(exp.metrics ?? {});
     if (km) {
       const lb = isLowerBetter(km.key);
@@ -298,6 +309,12 @@ function SummaryHeader({
         {" · "}
         {totalHyps} hypothes{totalHyps !== 1 ? "es" : "is"}
       </Text>
+      {unverified > 0 && (
+        <Text color={colors.accentYellow}>
+          {" · "}
+          {unverified} unverified
+        </Text>
+      )}
       {bestKey && (
         <Text color={colors.textSecondary}>
           {"   best: "}
@@ -365,7 +382,7 @@ function GroupHeader({ group }: { group: ExperimentGroup }) {
 // --- Row column widths (consistent across all experiments) ---
 // | arrow(3) | name(24) | metric(14) | delta(10) | time(8) |
 const COL_NAME = 24;
-const COL_METRIC = 14;
+const COL_METRIC = 24;
 const COL_DELTA = 10;
 
 /**
@@ -379,11 +396,13 @@ function ExperimentRow({
   isSelected,
   isExpanded,
   delta,
+  verified,
 }: {
   experiment: ExperimentEvent;
   isSelected: boolean;
   isExpanded: boolean;
   delta: string;
+  verified: boolean;
 }) {
   const timeAgo = formatRelativeTime(experiment.ts);
   const keyMetric = getKeyMetric(experiment.metrics ?? {});
@@ -420,8 +439,12 @@ function ExperimentRow({
       {/* Key metric — always COL_METRIC wide */}
       <Box width={COL_METRIC}>
         {keyMetric ? (
-          <Text color={colors.accentGreen} bold>
+          <Text
+            color={verified ? colors.accentGreen : colors.accentYellow}
+            bold={verified}
+          >
             {shortenKey(keyMetric.key)}: {formatNumber(keyMetric.value)}
+            {verified ? "" : " unverified"}
           </Text>
         ) : (
           <Text color={colors.textMuted}>{"—"}</Text>
@@ -500,11 +523,13 @@ function MetricRow({
   value,
   prevValue,
   targets,
+  verified,
 }: {
   metricKey: string;
   value: number;
   prevValue: number | null;
   targets: ParsedTarget[];
+  verified: boolean;
 }) {
   const lowerBetter = isLowerBetter(metricKey);
   const isNormalized = value >= 0 && value <= 1;
@@ -533,7 +558,9 @@ function MetricRow({
         />
       </Box>
       <Box width={DETAIL_COL_VAL}>
-        <Text color={colors.accentGreen}>{formatNumber(value)}</Text>
+        <Text color={verified ? colors.accentGreen : colors.accentYellow}>
+          {formatNumber(value)}
+        </Text>
       </Box>
       <Box width={DETAIL_COL_DELTA}>
         {delta ? (
@@ -547,13 +574,14 @@ function MetricRow({
       {target ? (
         <Text
           color={
-            meetsTarget(value, target)
+            verified && meetsTarget(value, target)
               ? colors.accentGreen
               : colors.accentYellow
           }
         >
           {target.operator}
-          {target.value} {meetsTarget(value, target) ? "✓" : "○"}
+          {target.value}{" "}
+          {!verified ? "?" : meetsTarget(value, target) ? "✓" : "○"}
         </Text>
       ) : (
         <Text color={colors.textMuted}> </Text>
@@ -627,11 +655,13 @@ function ExperimentDetails({
   prevExperiment,
   groupExperiments,
   targets,
+  verified,
 }: {
   experiment: ExperimentEvent;
   prevExperiment: ExperimentEvent | null;
   groupExperiments: ExperimentEvent[];
   targets: ParsedTarget[];
+  verified: boolean;
 }) {
   const metrics = Object.entries(experiment.metrics ?? {});
   const prevMetrics = prevExperiment?.metrics ?? {};
@@ -672,8 +702,10 @@ function ExperimentDetails({
 
       {/* 3. Metrics — always present as section */}
       <Box flexDirection="column" marginBottom={1}>
-        <Text color={colors.textMuted} bold>
-          Metrics:
+        <Text color={verified ? colors.textMuted : colors.accentYellow} bold>
+          {verified
+            ? `Metrics (runner eval ${experiment.eval_id}):`
+            : "Metrics (unverified: no runner eval_id under .ml-ralph/evals/):"}
         </Text>
         {metrics.length > 0 ? (
           metrics.map(([key, value]) => (
@@ -683,6 +715,7 @@ function ExperimentDetails({
               value={value}
               prevValue={prevMetrics[key] ?? null}
               targets={targets}
+              verified={verified}
             />
           ))
         ) : (
@@ -734,6 +767,7 @@ function ExperimentDetails({
 export function ExperimentsPanel({
   hypotheses,
   experiments,
+  verifiedEvalIds,
   successCriteria,
   selectedId,
   expandedId,
@@ -805,7 +839,11 @@ export function ExperimentsPanel({
 
   return (
     <Box flexDirection="column" paddingX={1}>
-      <SummaryHeader experiments={experiments} targets={targets} />
+      <SummaryHeader
+        experiments={experiments}
+        verifiedEvalIds={verifiedEvalIds}
+        targets={targets}
+      />
       <Text color={colors.textMuted}>{"─".repeat(70)}</Text>
 
       {groups.map((group) => {
@@ -846,6 +884,7 @@ export function ExperimentsPanel({
                     isSelected={isSelected}
                     isExpanded={isExpanded}
                     delta={delta}
+                    verified={isExperimentVerified(exp, verifiedEvalIds)}
                   />
                   {isExpanded && (
                     <ExperimentDetails
@@ -853,6 +892,7 @@ export function ExperimentsPanel({
                       prevExperiment={prevExp}
                       groupExperiments={group.experiments}
                       targets={targets}
+                      verified={isExperimentVerified(exp, verifiedEvalIds)}
                     />
                   )}
                 </Box>

@@ -11,6 +11,7 @@ Complete type definitions for all ml-ralph entities.
 - [Training Jobs](#training-jobs)
 - [Project Config](#project-config)
 - [Eval Contract](#eval-contract)
+- [Eval Metrics](#eval-metrics)
 - [Log Events](#log-events)
 - [Chat](#chat)
 - [Enums](#enums)
@@ -422,6 +423,42 @@ All fields are required. The holdout data location is deliberately not part of t
 
 ---
 
+## Eval Metrics
+
+The score of one candidate, written by `ml-ralph eval <path>` and nowhere else. The runner is the only writer: nothing downstream trusts a metric that is not in one of these files.
+
+```typescript
+interface EvalMetricsBase {
+  eval_id: string; // "eval-<time>-<random>", also the directory name
+  contract_hash: string; // SHA-256 of contract.json, from lock.json
+  evaluate_hash: string; // SHA-256 of evaluate.py, from lock.json
+  candidate: string; // The <path> argument: project-relative when inside the project
+  split: string; // The contract's search_split
+  created_at: string; // ISO timestamp
+}
+
+interface EvalMetricsOk extends EvalMetricsBase {
+  status: "ok";
+  scores: { seed: number; score: number }[]; // One per contract seed, in contract order
+  mean: number;
+  std: number; // Sample std (n - 1) of the scores; 0 with one seed
+}
+
+interface EvalMetricsFailed extends EvalMetricsBase {
+  status: "failed";
+  reason: string; // Which seed, and why: timeout, exit code, unparseable output
+  // no scores, mean or std
+}
+```
+
+**File**: `.ml-ralph/evals/<eval_id>/metrics.json`
+
+`ml-ralph eval` runs `python .ml-ralph/eval/evaluate.py --candidate <path> --split <search_split> --seed <seed>` from the project directory once per contract seed, and reads a JSON object with a numeric `score` from the last non-empty line of stdout. Each run is killed (with the process group it started) after the contract's `eval_timeout_seconds` (3600 if unset). The first seed that times out, exits non-zero or prints no usable score ends the eval: `metrics.json` gets `status: "failed"` and a `reason`, and the command exits 1. Nothing runs, and no `metrics.json` is written, when `lock.json` is missing or malformed or the locked files no longer match their hashes.
+
+Every run also appends a runner-only `eval` event (`eval_id`, `status`, `candidate`, plus `mean` and `std` or `reason`). The agent refers to an eval by putting its `eval_id` in the `experiment` event. The TUI's experiments panel shows a metric as unverified unless that `eval_id` has a `metrics.json` with `status: "ok"` under `.ml-ralph/evals/`; `readEvalMetrics` and `readVerifiedEvalIds` read nothing outside that directory (ids must be plain names, and a symlink out of the directory is ignored). This is not tamper-proof against an agent that writes into `.ml-ralph/evals/` itself; that needs the evals stored outside the project, like the lock.
+
+---
+
 ## Log Events
 
 `.ml-ralph/log.jsonl` is the agent's memory and the only source for the TUI panels: one JSON object per line, append-only. Every line has `ts` (ISO timestamp) and `type`, plus the fields of that type's schema.
@@ -474,7 +511,7 @@ A hypothesis is rejected unless `id`, `claim`, `expected_delta`, `rubrics` (at l
 | `result_verification` | `result`, `verification_attempts` (each with `check`, `method`, `finding`), `conclusion` |
 | `success_verified` | `criteria_met`, `verification_checks`, `attempts_to_break` (string[]); optional `conclusion` |
 | `hypothesis` | `id`, `claim`, `expected_delta`, `rubrics`, `kill_criterion` |
-| `experiment` | `hypothesis_id`, `metrics` (name to number), `observations`; optional `name`, `wandb_run_id`, `wandb_url`, `config`, `surprises` |
+| `experiment` | `hypothesis_id`, `metrics` (name to number), `observations`; optional `name`, `eval_id`, `wandb_run_id`, `wandb_url`, `config`, `surprises` |
 | `learning` | `insight`, `source` |
 | `decision` | `hypothesis_id`, `action` (`keep`, `reject`, `iterate`, `pivot`), `reason`; optional `next_step` |
 | `strategic_retreat` | `trigger`, `action`, `focus` |
@@ -484,6 +521,7 @@ A hypothesis is rejected unless `id`, `claim`, `expected_delta`, `rubrics` (at l
 | `parallel_start` | `team`, `hypotheses` (non-empty string[]), `reason` |
 | `parallel_result` | `hypothesis_id`, `agent`, `metrics`, `branch` |
 | `parallel_synthesis` | `winner`, `reason`, `merged_branch` |
+| `eval` (runner-only) | `eval_id`, `status` (`ok`, `failed`), `candidate`; optional `mean`, `std`, `reason` |
 | `verifier_verdict` (runner-only) | `id`, `verdict`, `checks`, `reason`, `output_path`; optional `model` |
 | `contract_relocked` (runner-only) | `changes` (each with `file` and `kind`: `edited` or `deleted`), `files` (SHA-256 of `evaluate.py` and `contract.json`) |
 
