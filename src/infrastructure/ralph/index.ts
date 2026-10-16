@@ -11,6 +11,8 @@ export {
   initRalph,
   isInitialized,
 } from "./init.ts";
+export type { LogCommandOptions, LogCommandResult } from "./log-command.ts";
+export { runLogCommand } from "./log-command.ts";
 export type {
   AbandonedTask,
   CompletedTask,

@@ -20,6 +20,7 @@ ml-ralph - Autonomous ML engineering agent with TUI
 Usage:
   ml-ralph [project-path]    Launch TUI for the specified project (default: current directory)
   ml-ralph init [name] [path]  Initialize a new ml-ralph project (keeps existing files)
+  ml-ralph log <type> '<json>'  Validate an event and append it to .ml-ralph/log.jsonl
   ml-ralph --help            Show this help message
 
 Options:
@@ -43,6 +44,15 @@ For more information, visit: https://github.com/pentoai/ml-ralph
 
 // Parse --teams flag
 const enableTeams = process.argv.includes("--teams");
+
+// Check for log command: validate an event, then append it to log.jsonl
+if (process.argv[2] === "log") {
+  const { runLogCommand } = await import("./infrastructure/ralph/index.ts");
+  const result = await runLogCommand(process.argv.slice(3));
+  process.stdout.write(result.stdout);
+  process.stderr.write(result.stderr);
+  process.exit(result.code);
+}
 
 // Check for init command
 if (process.argv[2] === "init") {
