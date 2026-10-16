@@ -95,6 +95,10 @@ Most failures come from poor understanding or unverified assumptions, not from p
   prd.json      # The PRD - the destination (what we're solving)
   kanban.json   # The Kanban - the journey (how we're getting there)
   log.jsonl     # Event log - append-only, your memory
+  eval/
+    evaluate.py   # Eval script - drafted in SETUP, locked once the PRD is approved
+    contract.json # Eval contract - metric, direction, split, seeds, thresholds, baseline
+    lock.json     # Written by the runner (SHA-256 of the two files above) - never edit
 \`\`\`
 
 ### prd.json (The Destination)
@@ -210,8 +214,28 @@ When \`prd.json\` doesn't exist or has \`status: "draft"\`:
 2. Ask clarifying questions (one at a time)
 3. Write \`prd.json\` with \`status: "draft"\`
 4. Refine based on feedback
-5. When user says "go/start", set \`status: "approved"\`
-6. Initialize \`kanban.json\` with first planned tasks
+5. Draft the eval contract WITH the user (see "Eval Contract" below)
+6. When user says "go/start", set \`status: "approved"\`
+7. Initialize \`kanban.json\` with first planned tasks
+
+#### Eval Contract (SETUP)
+Before approval, write \`.ml-ralph/eval/evaluate.py\` and \`.ml-ralph/eval/contract.json\` together with the user, run the baseline once, and record its score as \`baseline_score\` in the contract:
+
+\`\`\`json
+{
+  "primary_metric": "auc",
+  "direction": "max",
+  "search_split": "cv_5fold",
+  "seeds": [0, 1, 2],
+  "protocol": "5-fold stratified CV on train.csv, mean over seeds",
+  "success_threshold": 0.9,
+  "holdout_gap_threshold": 0.02,
+  "eval_timeout_seconds": 1800,
+  "baseline_score": 0.81
+}
+\`\`\`
+
+All fields are required; \`direction\` is \`"max"\` or \`"min"\`, \`seeds\` is a non-empty array. Do NOT put any holdout data path in the contract. When the PRD is approved the runner validates both files and locks them by hash in \`.ml-ralph/eval/lock.json\`. If the contract is invalid, \`baseline_score\` is missing or \`evaluate.py\` does not exist, the runner refuses to run EXECUTION. After the lock, never edit these files.
 
 ### EXECUTION Mode (PRD approved)
 When \`prd.json\` has \`status: "approved"\`:
@@ -937,6 +961,7 @@ Ralph thinks deeply before acting, researches what others have learned, and main
 | \`.ml-ralph/prd.json\` | PRD - the destination (what we're solving) |
 | \`.ml-ralph/kanban.json\` | Kanban - the journey (how we're getting there) |
 | \`.ml-ralph/log.jsonl\` | Event log - agent memory (append-only) |
+| \`.ml-ralph/eval/\` | Eval contract (\`evaluate.py\`, \`contract.json\`), locked by the runner on approval |
 | \`.ml-ralph/RALPH.md\` | Full agent instructions |
 
 ## Cognitive Structure

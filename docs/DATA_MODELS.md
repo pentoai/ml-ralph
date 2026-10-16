@@ -10,6 +10,7 @@ Complete type definitions for all ml-ralph entities.
 - [Progress](#progress)
 - [Training Jobs](#training-jobs)
 - [Project Config](#project-config)
+- [Eval Contract](#eval-contract)
 - [Chat](#chat)
 - [Enums](#enums)
 
@@ -396,6 +397,30 @@ interface ProjectConfig {
 
 ---
 
+## Eval Contract
+
+The protocol the agent is scored by, fixed before experiments start.
+
+```typescript
+interface EvalContract {
+  primary_metric: string; // e.g. "auc"
+  direction: "max" | "min"; // Is higher or lower better
+  search_split: string; // Split the agent searches on, e.g. "cv_5fold"
+  seeds: number[]; // Non-empty array of integer seeds
+  protocol: string; // Prose description of the eval protocol
+  success_threshold: number; // Score that counts as success
+  holdout_gap_threshold: number; // Max search-vs-holdout gap, >= 0
+  eval_timeout_seconds: number; // Per-eval timeout, > 0
+  baseline_score: number; // Baseline score recorded in SETUP
+}
+```
+
+**Files**: `.ml-ralph/eval/contract.json`, `.ml-ralph/eval/evaluate.py`, `.ml-ralph/eval/lock.json`
+
+All fields are required. The holdout data location is deliberately not part of the contract. When the PRD is approved the runner validates the contract and writes `lock.json` with the SHA-256 of `evaluate.py` and `contract.json` plus `locked_at`; see [FILE_LAYOUT.md](./FILE_LAYOUT.md#ml-ralpheval).
+
+---
+
 ## Chat
 
 PRD creation conversation history.
@@ -524,6 +549,14 @@ Key validation rules for each entity:
 
 - `url` must be valid URL if present
 - `keyTakeaways` must have at least 1 item
+
+### EvalContract
+
+- All fields required; error messages name the field
+- `direction` is `"max"` or `"min"`
+- `seeds` is a non-empty array of integers
+- `holdout_gap_threshold` >= 0, `eval_timeout_seconds` > 0
+- `success_threshold` and `baseline_score` are finite numbers
 
 ### TrainingJob
 

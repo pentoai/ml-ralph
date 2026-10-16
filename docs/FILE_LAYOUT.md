@@ -23,6 +23,10 @@ your-ml-project/
 │   ├── progress.jsonl            # Iteration log (append-only)
 │   ├── learnings.jsonl           # Accumulated learnings (append-only)
 │   ├── research.jsonl            # Research items (append-only)
+│   ├── eval/
+│   │   ├── evaluate.py           # Eval script (drafted in SETUP, locked on PRD approval)
+│   │   ├── contract.json         # Eval contract (see DATA_MODELS.md)
+│   │   └── lock.json             # SHA-256 lock written by the runner
 │   ├── chat/
 │   │   └── prd-session.jsonl     # PRD creation chat history
 │   └── runs/
@@ -65,6 +69,22 @@ Project configuration. Created on `ml-ralph init`.
 ### `.ml-ralph/prd.json`
 
 Product Requirements Document. Created via PRD chat.
+
+### `.ml-ralph/eval/`
+
+The eval contract. In SETUP the agent drafts `evaluate.py` and `contract.json` with the user and records the baseline score in the contract. Once `prd.json` has `status: "approved"`, the runner validates the contract and, if `evaluate.py` exists, writes `lock.json`:
+
+```json
+{
+  "locked_at": "2026-01-26T10:45:00.000Z",
+  "files": {
+    "evaluate.py": "<sha256 hex>",
+    "contract.json": "<sha256 hex>"
+  }
+}
+```
+
+Locking fails, with an error naming the file or field, when `contract.json` is missing or invalid, `baseline_score` is missing, or `evaluate.py` does not exist. After SETUP the runner refuses to start an iteration without `lock.json` and the TUI shows the reason. The holdout data location is deliberately not part of the contract. Detecting edits to locked files during a run is not implemented yet.
 
 ### `.ml-ralph/progress.jsonl`
 
@@ -129,12 +149,13 @@ ml-ralph/
 │   │
 │   ├── domain/                      # Pure types & validation (NO deps)
 │   │   ├── types/                   # PRD, Story, Learning, Research, Job, Kanban, Config, Chat, enums
-│   │   └── validation/              # validatePRD, validateLearning
+│   │   └── validation/              # validatePRD, validateLearning, validateEvalContract
 │   │
 │   ├── infrastructure/              # External integrations
 │   │   ├── ralph/
 │   │   │   ├── runner.ts            # RalphRunner: spawns claude per iteration, parses stream-json
 │   │   │   ├── init.ts              # initRalph / ensureInitialized
+│   │   │   ├── eval-lock.ts         # Lock .ml-ralph/eval/ by hash; gate iterations on the lock
 │   │   │   ├── log-parser.ts        # Read/watch log.jsonl, prd.json, kanban.json
 │   │   │   ├── templates.ts         # Agent prompts and log event types
 │   │   │   └── index.ts

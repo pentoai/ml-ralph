@@ -3,6 +3,7 @@
  */
 
 import type { Subprocess } from "bun";
+import { checkEvalGate } from "./eval-lock.ts";
 
 export interface RunnerConfig {
   projectPath: string;
@@ -77,6 +78,12 @@ If the project is complete (success criteria met), output: <project_complete>`;
     try {
       for (let i = 1; i <= this.config.maxIterations!; i++) {
         if (!this.running) break;
+
+        const gate = await checkEvalGate(this.config.projectPath);
+        if (!gate.ok) {
+          this.config.onError?.(new Error(gate.error));
+          return;
+        }
 
         this.currentIteration = i;
         this.config.onIterationStart?.(i);

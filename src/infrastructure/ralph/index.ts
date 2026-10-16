@@ -2,6 +2,8 @@
  * ML-Ralph infrastructure - init, runner, and log parser
  */
 
+export type { EvalLock, EvalLockResult } from "./eval-lock.ts";
+export { checkEvalGate, lockEvalContract } from "./eval-lock.ts";
 export type { InitOptions, InitResult } from "./init.ts";
 export {
   enableAgentTeamsSettings,
