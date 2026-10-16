@@ -168,7 +168,7 @@ export function App({ projectPath, enableTeams }: AppProps) {
       setRunNotice(
         reason === "contract_changed"
           ? "Run stopped: reason contract_changed (a locked eval file was changed and you chose to stop)"
-          : null,
+          : "Run stopped: reason max_iterations (the iteration limit was reached; the run is not complete)",
       );
       setAgentStatus("idle");
       setPendingHints([]);

@@ -68,7 +68,7 @@ ml-ralph is a Bun + OpenTUI terminal app that launches the `claude` CLI in a loo
 1. `src/index.tsx` handles `--help`, `--teams` and `init`. Outside tmux it re-launches itself in a tmux session named `ml-ralph-<dir>`. Then it renders `<App>` through `createCliRenderer`.
 2. `App` calls `ensureInitialized(projectPath)` (`infrastructure/ralph/init.ts`). This writes any missing `.ml-ralph/` files, `CLAUDE.md`, `AGENTS.md` and the skills. `ml-ralph init` calls the same `initRalph`.
 3. `App` creates a `DefaultOrchestrator`. Pressing `s` calls `start()`, which runs `RalphRunner.start()`.
-4. `RalphRunner` loops up to `maxIterations` times. Each iteration spawns `claude --dangerously-skip-permissions --verbose -p <prompt> --output-format stream-json` in the project directory. With `--teams` it sets `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`. The prompt tells the agent to read `.ml-ralph/RALPH.md`, run one iteration and print `<iteration_complete>` or `<project_complete>`.
+4. `RalphRunner` loops up to `maxIterations` times. Each iteration spawns `claude --dangerously-skip-permissions --verbose -p <prompt> --output-format stream-json` in the project directory. With `--teams` it sets `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`. The prompt tells the agent to read `.ml-ralph/RALPH.md`, run one iteration and print `<iteration_complete>`, plus `<candidate_complete eval_id="...">` when it has a candidate to hand in. The agent cannot end a run: a `<project_complete>` in its output is ignored (the next prompt says so), and a run ends only at `maxIterations` (`onComplete("max_iterations")`, a stop, not a completion) or when the user stops it after a tamper pause (`contract_changed`).
 5. The runner parses the stream-json output into `StreamEvent`s (text, tool calls, tool results, errors, iteration markers). The orchestrator passes them to the UI. The runner also appends `phase` events to `.ml-ralph/log.jsonl`.
 6. The agent itself appends events to `log.jsonl` through `ml-ralph log <type> '<json>'`, which validates each event against `domain/validation/log-event.ts` first (see [DATA_MODELS.md](./DATA_MODELS.md#log-events)), and updates `prd.json` and `kanban.json`. The monitor and knowledge panels render these through `useLogStream` and `useRalphState`, which use `log-parser.ts` (`readLogFile`, `watchLogFile`, `readPrdFile`, `readKanbanFile`, `aggregateEvents`).
 7. In planning mode, `TmuxLayoutManager` splits the tmux window and an interactive `claude` session runs in the other pane. The TUI shows the knowledge tabs.
@@ -85,6 +85,8 @@ User hints (`h` while running) are queued with `addHint` and added to the prompt
 | `log.jsonl`         | the agent and `RalphRunner`, append-only  | `useLogStream` and all the log-driven panels                  |
 | `config.json`       | `init` (`JsonFileStore`)                  | zustand store, `verifyCandidate` (`verifier` block)           |
 | `verifier/<id>.json`| `verifyCandidate`                         | nothing yet                                                   |
+| `incumbent.json`    | `judgeCandidate` (on promotion)           | `judgeCandidate`                                              |
+| `baseline.json`     | `RalphRunner` (once, at the first iteration) | `judgeCandidate`                                           |
 | `runs/active.json`  | `init` (`{"jobs": []}`)                   | zustand store (`activeJobs`)                                  |
 | `chat/`             | `init` creates the directory              | nothing yet                                                   |
 
@@ -141,11 +143,11 @@ What the TUI treats as verified is the eval's `mean` from `metrics.json`, never 
 - the hypotheses panel shows the eval mean of the latest experiment and labels the agent's numbers "Reported";
 - the cognitive map and the activity feed read only `log.jsonl` and cannot check anything on disk, so they label what the agent logged: a trailing `?` on the cognitive map (which no longer marks a best), `(reported)` on `experiment` and `parallel_result` lines. `parallel_result` events carry no `eval_id`, so their metrics are never verified.
 
-Promotion and completion gates that consume these files are a later change and must read scores from `metrics.json` only, never from the `experiment` event.
+The promotion gate (below) consumes these files and reads scores only from `metrics.json`, never from the `experiment` event.
 
 ### Verifier (`infrastructure/ralph/verifier.ts`)
 
-`verifyCandidate` checks a promotion candidate in a separate `claude -p` session, so the agent that produced a result does not grade it. Nothing in the loop calls it yet: the promotion and completion gates that will call it before every promotion are a later change.
+`verifyCandidate` checks a promotion candidate in a separate `claude -p` session, so the agent that produced a result does not grade it. The promotion gate (below) calls it before every promotion. Completion is not a runner decision yet, so there is no verifier run for it.
 
 - **Read-only session.** It spawns `claude -p --setting-sources user --strict-mcp-config --add-dir <project> --output-format json --tools Read,Grep,Glob --disallowedTools Write,Edit,MultiEdit,NotebookEdit,Bash --permission-mode dontAsk --no-session-persistence`, and never `--dangerously-skip-permissions`. `verifier.model` from `config.json` adds `--model`; without it the CLI default model is used. The prompt goes in on stdin, since a diff can exceed the argument size limit.
 - **Isolated from the agent's files.** The agent can edit the project's `CLAUDE.md`, `.claude/settings.json` (hooks, permissions) and `.mcp.json`, so the session must not load them. It runs from a fresh temporary directory (removed afterwards), so nothing is discovered there. `--setting-sources user` skips project and local settings and `--strict-mcp-config` skips MCP servers that no `--mcp-config` names. `--add-dir` lets the read-only tools reach the project by absolute path, which the prompt states. Only the user's own settings apply.
@@ -163,9 +165,29 @@ Promotion and completion gates that consume these files are a later change and m
 { "verifier": { "model": "claude-opus-5-5", "recent_events": 50 } }
 ```
 
+### Promotion gate (`infrastructure/ralph/promotion.ts`)
+
+The agent no longer declares success. It prints `<candidate_complete eval_id="...">` and the runner decides whether that candidate becomes the incumbent, the best candidate so far. After each iteration `RalphRunner` looks for the last `<candidate_complete>` in the agent's final output and calls `judgeCandidate`.
+
+**Rule.** The candidate is promoted only when all of these hold:
+
+1. **Eval ok.** The `eval_id` names an eval the runner itself recorded: an `eval` event written by `ml-ralph eval` during this iteration (so an older, stronger eval cannot be cited again), and a `.ml-ralph/evals/<id>/metrics.json` with `status: "ok"` that was scored under the current lock hashes. A failed eval, a missing event or a metrics file with no event (an agent can write a file, not the runner's event) is rejected.
+2. **Score.** Let `improvement` be `candidate.mean - reference.mean` for `direction: "max"` and `reference.mean - candidate.mean` for `"min"`, and `margin` the larger of the candidate's seed std and the reference's seed std. The candidate must satisfy `improvement > margin` (equal does not count). The reference is the incumbent's eval, or `baseline_score` from `contract.json` when there is no incumbent (the baseline has no std, so only the candidate's std counts). Direction and baseline come from `contract.json` only while its bytes still match the pinned lock.
+3. **Verifier.** `verifyCandidate` approves `git diff <incumbent ref | baseline ref> <candidate HEAD>`. It runs only for a candidate that already wins on score, since it is the expensive step. The rubrics are those of every `hypothesis` event logged in this iteration (or of the latest hypothesis if none was), so naming a weak hypothesis does not drop a stricter one. Because the verifier only sees committed refs, the runner rejects a candidate while tracked files outside `.ml-ralph/` have uncommitted changes; untracked files are not checked.
+
+The scores and the eval id come only from the runner's own `eval` event and `metrics.json`. The `experiment` event is never read. The incumbent's score is also read from its `metrics.json`; `incumbent.json` only points at it.
+
+**Everything else rejects.** A tag without `eval_id`, an unknown eval, a contract that no longer matches the lock, a missing baseline commit, an unreadable `incumbent.json` (no silent fallback to the easier baseline), an incumbent whose metrics are gone, a verifier crash or any other error rejects. One exception: an incumbent scored under an earlier lock (the user re-locked the eval) cannot be compared, so it is ignored and the candidate is compared with `baseline_score`; the reason says so.
+
+**Record.** Each decision appends a runner-only `promotion` event: `verdict` (`promoted` or `rejected`), `reason` (one line), `candidate_eval_id`, `incumbent_eval_id` (the incumbent it was compared with, absent against the baseline), `verifier_id` (the `verifier_verdict` used, absent when the verifier did not run), `candidate_mean` and `reference_mean`. On promotion `.ml-ralph/incumbent.json` is replaced (write then rename) with `{eval_id, candidate, ref, verifier_id, promoted_at}`; `ref` is the candidate's commit, the base of the next diff. `.ml-ralph/baseline.json` (`{ref, recorded_at}`) is written once, by the runner, from `git rev-parse HEAD` at the first iteration of the first run with a lock, so the first diff is against the code the baseline score belongs to. With no commit, no baseline is recorded and no candidate can be promoted.
+
+**What the agent sees.** Its next prompt gets one line, `Runner decision on "<eval_id>": promoted|rejected - <reason>`. For a verifier rejection the reason is the verifier's own `Verifier verdict: reject - <first line>`; the per-check results are not in the prompt.
+
+**Limits.** The agent runs with full permissions in the project, so it can still write `incumbent.json`, `baseline.json`, `log.jsonl` (including forged `eval` events) and `.ml-ralph/evals/`, and read `.ml-ralph/verifier/` and the `checks` in `verifier_verdict` events. Closing that needs these files stored outside the project (R3, R14), as with the eval lock. Completion is not a runner decision yet: no holdout score or budget ends a run, so it runs to `maxIterations`.
+
 ### DefaultOrchestrator (`application/orchestrator/orchestrator.ts`)
 
-Wraps one `RalphRunner` and exposes subscription methods that each return an unsubscribe function: `onOutput`, `onIterationChange`, `onComplete` (reasons `project_complete`, `max_iterations`, `contract_changed`), `onContractChange` and `onStoryComplete` (the last is part of the interface but nothing emits it). Also forwards `start`, `stop`, `isRunning`, `setMaxIterations` and `addHint`, plus `onContractChange`, `relockContract` and `stopForContractChange` for the tamper check.
+Wraps one `RalphRunner` and exposes subscription methods that each return an unsubscribe function: `onOutput`, `onIterationChange`, `onComplete` (reasons `max_iterations` and `contract_changed`; the TUI shows both as a stop notice, never as a completion), `onContractChange` and `onStoryComplete` (the last is part of the interface but nothing emits it). Also forwards `start`, `stop`, `isRunning`, `setMaxIterations` and `addHint`, plus `onContractChange`, `relockContract` and `stopForContractChange` for the tamper check.
 
 ### Log parser (`infrastructure/ralph/log-parser.ts`)
 

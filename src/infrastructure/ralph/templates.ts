@@ -698,7 +698,7 @@ Log events with \`${LOG_COMMAND} <type> '<json>'\`. Each example below is the JS
 |------|----------------|-------------|
 | \`data_verified\` | dataset, checks, issues, action | **MANDATORY before modeling** |
 | \`result_verification\` | result, verification_attempts, conclusion | Attempting to break own results |
-| \`success_verified\` | criteria_met, verification_checks, attempts_to_break | **MANDATORY before completion** |
+| \`success_verified\` | criteria_met, verification_checks, attempts_to_break | **MANDATORY before \`<candidate_complete>\`** |
 | \`phase\` | phase, summary | Cognitive phase transition |
 | \`thinking\` | subject, thoughts, conclusion | Explicit reasoning process |
 | \`mental_model\` | domain, belief, confidence, evidence | Current understanding |
@@ -973,22 +973,33 @@ Always log changes with rationale!
 
 ---
 
-## Stop Condition
+## Completing a Candidate
 
-**Before declaring success, you MUST:**
+You cannot end the run or declare success. When you believe a candidate is a new best, you hand it to the runner, and the runner decides whether it becomes the incumbent (the best candidate so far). The run itself ends at the iteration limit, so after a decision, keep improving.
+
+**Before handing in a candidate, you MUST:**
 
 1. **Verify the result is real** (not a bug, not data leakage, not evaluation error)
 2. **Try to break it** - Actively attempt to invalidate your own success
 3. **Check assumptions** - Did you verify data integrity? Are train/test from same distribution?
 4. **Document verification** - Log what you checked and what you found
 
-Only after genuine verification attempt:
-1. Log: \`${LOG_COMMAND} success_verified '{"criteria_met":["..."],"verification_checks":["data integrity","no leakage","same distribution"],"attempts_to_break":["..."]}'\`
-2. Log: \`${LOG_COMMAND} status '{"status":"complete","reason":"All criteria met AND verified"}'\`
-3. Update \`prd.json\`: \`status: "complete"\`
-4. Output: \`<project_complete>\`
+Only after a genuine verification attempt:
+1. Commit the candidate. The independent verifier reads the git diff between commits, and the runner rejects a candidate while tracked files have uncommitted changes.
+2. Score it with \`${EVAL_COMMAND} <path>\` in this iteration, and log the \`hypothesis\` it implements (with its rubrics) if you have not.
+3. Log: \`${LOG_COMMAND} success_verified '{"criteria_met":["..."],"verification_checks":["data integrity","no leakage","same distribution"],"attempts_to_break":["..."]}'\`
+4. Output: \`<candidate_complete eval_id="eval-...">\` with the \`eval_id\` of that \`ml-ralph eval\` run, in addition to \`<iteration_complete>\`.
 
-**If you skip verification, you will declare victory on garbage data. Don't be that engineer.**
+The runner promotes the candidate only if all of these hold:
+- its eval has \`status: "ok"\`, taken from the runner's own record of the eval (never from your \`experiment\` event);
+- the independent verifier approves the diff against the incumbent (or against the starting commit for the first candidate);
+- its mean beats the incumbent's mean in the contract's \`direction\` by more than the larger of the two seed stds. The first candidate is compared with \`baseline_score\`.
+
+Either way the runner logs a \`promotion\` event and your next prompt tells you the verdict and one line of reason. That is all the feedback you get: do not read \`.ml-ralph/verifier/\`, and never write \`.ml-ralph/incumbent.json\`, \`.ml-ralph/baseline.json\` or \`promotion\` events yourself.
+
+**Nothing you output ends the run.** Do not set \`prd.json\` to \`status: "complete"\` and do not log \`status: "complete"\`.
+
+**If you skip verification, you will hand in garbage and the verifier will reject it. Don't be that engineer.**
 `;
 
 export const CLAUDE_MD = `# ML-Ralph Project
@@ -1345,6 +1356,24 @@ export interface VerifierVerdictEvent extends BaseEvent {
   output_path: string;
 }
 
+/** Written by the runner (never the agent) after it judges a `<candidate_complete>` */
+export interface PromotionEvent extends BaseEvent {
+  type: "promotion";
+  verdict: "promoted" | "rejected";
+  /** One line; the same text the agent sees in its next prompt */
+  reason: string;
+  /** The eval_id the agent named in its tag; absent when it named none */
+  candidate_eval_id?: string;
+  /** The incumbent the candidate was compared with; absent when compared with baseline_score */
+  incumbent_eval_id?: string;
+  /** The verifier_verdict event this decision used; absent when the verifier did not run */
+  verifier_id?: string;
+  /** Mean from the candidate's metrics.json */
+  candidate_mean?: number;
+  /** Incumbent's mean from its metrics.json, or baseline_score without an incumbent */
+  reference_mean?: number;
+}
+
 /** Written by the runner (never the agent) when the user re-locks the eval files after a change */
 export interface ContractRelockedEvent extends BaseEvent {
   type: "contract_relocked";
@@ -1434,6 +1463,7 @@ export type RalphEvent =
   | LearningEvent
   | DecisionEvent
   | VerifierVerdictEvent
+  | PromotionEvent
   | ContractRelockedEvent
   | StrategicRetreatEvent
   | PrdUpdatedEvent

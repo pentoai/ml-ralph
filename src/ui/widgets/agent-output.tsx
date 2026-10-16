@@ -104,7 +104,7 @@ function TextOutput({ text }: { text: string }) {
   // Detect success/completion markers
   if (
     text.includes("<iteration_complete>") ||
-    text.includes("<project_complete>")
+    text.includes("<candidate_complete")
   ) {
     return <Text color={colors.accentGreen}>{text}</Text>;
   }

@@ -23,6 +23,8 @@ your-ml-project/
 │   ├── progress.jsonl            # Iteration log (append-only)
 │   ├── learnings.jsonl           # Accumulated learnings (append-only)
 │   ├── research.jsonl            # Research items (append-only)
+│   ├── incumbent.json            # Runner-written pointer to the current best candidate
+│   ├── baseline.json             # Runner-written commit the run started from
 │   ├── evals/
 │   │   └── <eval_id>/metrics.json    # Runner-written scores from `ml-ralph eval` (see DATA_MODELS.md)
 │   ├── eval/
@@ -87,6 +89,22 @@ The eval contract. In SETUP the agent drafts `evaluate.py` and `contract.json` w
 ```
 
 Locking fails, with an error naming the file or field, when `contract.json` is missing or invalid, `baseline_score` is missing, or `evaluate.py` does not exist. Only a draft or missing PRD counts as SETUP; any other status (including `blocked`) needs a valid lock. An existing `lock.json` must be well-formed and still cover a valid contract and an existing `evaluate.py`. The runner writes `.ml-ralph/eval-lock.created` when it creates the lock; if `lock.json` later disappears the runner refuses instead of silently locking the current files again (remove the marker to re-lock deliberately). The runner refuses to start an iteration without a usable lock and the TUI shows the reason. The holdout data location is deliberately not part of the contract. Before each iteration the runner also re-hashes the two files against the lock and pauses on any difference (see the tamper check in `ARCHITECTURE.md`); a draft PRD does not switch this off once a lock or the marker exists.
+
+### `.ml-ralph/incumbent.json` and `.ml-ralph/baseline.json`
+
+Written by the runner only, never by the agent; see the promotion gate in [ARCHITECTURE.md](./ARCHITECTURE.md#promotion-gate-infrastructureralphpromotionts).
+
+```json
+{
+  "eval_id": "eval-lq3k2m-9f3a1c",
+  "candidate": "submissions/h001.csv",
+  "ref": "9437f72c0f0a5d1f3a5c4b8e2d7a6c1b0e9f8a7d",
+  "verifier_id": "v-lq3k2-ab1c",
+  "promoted_at": "2026-02-01T10:00:00Z"
+}
+```
+
+`incumbent.json` points at the current best: its eval (whose `metrics.json` holds the score), its git commit and the verifier run that approved it. It is replaced on every promotion and absent until the first one. `baseline.json` is `{"ref": "<commit>", "recorded_at": "..."}`, the commit HEAD was at when the first iteration started, used as the diff base until there is an incumbent.
 
 ### `.ml-ralph/progress.jsonl`
 

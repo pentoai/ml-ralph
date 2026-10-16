@@ -84,6 +84,11 @@ The runner writes these. Never write one yourself: a forged event has no effect 
 An independent read-only verifier judges each promotion candidate; this event records its verdict. A failed run is logged as `reject` with reason `verifier_error` and checks `unknown`. You only see the verdict and one line of reason in your next prompt. The full output in `.ml-ralph/verifier/` is not for you to read.
 
 ```jsonl
+{"ts":"...","type":"promotion","verdict":"rejected","reason":"mean 0.84 vs incumbent 0.83 (higher is better): improvement 0.01, seed noise 0.02; not better by more than the seed noise","candidate_eval_id":"eval-lq3k2m-9f3a1c","incumbent_eval_id":"eval-lq3j0a-71bd02","candidate_mean":0.84,"reference_mean":0.83}
+```
+You hand in a candidate by printing `<candidate_complete eval_id="eval-...">`; you never decide that it is the new best. The runner writes this event for every one. It promotes only when that eval (from this iteration, `status: ok`) beats the incumbent's mean in the contract's direction by more than the larger of the two seed stds (the first candidate is compared with `baseline_score`), and the verifier approves the committed diff. `verifier_id` names the `verifier_verdict` it used. `.ml-ralph/incumbent.json` points at the current best. Scores come from the runner's `eval` event and `metrics.json`, never from your `experiment` event. You see the verdict and one line of reason in your next prompt. Never write `.ml-ralph/incumbent.json` or `.ml-ralph/baseline.json`.
+
+```jsonl
 {"ts":"...","type":"eval","eval_id":"eval-lq3k2m-9f3a1c","status":"ok","candidate":"submissions/h001.csv","mean":0.832,"std":0.004}
 ```
 `ml-ralph eval <path>` writes this after scoring a candidate. Put its `eval_id` in your `experiment` event; the TUI shows that eval's mean as the result, lists your own numbers as unverified, and flags a `primary_metric` number that disagrees with the eval. Without a real `eval_id` your metrics are unverified. Never write anything under `.ml-ralph/evals/` yourself.
@@ -117,6 +122,7 @@ See RALPH.md for when and how to use these events.
 | `devils_advocate` | conclusion, attacks, survived, next_action |
 | `limitation_claim` | claim, devils_advocate_id, validation_attempts, confidence, user_approved |
 | `eval` (runner-only) | eval_id, status, candidate (+ mean, std or reason) |
+| `promotion` (runner-only) | verdict, reason (+ candidate_eval_id, incumbent_eval_id, verifier_id, candidate_mean, reference_mean) |
 | `verifier_verdict` (runner-only) | id, verdict, checks, reason, output_path (+ model) |
 | `contract_relocked` (runner-only) | changes, files |
 

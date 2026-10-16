@@ -184,6 +184,18 @@ export const LOG_EVENT_SCHEMAS: Record<string, LogEventSchema> = {
       reason: optional(str),
     },
   },
+  promotion: {
+    runnerOnly: true,
+    fields: {
+      verdict: oneOf("promoted", "rejected"),
+      reason: str,
+      candidate_eval_id: optional(str),
+      incumbent_eval_id: optional(str),
+      verifier_id: optional(str),
+      candidate_mean: optional(num),
+      reference_mean: optional(num),
+    },
+  },
   verifier_verdict: {
     runnerOnly: true,
     fields: {

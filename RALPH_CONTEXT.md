@@ -116,7 +116,7 @@ Experiment events can carry `wandb_run_id` and `wandb_url`, and the experiments 
 ### User control
 
 - Hints (`h`) are queued in the runner and added to the next iteration's prompt.
-- The agent stops when it prints `<project_complete>` or the iteration limit is reached.
+- The agent cannot end a run. It hands in a candidate with `<candidate_complete eval_id="...">`, and the runner decides whether to promote it. The run stops at the iteration limit (`max_iterations`).
 - The agent runs with `--dangerously-skip-permissions`, so run it in a project where that is acceptable.
 
 ## Source Layout
