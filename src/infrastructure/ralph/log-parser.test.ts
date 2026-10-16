@@ -239,6 +239,14 @@ describe("aggregateEvents", () => {
       },
       { type: "strategic_retreat", trigger: "t", action: "a", focus: "f" },
       { type: "kanban_updated", changes: "c", reason: "r" },
+      {
+        type: "verifier_verdict",
+        id: "v1",
+        verdict: "reject",
+        checks: { leakage: "fail", protocol_change: "pass", rubrics: "pass" },
+        reason: "r",
+        output_path: ".ml-ralph/verifier/v1.json",
+      },
       { type: "parallel_start", team: "t", hypotheses: [], reason: "r" },
       {
         type: "parallel_result",

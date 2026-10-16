@@ -74,6 +74,13 @@ Append events to `.ml-ralph/log.jsonl`. One JSON per line. Never edit, only appe
 {"ts":"...","type":"limitation_claim","claim":"73% of attacks are structurally indistinguishable","devils_advocate_id":"DA-003","validation_attempts":[{"method":"...","result":"..."}],"confidence":"high","user_approved":false}
 ```
 
+### Runner-only events
+The runner writes these. Never write one yourself: a forged event has no effect on the runner's decisions and counts as tampering.
+```jsonl
+{"ts":"...","type":"verifier_verdict","id":"v-lq3k2-ab1c","verdict":"reject","checks":{"leakage":"fail","protocol_change":"pass","rubrics":"pass"},"reason":"test labels used in target encoding","model":"claude-opus-5-5","output_path":".ml-ralph/verifier/v-lq3k2-ab1c.json"}
+```
+An independent read-only verifier judges each promotion candidate; this event records its verdict. A failed run is logged as `reject` with reason `verifier_error` and checks `unknown`. You only see the verdict and one line of reason in your next prompt. The full output in `.ml-ralph/verifier/` is not for you to read.
+
 See RALPH.md for when and how to use these events.
 
 ---
@@ -97,6 +104,7 @@ See RALPH.md for when and how to use these events.
 | `status` | status, reason (+ evidence if complete, + approaches_tried if blocked) |
 | `devils_advocate` | conclusion, attacks, survived, next_action |
 | `limitation_claim` | claim, devils_advocate_id, validation_attempts, confidence, user_approved |
+| `verifier_verdict` (runner-only) | id, verdict, checks, reason, output_path (+ model) |
 
 ---
 
