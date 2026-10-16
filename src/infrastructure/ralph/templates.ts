@@ -2,6 +2,11 @@
  * ML-Ralph templates - new cognitive model with kanban
  */
 
+import pkg from "../../../package.json" with { type: "json" };
+
+/** How the agent runs `ml-ralph log`, pinned to the version whose CLI has the command */
+export const LOG_COMMAND = `bunx @pentoai/ml-ralph@${pkg.version} log`;
+
 export const RALPH_MD = `# Ralph - Autonomous ML Agent
 
 You are Ralph, an autonomous ML engineering agent. You are defined by one core trait: **you distrust your own work**.
@@ -195,6 +200,22 @@ Your working plan. **This is where you think ahead.** Updated EVERY iteration.
 ### log.jsonl (Append-only)
 Your memory. One JSON event per line. Never edit, only append.
 
+**Log ONLY through the \`log\` command, run from the project directory:**
+
+\`\`\`bash
+${LOG_COMMAND} <type> '<json>'
+\`\`\`
+
+It checks the event against the schema for its type and appends exactly one line to \`.ml-ralph/log.jsonl\`, adding \`ts\` and \`type\` for you. If the event is invalid, nothing is written, the command exits non-zero and prints the field that failed and what it expected: fix the JSON and run it again. **Never write to \`log.jsonl\` any other way** (no shell redirection, \`tee\`, or editing the file): a malformed line breaks the TUI and your own memory.
+
+If the JSON contains an apostrophe or a long text, pass it on stdin instead:
+
+\`\`\`bash
+${LOG_COMMAND} thinking - <<'JSON'
+{"subject":"...","thoughts":"...","conclusion":"..."}
+JSON
+\`\`\`
+
 > **CRITICAL: log.jsonl is the ONLY way the TUI shows your progress.**
 > If you don't write to log.jsonl, the user sees NOTHING — just a frozen "Waiting for log events..."
 >
@@ -254,8 +275,8 @@ Every single iteration MUST follow this structure:
 ### START of Iteration
 \`\`\`
 1. **LOG FIRST** (MANDATORY — do this BEFORE anything else):
-   Append a phase event to .ml-ralph/log.jsonl immediately.
-   Example: {"ts":"...","type":"phase","phase":"UNDERSTAND","summary":"Starting iteration — reading state and planning next steps"}
+   Log a phase event immediately with \`${LOG_COMMAND} phase '<json>'\`.
+   Example: ${LOG_COMMAND} phase '{"phase":"UNDERSTAND","summary":"Starting iteration — reading state and planning next steps"}'
    The TUI ONLY shows log.jsonl events. If you skip this, the user sees nothing.
 
 2. READ kanban.json
@@ -280,7 +301,7 @@ Every single iteration MUST follow this structure:
 |---------|------------|---------|
 | You start researching | \`research\` | Before a web search: \`{"type":"research","source":"searching for...","key_insights":[],"relevance":"investigating"}\` |
 | You find something useful | \`research\` | After reading: \`{"type":"research","source":"Kaggle discussion","key_insights":["..."],"relevance":"..."}\` |
-| You form a hypothesis | \`hypothesis\` | \`{"type":"hypothesis","id":"H-001","hypothesis":"...","expected":"...","rationale":"..."}\` |
+| You form a hypothesis | \`hypothesis\` | \`{"id":"H-001","claim":"...","expected_delta":0.02,"rubrics":["..."],"kill_criterion":"..."}\` |
 | You start running code | \`phase\` | \`{"type":"phase","phase":"EXECUTE","summary":"Running baseline training..."}\` |
 | You get experiment results | \`experiment\` | \`{"type":"experiment","hypothesis_id":"H-001","metrics":{...},"observations":"..."}\` |
 | You read data and notice something | \`thinking\` | \`{"type":"thinking","subject":"...","thoughts":"...","conclusion":"..."}\` |
@@ -305,7 +326,7 @@ If you've made 5+ tool calls without logging, STOP and log a \`thinking\` event 
 
 **Quick log helper** — copy-paste and fill in:
 \`\`\`bash
-echo '{"ts":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'","type":"thinking","subject":"FILL","thoughts":"FILL","conclusion":"FILL"}' >> .ml-ralph/log.jsonl
+${LOG_COMMAND} thinking '{"subject":"FILL","thoughts":"FILL","conclusion":"FILL"}'
 \`\`\`
 
 ### END of Iteration (MANDATORY)
@@ -394,10 +415,10 @@ Report back: final metrics dict and any observations/surprises.
 ### Parallel Experiment Log Events
 
 \`\`\`jsonl
-{"ts":"...","type":"parallel_start","team":"exp-team","hypotheses":["H-001","H-002"],"reason":"Both hypotheses are independent feature engineering approaches"}
-{"ts":"...","type":"parallel_result","hypothesis_id":"H-001","agent":"experiment-1","metrics":{"auc":0.8234,"f1":0.71},"branch":"experiment/H-001"}
-{"ts":"...","type":"parallel_result","hypothesis_id":"H-002","agent":"experiment-2","metrics":{"auc":0.7891,"f1":0.68},"branch":"experiment/H-002"}
-{"ts":"...","type":"parallel_synthesis","winner":"H-001","reason":"Higher AUC with simpler model","merged_branch":"experiment/H-001"}
+{"type":"parallel_start","team":"exp-team","hypotheses":["H-001","H-002"],"reason":"Both hypotheses are independent feature engineering approaches"}
+{"type":"parallel_result","hypothesis_id":"H-001","agent":"experiment-1","metrics":{"auc":0.8234,"f1":0.71},"branch":"experiment/H-001"}
+{"type":"parallel_result","hypothesis_id":"H-002","agent":"experiment-2","metrics":{"auc":0.7891,"f1":0.68},"branch":"experiment/H-002"}
+{"type":"parallel_synthesis","winner":"H-001","reason":"Higher AUC with simpler model","merged_branch":"experiment/H-001"}
 \`\`\`
 
 ---
@@ -436,7 +457,7 @@ Before you write a single line of training code, you MUST verify your data:
 │    - Are they from the same distribution?                    │
 │    - If cross-dataset eval: is that actually valid?          │
 │                                                              │
-│  Log: {"type":"data_verified","checks":[...],"issues":[...]} │
+│  Log: data_verified (dataset, checks, issues, action)        │
 └─────────────────────────────────────────────────────────────┘
 \`\`\`
 
@@ -592,66 +613,66 @@ The answer is: **go back to UNDERSTAND.**
 
 ## Event Types
 
-Append events to \`.ml-ralph/log.jsonl\`:
+Log events with \`${LOG_COMMAND} <type> '<json>'\`. Each example below is the JSON for one call (the \`type\` field is optional in the JSON; \`ts\` is added for you).
 
 ### Phase Transitions
 \`\`\`jsonl
-{"ts":"...","type":"phase","phase":"UNDERSTAND","summary":"Exploring data distributions and researching prior work"}
-{"ts":"...","type":"phase","phase":"STRATEGIZE","summary":"Evaluating 4 potential approaches"}
-{"ts":"...","type":"phase","phase":"EXECUTE","summary":"Running minimal test of hypothesis H-003"}
-{"ts":"...","type":"phase","phase":"REFLECT","summary":"Analyzing unexpected results from H-003"}
+{"type":"phase","phase":"UNDERSTAND","summary":"Exploring data distributions and researching prior work"}
+{"type":"phase","phase":"STRATEGIZE","summary":"Evaluating 4 potential approaches"}
+{"type":"phase","phase":"EXECUTE","summary":"Running minimal test of hypothesis H-003"}
+{"type":"phase","phase":"REFLECT","summary":"Analyzing unexpected results from H-003"}
 \`\`\`
 
 ### Thinking & Mental Models
 \`\`\`jsonl
-{"ts":"...","type":"thinking","subject":"Why is precision low?","thoughts":"Looking at false positives, I notice they cluster around...","conclusion":"The model confuses X with Y because feature Z doesn't capture..."}
-{"ts":"...","type":"mental_model","domain":"feature importance","belief":"Temporal features dominate because the signal has strong time-dependence","confidence":"high","evidence":["EDA correlation analysis","H-002 ablation study"]}
+{"type":"thinking","subject":"Why is precision low?","thoughts":"Looking at false positives, I notice they cluster around...","conclusion":"The model confuses X with Y because feature Z doesn't capture..."}
+{"type":"mental_model","domain":"feature importance","belief":"Temporal features dominate because the signal has strong time-dependence","confidence":"high","evidence":["EDA correlation analysis","H-002 ablation study"]}
 \`\`\`
 
 ### Research
 \`\`\`jsonl
-{"ts":"...","type":"research","source":"Kaggle discussion - 1st place solution","url":"https://...","key_insights":["Feature X was crucial because...","They avoided Y because..."],"relevance":"directly applicable"}
-{"ts":"...","type":"research","source":"arXiv paper on similar problem","url":"https://...","key_insights":["This loss function handles imbalance better"],"relevance":"inspirational - adapting to our context"}
+{"type":"research","source":"Kaggle discussion - 1st place solution","url":"https://...","key_insights":["Feature X was crucial because...","They avoided Y because..."],"relevance":"directly applicable"}
+{"type":"research","source":"arXiv paper on similar problem","url":"https://...","key_insights":["This loss function handles imbalance better"],"relevance":"inspirational - adapting to our context"}
 \`\`\`
 
 ### Path Analysis & Hypotheses
 \`\`\`jsonl
-{"ts":"...","type":"path_analysis","paths":[{"id":"A","description":"Gradient boosting with manual features","expected":"AUC ~0.78","learning_value":"high - tests feature engineering hypothesis"},{"id":"B","description":"Neural net with embeddings","expected":"AUC ~0.80","learning_value":"medium - black box"},{"id":"C","description":"Ensemble of simple models","expected":"AUC ~0.76","learning_value":"high - reveals which signals matter"}],"chosen":"A","rationale":"Best learning-to-effort ratio, and research suggests feature engineering is key for this problem type"}
-{"ts":"...","type":"hypothesis","id":"H-001","hypothesis":"Adding time-based features will improve AUC by 5%","expected":"AUC 0.75 → 0.80","rationale":"EDA showed strong temporal patterns, confirmed by Kaggle winner insights"}
+{"type":"path_analysis","paths":[{"id":"A","description":"Gradient boosting with manual features","expected":"AUC ~0.78","learning_value":"high - tests feature engineering hypothesis"},{"id":"B","description":"Neural net with embeddings","expected":"AUC ~0.80","learning_value":"medium - black box"},{"id":"C","description":"Ensemble of simple models","expected":"AUC ~0.76","learning_value":"high - reveals which signals matter"}],"chosen":"A","rationale":"Best learning-to-effort ratio, and research suggests feature engineering is key for this problem type"}
+{"type":"hypothesis","id":"H-001","claim":"Adding time-based features will improve AUC","expected_delta":0.05,"rubrics":["Time features are computed from the timestamp column only","Train/validation split is unchanged","No feature uses information from after the prediction time"],"kill_criterion":"AUC improves by less than 0.01 over the incumbent on the search split across all contract seeds","rationale":"EDA showed strong temporal patterns, confirmed by Kaggle winner insights"}
 \`\`\`
 
 ### Experiments & Results
 \`\`\`jsonl
-{"ts":"...","type":"experiment","hypothesis_id":"H-001","metrics":{"auc":0.77,"precision":0.65},"observations":"Improvement on recent data but degradation on older samples","surprises":"Temporal features hurt performance on pre-2020 data"}
+{"type":"experiment","hypothesis_id":"H-001","metrics":{"auc":0.77,"precision":0.65},"observations":"Improvement on recent data but degradation on older samples","surprises":"Temporal features hurt performance on pre-2020 data"}
 \`\`\`
 
 ### Learnings & Decisions
 \`\`\`jsonl
-{"ts":"...","type":"learning","insight":"The data distribution shifted in 2020 - models need to handle this explicitly","source":"H-001 experiment analysis"}
-{"ts":"...","type":"decision","hypothesis_id":"H-001","action":"iterate","reason":"Partial success - need to add time-aware normalization","next_step":"Research distribution shift handling techniques"}
+{"type":"learning","insight":"The data distribution shifted in 2020 - models need to handle this explicitly","source":"H-001 experiment analysis"}
+{"type":"decision","hypothesis_id":"H-001","action":"iterate","reason":"Partial success - need to add time-aware normalization","next_step":"Research distribution shift handling techniques"}
 \`\`\`
 
 ### Strategic Retreat
 \`\`\`jsonl
-{"ts":"...","type":"strategic_retreat","trigger":"3 experiments with <1% improvement, all variations of same approach","action":"Returning to UNDERSTAND phase","focus":"Re-examine error cases and search for alternative approaches in literature"}
+{"type":"strategic_retreat","trigger":"3 experiments with <1% improvement, all variations of same approach","action":"Returning to UNDERSTAND phase","focus":"Re-examine error cases and search for alternative approaches in literature"}
 \`\`\`
 
 ### Verification Events
 \`\`\`jsonl
-{"ts":"...","type":"data_verified","dataset":"SR_BH_2020","checks":{"row_count":{"expected":907814,"actual":100000,"status":"FAIL"},"label_distribution":{"expected":"58% benign, 42% attack","actual":"100% valid","status":"FAIL"}},"issues":["Row count mismatch - only 11% of data loaded","All labels are 'valid' - attack labels missing"],"action":"STOP - do not proceed until resolved"}
-{"ts":"...","type":"result_verification","result":"AUC 0.9985","verification_attempts":[{"check":"data leakage","method":"checked train/test overlap","finding":"no overlap found"},{"check":"distribution match","method":"compared feature distributions","finding":"ISSUE: test data is from different source"}],"conclusion":"Result invalid - cross-dataset evaluation not comparable"}
-{"ts":"...","type":"success_verified","criteria_met":["AUC > 0.85","Inference < 50ms"],"verification_checks":["data integrity verified","no leakage found","same distribution confirmed"],"attempts_to_break":["tried different random seeds","tested on holdout from same source"],"conclusion":"Result appears genuine"}
+{"type":"data_verified","dataset":"SR_BH_2020","checks":{"row_count":{"expected":907814,"actual":100000,"status":"FAIL"},"label_distribution":{"expected":"58% benign, 42% attack","actual":"100% valid","status":"FAIL"}},"issues":["Row count mismatch - only 11% of data loaded","All labels are 'valid' - attack labels missing"],"action":"STOP - do not proceed until resolved"}
+{"type":"result_verification","result":"AUC 0.9985","verification_attempts":[{"check":"data leakage","method":"checked train/test overlap","finding":"no overlap found"},{"check":"distribution match","method":"compared feature distributions","finding":"ISSUE: test data is from different source"}],"conclusion":"Result invalid - cross-dataset evaluation not comparable"}
+{"type":"success_verified","criteria_met":["AUC > 0.85","Inference < 50ms"],"verification_checks":["data integrity verified","no leakage found","same distribution confirmed"],"attempts_to_break":["tried different random seeds","tested on holdout from same source"],"conclusion":"Result appears genuine"}
 \`\`\`
 
 ### PRD & Status
 \`\`\`jsonl
-{"ts":"...","type":"prd_updated","field":"success_criteria","change":"Added requirement for temporal stability","reason":"Discovered distribution shift that must be handled"}
-{"ts":"...","type":"status","status":"paused","reason":"Need user input on constraint change"}
+{"type":"prd_updated","field":"success_criteria","change":"Added requirement for temporal stability","reason":"Discovered distribution shift that must be handled"}
+{"type":"status","status":"paused","reason":"Need user input on constraint change"}
 \`\`\`
 
 ### Kanban Updates
 \`\`\`jsonl
-{"ts":"...","type":"kanban_updated","changes":"Completed T-007, moved T-008 to current_focus, added T-012 for ensemble exploration","reason":"Distribution shift understood, ready to implement fix. Also realized ensembles might help with edge cases."}
+{"type":"kanban_updated","changes":"Completed T-007, moved T-008 to current_focus, added T-012 for ensemble exploration","reason":"Distribution shift understood, ready to implement fix. Also realized ensembles might help with edge cases."}
 \`\`\`
 
 ### Event Reference
@@ -666,10 +687,10 @@ Append events to \`.ml-ralph/log.jsonl\`:
 | \`mental_model\` | domain, belief, confidence, evidence | Current understanding |
 | \`research\` | source, key_insights, relevance | External research finding |
 | \`path_analysis\` | paths, chosen, rationale | Multi-path evaluation |
-| \`hypothesis\` | id, hypothesis, expected, rationale | Testable prediction |
+| \`hypothesis\` | id, claim, expected_delta, rubrics, kill_criterion | Falsifiable prediction (see below) |
 | \`experiment\` | hypothesis_id, metrics, observations | Experiment results |
 | \`learning\` | insight, source | Key insight gained |
-| \`decision\` | hypothesis_id, action, reason | Decision on hypothesis |
+| \`decision\` | hypothesis_id, action (\`keep\`, \`reject\`, \`iterate\`, \`pivot\`), reason | Decision on hypothesis |
 | \`strategic_retreat\` | trigger, action, focus | Returning to understand |
 | \`prd_updated\` | field, change, reason | PRD modification |
 | \`kanban_updated\` | changes, reason | Plan evolution (every iteration) |
@@ -677,6 +698,15 @@ Append events to \`.ml-ralph/log.jsonl\`:
 | \`parallel_start\` | team, hypotheses, reason | Starting parallel experiments |
 | \`parallel_result\` | hypothesis_id, agent, metrics, branch | Result from a parallel experiment |
 | \`parallel_synthesis\` | winner, reason, merged_branch | Synthesis of parallel results |
+
+A \`hypothesis\` event is rejected unless all of these are present:
+- \`id\` (string): e.g. \`H-001\`; experiments and decisions refer to it as \`hypothesis_id\`
+- \`claim\` (string): one falsifiable sentence
+- \`expected_delta\` (number): the change you expect in the primary metric vs the incumbent, in metric units (negative for a metric you minimize)
+- \`rubrics\` (non-empty array of strings): checks an independent verifier applies to your diff
+- \`kill_criterion\` (string): the observable result that makes you drop the hypothesis
+
+Other types have more required fields than \`type\`: the table above lists them. \`phase\` takes \`UNDERSTAND\`, \`STRATEGIZE\`, \`EXECUTE\` or \`REFLECT\`; \`status\` takes \`running\`, \`paused\` or \`complete\`; \`metrics\` maps names to numbers.
 
 ---
 
@@ -772,7 +802,6 @@ After the wandb run, log the experiment to log.jsonl with the wandb reference:
 
 \`\`\`jsonl
 {
-  "ts": "2024-01-28T10:30:00Z",
   "type": "experiment",
   "name": "autoencoder-semantic-features",
   "hypothesis_id": "H-003",
@@ -936,8 +965,8 @@ Always log changes with rationale!
 4. **Document verification** - Log what you checked and what you found
 
 Only after genuine verification attempt:
-1. Log: \`{"type":"success_verified","checks":["data integrity","no leakage","same distribution"],"attempts_to_break":["..."]}\`
-2. Log: \`{"type":"status","status":"complete","reason":"All criteria met AND verified"}\`
+1. Log: \`${LOG_COMMAND} success_verified '{"criteria_met":["..."],"verification_checks":["data integrity","no leakage","same distribution"],"attempts_to_break":["..."]}'\`
+2. Log: \`${LOG_COMMAND} status '{"status":"complete","reason":"All criteria met AND verified"}'\`
 3. Update \`prd.json\`: \`status: "complete"\`
 4. Output: \`<project_complete>\`
 
@@ -960,7 +989,7 @@ Ralph thinks deeply before acting, researches what others have learned, and main
 |------|---------|
 | \`.ml-ralph/prd.json\` | PRD - the destination (what we're solving) |
 | \`.ml-ralph/kanban.json\` | Kanban - the journey (how we're getting there) |
-| \`.ml-ralph/log.jsonl\` | Event log - agent memory (append-only) |
+| \`.ml-ralph/log.jsonl\` | Event log - agent memory (append-only; write it only with \`${LOG_COMMAND} <type> '<json>'\`) |
 | \`.ml-ralph/eval/\` | Eval contract (\`evaluate.py\`, \`contract.json\`), locked by the runner on approval |
 | \`.ml-ralph/RALPH.md\` | Full agent instructions |
 
@@ -1012,7 +1041,7 @@ export const AGENTS_MD = `# ML-Ralph Agent
 ## Files
 - \`.ml-ralph/prd.json\` - PRD (the destination)
 - \`.ml-ralph/kanban.json\` - Kanban (the journey, updated every iteration)
-- \`.ml-ralph/log.jsonl\` - Events (append-only)
+- \`.ml-ralph/log.jsonl\` - Events (append-only; write only with \`${LOG_COMMAND} <type> '<json>'\`)
 
 ## Cognitive Structure
 UNDERSTAND → STRATEGIZE → EXECUTE → REFLECT
@@ -1242,9 +1271,18 @@ export interface SuccessVerifiedEvent extends BaseEvent {
 export interface HypothesisEvent extends BaseEvent {
   type: "hypothesis";
   id: string;
-  hypothesis: string;
-  expected?: string;
+  /** Falsifiable claim */
+  claim: string;
+  /** Expected change in the primary metric vs the incumbent (signed, metric units) */
+  expected_delta: number;
+  /** Implementation checks the verifier applies to the diff */
+  rubrics: string[];
+  /** Result that kills the hypothesis */
+  kill_criterion: string;
   rationale?: string;
+  /** Events logged before the typed schema used these */
+  hypothesis?: string;
+  expected?: string;
 }
 
 export interface ExperimentEvent extends BaseEvent {

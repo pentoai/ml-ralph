@@ -75,6 +75,26 @@ describe("aggregateEvents", () => {
     ]);
   });
 
+  test("typed hypothesis shows its claim and expected delta", () => {
+    const summary = aggregateEvents([
+      ev({
+        type: "hypothesis",
+        ts: "1",
+        id: "H1",
+        claim: "Time features help",
+        expected_delta: 0.05,
+        rubrics: ["Split unchanged"],
+        kill_criterion: "Gain below 0.01",
+      }),
+    ]);
+    expect(summary.hypotheses[0]).toMatchObject({
+      hypothesis: "Time features help",
+      expected: "Δ +0.05",
+      rubrics: ["Split unchanged"],
+      killCriterion: "Gain below 0.01",
+    });
+  });
+
   test("experiments are listed and attached to their hypothesis", () => {
     const summary = aggregateEvents([
       hypothesis("H1", "1"),

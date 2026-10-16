@@ -5,7 +5,9 @@ description: "Event schemas for ml-ralph log.jsonl. Use when logging any event."
 
 # Ralph Log Events
 
-Append events to `.ml-ralph/log.jsonl`. One JSON per line. Never edit, only append.
+Log events with `bunx @pentoai/ml-ralph@<version> log <type> '<json>'` (use the exact version RALPH.md shows) from the project directory (JSON on stdin with `-` if it contains quotes). The command validates the event against the schema for its type, appends one line to `.ml-ralph/log.jsonl` and adds `ts` and `type`. Invalid events are rejected with the failing field and what was expected. Never write the file any other way; never edit, only append.
+
+The examples below show stored lines; pass everything except `ts` as the JSON argument.
 
 ## Event Types
 
@@ -32,7 +34,7 @@ Append events to `.ml-ralph/log.jsonl`. One JSON per line. Never edit, only appe
 ### Path Analysis & Hypotheses
 ```jsonl
 {"ts":"...","type":"path_analysis","paths":[{"id":"A","description":"Gradient boosting","expected":"AUC ~0.78","learning_value":"high"},{"id":"B","description":"Neural net","expected":"AUC ~0.80","learning_value":"medium"}],"chosen":"A","rationale":"Best learning-to-effort ratio"}
-{"ts":"...","type":"hypothesis","id":"H-001","hypothesis":"Time features improve AUC by 5%","expected":"0.75 → 0.80","rationale":"EDA showed temporal patterns"}
+{"ts":"...","type":"hypothesis","id":"H-001","claim":"Time features improve AUC","expected_delta":0.05,"rubrics":["Split unchanged","No post-prediction-time features"],"kill_criterion":"AUC gain below 0.01 on every seed","rationale":"EDA showed temporal patterns"}
 ```
 
 ### Experiments & Results
@@ -99,7 +101,7 @@ See RALPH.md for when and how to use these events.
 | `mental_model` | domain, belief, confidence, evidence |
 | `research` | source, key_insights, relevance |
 | `path_analysis` | paths, chosen, rationale |
-| `hypothesis` | id, hypothesis, expected, rationale |
+| `hypothesis` | id, claim (string), expected_delta (number), rubrics (non-empty array), kill_criterion (string) |
 | `experiment` | hypothesis_id, metrics, observations |
 | `learning` | insight, source |
 | `decision` | hypothesis_id, action, reason |

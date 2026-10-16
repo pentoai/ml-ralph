@@ -7,6 +7,15 @@ import { createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
 import { App } from "./ui/app.tsx";
 
+// Handle `log` before anything else: its arguments (even -h) belong to the event
+if (process.argv[2] === "log") {
+  const { runLogCommand } = await import("./infrastructure/ralph/index.ts");
+  const result = await runLogCommand(process.argv.slice(3));
+  process.stdout.write(result.stdout);
+  process.stderr.write(result.stderr);
+  process.exit(result.code);
+}
+
 // Get project path from command line or use current directory
 // Skip flags like --teams, --help when determining project path
 const projectPath =
@@ -20,6 +29,7 @@ ml-ralph - Autonomous ML engineering agent with TUI
 Usage:
   ml-ralph [project-path]    Launch TUI for the specified project (default: current directory)
   ml-ralph init [name] [path]  Initialize a new ml-ralph project (keeps existing files)
+  ml-ralph log <type> '<json>'  Validate an event and append it to .ml-ralph/log.jsonl
   ml-ralph --help            Show this help message
 
 Options:

@@ -19,6 +19,8 @@ export interface HypothesisWithStatus {
   id: string;
   hypothesis: string;
   expected?: string;
+  rubrics?: string[];
+  killCriterion?: string;
   status: "pending" | "keep" | "reject" | "iterate" | "pivot";
   experiments: ExperimentEvent[];
   decision?: DecisionEvent;
@@ -176,8 +178,13 @@ export function aggregateEvents(events: RalphEvent[]): LogSummary {
         const h = event as HypothesisEvent;
         hypothesesMap.set(h.id, {
           id: h.id,
-          hypothesis: h.hypothesis,
-          expected: h.expected,
+          hypothesis: h.claim ?? h.hypothesis ?? "",
+          expected:
+            h.expected_delta !== undefined
+              ? `Δ ${h.expected_delta > 0 ? "+" : ""}${h.expected_delta}`
+              : h.expected,
+          rubrics: h.rubrics,
+          killCriterion: h.kill_criterion,
           status: "pending",
           experiments: [],
           createdAt: h.ts,
