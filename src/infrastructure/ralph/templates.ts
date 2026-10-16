@@ -1234,6 +1234,21 @@ export interface ExperimentEvent extends BaseEvent {
   surprises?: string;
 }
 
+/** Written by the runner (never the agent) after each independent verifier run */
+export interface VerifierVerdictEvent extends BaseEvent {
+  type: "verifier_verdict";
+  id: string;
+  verdict: "approve" | "reject";
+  /** "unknown" when the verifier failed to produce a usable answer */
+  checks: Record<
+    "leakage" | "protocol_change" | "rubrics",
+    "pass" | "fail" | "unknown"
+  >;
+  reason: string;
+  model?: string;
+  output_path: string;
+}
+
 export interface LearningEvent extends BaseEvent {
   type: "learning";
   insight: string;
@@ -1309,6 +1324,7 @@ export type RalphEvent =
   | ExperimentEvent
   | LearningEvent
   | DecisionEvent
+  | VerifierVerdictEvent
   | StrategicRetreatEvent
   | PrdUpdatedEvent
   | StatusEvent

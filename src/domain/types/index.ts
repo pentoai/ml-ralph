@@ -10,6 +10,7 @@ export type {
   AgentConfig,
   ProjectConfig,
   RuntimeConfig,
+  VerifierConfig,
   WandBConfig,
 } from "./config.ts";
 export { createDefaultConfig } from "./config.ts";

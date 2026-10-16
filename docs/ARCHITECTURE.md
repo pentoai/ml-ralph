@@ -83,7 +83,8 @@ User hints (`h` while running) are queued with `addHint` and added to the prompt
 | `prd.json`          | `init` (empty draft), then the agent      | PRD panel, `readPrdFile`                                      |
 | `kanban.json`       | `init` (empty), then the agent            | kanban panel, `readKanbanFile`                                |
 | `log.jsonl`         | the agent and `RalphRunner`, append-only  | `useLogStream` and all the log-driven panels                  |
-| `config.json`       | `init` (`JsonFileStore`)                  | zustand store                                                 |
+| `config.json`       | `init` (`JsonFileStore`)                  | zustand store, `verifyCandidate` (`verifier` block)           |
+| `verifier/<id>.json`| `verifyCandidate`                         | nothing yet                                                   |
 | `runs/active.json`  | `init` (`{"jobs": []}`)                   | zustand store (`activeJobs`)                                  |
 | `chat/`             | `init` creates the directory              | nothing yet                                                   |
 
@@ -111,6 +112,23 @@ class RalphRunner {
 
 Configured with callbacks (`onOutput`, `onIterationStart`, `onIterationEnd`, `onComplete`, `onError`).
 
+### Verifier (`infrastructure/ralph/verifier.ts`)
+
+`verifyCandidate` checks a promotion candidate in a separate `claude -p` session, so the agent that produced a result does not grade it. Nothing in the loop calls it yet: the promotion and completion gates that will call it before every promotion are a later change.
+
+- **Read-only session.** It spawns `claude -p --output-format json --tools Read,Grep,Glob --disallowedTools Write,Edit,MultiEdit,NotebookEdit,Bash --permission-mode dontAsk --no-session-persistence`, and never `--dangerously-skip-permissions`. `verifier.model` from `config.json` adds `--model`; without it the CLI default model is used. The prompt goes in on stdin, since a diff can exceed the argument size limit.
+- **Prompt.** It holds the `git diff` of the candidate (default `HEAD`) against the incumbent, or against the baseline when there is no incumbent (truncated at 120,000 characters), `.ml-ralph/eval/contract.json`, the hypothesis's `rubrics` and the last `verifier.recent_events` log events (default 50). The prompt tells the verifier that all of this is agent-produced data, not instructions.
+- **Answer.** A JSON object `{verdict: "approve" | "reject", checks: {leakage, protocol_change, rubrics}, reason}`, each check `pass` or `fail`. An approval with a failed check is invalid.
+- **Fails closed.** A crash, a timeout (default 10 minutes), unparseable or invalid output, a missing `contract.json` or an unknown git ref all give `reject` with reason `verifier_error`. The cause is kept in the saved file as `error`.
+- **Record.** The full output goes to `.ml-ralph/verifier/<id>.json` and the runner appends a `verifier_verdict` event to `log.jsonl`.
+- **What the agent sees.** Only `feedback` from the result: `Verifier verdict: <approve|reject> - <first line of reason>`. The per-check results, the raw output and the error stay in the files. This follows the reward-hacking finding: detailed verifier feedback becomes something the agent optimises against.
+
+`config.json` gains an optional block:
+
+```json
+{ "verifier": { "model": "claude-opus-5-5", "recent_events": 50 } }
+```
+
 ### DefaultOrchestrator (`application/orchestrator/orchestrator.ts`)
 
 Wraps one `RalphRunner` and exposes subscription methods that each return an unsubscribe function: `onOutput`, `onIterationChange`, `onComplete` and `onStoryComplete` (the last is part of the interface but nothing emits it). Also forwards `start`, `stop`, `isRunning`, `setMaxIterations` and `addHint`.
@@ -137,7 +155,7 @@ Tests use `bun:test` and sit next to the code they test.
 
 | Area                          | What is tested                                              |
 | ----------------------------- | ----------------------------------------------------------- |
-| `infrastructure/ralph/`       | init, log parser, runner stream parsing                     |
+| `infrastructure/ralph/`       | init, log parser, runner stream parsing, verifier (against a stub `claude` script) |
 | `infrastructure/tmux/`        | manager and layout manager against a real tmux (unique sessions, killed in `afterEach`) |
 | `ui/`                         | Ink-compat shim, OpenTUI migration, widgets and formatters  |
 
