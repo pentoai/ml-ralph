@@ -30,7 +30,6 @@ export {
 } from "./log-parser.ts";
 export type { RunnerConfig, StreamEvent } from "./runner.ts";
 export { createRunner, RalphRunner } from "./runner.ts";
-
 export type {
   DecisionEvent,
   ExperimentEvent,
@@ -45,4 +44,11 @@ export type {
   RalphEvent,
   ResearchEvent,
   StatusEvent,
+  VerifierVerdictEvent,
 } from "./templates.ts";
+export type {
+  VerifierVerdict,
+  VerifyCandidateOptions,
+  VerifyCandidateResult,
+} from "./verifier.ts";
+export { formatVerdictForAgent, verifyCandidate } from "./verifier.ts";

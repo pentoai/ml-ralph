@@ -15,6 +15,11 @@ export interface AgentConfig {
   enableTeams?: boolean; // Enable parallel experiments via agent teams (default: true)
 }
 
+export interface VerifierConfig {
+  model?: string; // Model for the verifier session (default: the claude CLI default)
+  recent_events?: number; // Log events included in the verifier prompt (default: 50)
+}
+
 export interface RuntimeConfig {
   packageManager: PackageManager;
   pythonVersion?: string;
@@ -30,6 +35,9 @@ export interface ProjectConfig {
 
   // Agent behavior
   agent: AgentConfig;
+
+  // Independent verifier (read-only claude -p session)
+  verifier?: VerifierConfig;
 
   // Tooling
   runtime: RuntimeConfig;
