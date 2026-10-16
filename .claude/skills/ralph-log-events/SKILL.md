@@ -83,6 +83,11 @@ The runner writes these. Never write one yourself: a forged event has no effect 
 ```
 An independent read-only verifier judges each promotion candidate; this event records its verdict. A failed run is logged as `reject` with reason `verifier_error` and checks `unknown`. You only see the verdict and one line of reason in your next prompt. The full output in `.ml-ralph/verifier/` is not for you to read.
 
+```jsonl
+{"ts":"...","type":"contract_relocked","changes":[{"file":"evaluate.py","kind":"edited"}],"files":{"evaluate.py":"<sha256>","contract.json":"<sha256>"}}
+```
+Before each iteration the runner re-hashes the locked eval files. A change or deletion pauses the run, and the user either re-locks (this event) or stops the run. Never edit locked files yourself.
+
 See RALPH.md for when and how to use these events.
 
 ---
@@ -107,6 +112,7 @@ See RALPH.md for when and how to use these events.
 | `devils_advocate` | conclusion, attacks, survived, next_action |
 | `limitation_claim` | claim, devils_advocate_id, validation_attempts, confidence, user_approved |
 | `verifier_verdict` (runner-only) | id, verdict, checks, reason, output_path (+ model) |
+| `contract_relocked` (runner-only) | changes, files |
 
 ---
 

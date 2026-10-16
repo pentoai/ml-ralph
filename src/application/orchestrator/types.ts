@@ -8,7 +8,11 @@ import type {
   ResearchItem,
   Story,
 } from "../../domain/types/index.ts";
-import type { StreamEvent } from "../../infrastructure/ralph/index.ts";
+import type {
+  EvalChange,
+  RunCompleteReason,
+  StreamEvent,
+} from "../../infrastructure/ralph/index.ts";
 
 export interface AgentOrchestrator {
   start(): Promise<void>;
@@ -23,9 +27,15 @@ export interface AgentOrchestrator {
   ): () => void;
   onOutput(callback: (event: StreamEvent) => void): () => void;
   onIterationChange(callback: (iteration: number) => void): () => void;
-  onComplete(
-    callback: (reason: "project_complete" | "max_iterations") => void,
+  onComplete(callback: (reason: RunCompleteReason) => void): () => void;
+  /** A locked eval file changed and the run is paused awaiting a decision */
+  onContractChange(
+    callback: (changes: EvalChange[], relockError?: string) => void,
   ): () => void;
+  /** Re-lock the eval files as they are now and resume the paused run */
+  relockContract(): boolean;
+  /** End the paused run with reason `contract_changed` */
+  stopForContractChange(): boolean;
 }
 
 export interface StoryResult {

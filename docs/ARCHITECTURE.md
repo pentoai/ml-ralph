@@ -107,10 +107,22 @@ class RalphRunner {
   setMaxIterations(n: number): void;
   addHint(hint: string): void;
   getPendingHintsCount(): number;
+  resolveContractChange(decision: "relock" | "stop"): boolean; // answers a tamper pause
 }
 ```
 
-Configured with callbacks (`onOutput`, `onIterationStart`, `onIterationEnd`, `onComplete`, `onError`).
+Configured with callbacks (`onOutput`, `onIterationStart`, `onIterationEnd`, `onComplete`, `onContractChanged`, `onError`).
+
+### Tamper check (`infrastructure/ralph/eval-lock.ts`, `runner.ts`)
+
+Before each iteration `RalphRunner` re-hashes `.ml-ralph/eval/evaluate.py` and `contract.json` and compares them with the locked hashes (`findEvalChanges`). Only then does `checkEvalGate` run its usual checks. When the hashes match, the iteration starts as before.
+
+- **Pause.** An edited or deleted file means no iteration starts. The runner calls `onContractChanged(changes)` and waits. `DefaultOrchestrator` forwards it as `onContractChange`, and the TUI shows a banner naming each file (`evaluate.py was edited`) with two keys: `r` re-locks, `x` stops. While the banner is up only `r`, `x` and quit (`q` or Ctrl+C, then `y`) are handled; quitting calls `RalphRunner.stop()`, which also ends the wait. After `x` the TUI keeps a notice, `Run stopped: reason contract_changed`, until it is dismissed with Esc or a new run starts.
+- **Re-lock** (`relockEvalContract`) validates the files again, writes new hashes to `lock.json` (and the marker), appends a runner-only `contract_relocked` event (the changes and the new hashes) to `log.jsonl`, and resumes with the same iteration. If the files no longer validate (for example a deleted file), the banner stays and shows the error. Unlike the first lock it does not look at the PRD status: the decision is the user's.
+- **Stop** ends the run with `onComplete("contract_changed")`.
+- **What the hashes are compared with.** The runner pins the hashes from the first valid `lock.json` it sees in a run, so an agent that edits `evaluate.py` and rewrites `lock.json` to match still pauses. The pin is in memory only and is dropped when the run ends; the next run starts from `lock.json`. It also covers a deleted `lock.json` or marker and a PRD set back to `draft` mid-run. A draft PRD alone no longer counts as SETUP once `lock.json` or the marker exists.
+- **Limits.** The check runs before each iteration, so an edit made in the last iteration of a run is only caught when the next run starts. An agent with shell access can still rewrite `lock.json`, the marker and the eval files between runs; that needs the lock to live outside the project, which this change does not do.
+- **Without a handler.** If no `onContractChanged` callback is configured, the runner reports the change through `onError` and ends the run instead of waiting forever.
 
 ### Verifier (`infrastructure/ralph/verifier.ts`)
 
@@ -134,7 +146,7 @@ Configured with callbacks (`onOutput`, `onIterationStart`, `onIterationEnd`, `on
 
 ### DefaultOrchestrator (`application/orchestrator/orchestrator.ts`)
 
-Wraps one `RalphRunner` and exposes subscription methods that each return an unsubscribe function: `onOutput`, `onIterationChange`, `onComplete` and `onStoryComplete` (the last is part of the interface but nothing emits it). Also forwards `start`, `stop`, `isRunning`, `setMaxIterations` and `addHint`.
+Wraps one `RalphRunner` and exposes subscription methods that each return an unsubscribe function: `onOutput`, `onIterationChange`, `onComplete` (reasons `project_complete`, `max_iterations`, `contract_changed`), `onContractChange` and `onStoryComplete` (the last is part of the interface but nothing emits it). Also forwards `start`, `stop`, `isRunning`, `setMaxIterations` and `addHint`, plus `onContractChange`, `relockContract` and `stopForContractChange` for the tamper check.
 
 ### Log parser (`infrastructure/ralph/log-parser.ts`)
 
