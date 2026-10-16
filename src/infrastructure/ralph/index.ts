@@ -60,6 +60,17 @@ export {
   watchLogFile,
 } from "./log-parser.ts";
 export type {
+  GitHead,
+  Incumbent,
+  PromotionDecision,
+  PromotionDeps,
+} from "./promotion.ts";
+export {
+  judgeCandidate,
+  parseCandidateComplete,
+  readIncumbent,
+} from "./promotion.ts";
+export type {
   ContractDecision,
   RunCompleteReason,
   RunnerConfig,
@@ -79,6 +90,7 @@ export type {
   PhaseEvent,
   PRD,
   PrdUpdatedEvent,
+  PromotionEvent,
   RalphEvent,
   ResearchEvent,
   StatusEvent,

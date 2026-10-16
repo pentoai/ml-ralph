@@ -12,11 +12,15 @@ import {
   readEvalLock,
   relockEvalContract,
 } from "./eval-lock.ts";
+import {
+  judgeCandidate,
+  type PromotionDeps,
+  parseCandidateComplete,
+  recordBaselineRef,
+} from "./promotion.ts";
 
-export type RunCompleteReason =
-  | "project_complete"
-  | "max_iterations"
-  | "contract_changed";
+/** Why a run ended. Only the runner ends a run: the agent's output never does */
+export type RunCompleteReason = "max_iterations" | "contract_changed";
 
 export interface RunnerConfig {
   projectPath: string;
@@ -32,6 +36,8 @@ export interface RunnerConfig {
    */
   onContractChanged?: (changes: EvalChange[], relockError?: string) => void;
   onError?: (error: Error) => void;
+  /** Replaces the verifier and git lookups of the promotion gate (tests) */
+  promotionDeps?: Partial<PromotionDeps>;
 }
 
 export interface StreamEvent {
@@ -56,6 +62,7 @@ export class RalphRunner {
   private currentProcess: Subprocess | null = null;
   private currentIteration = 0;
   private pendingHints: string[] = [];
+  private pendingFeedback: string[] = [];
   private lastToolCall: ToolCallRef | null = null;
   private pinnedHashes: EvalLock["files"] | null = null;
   private contractDecision: ((d: ContractDecision | null) => void) | null =
@@ -91,13 +98,16 @@ export class RalphRunner {
     this.running = true;
     this.currentIteration = 0;
     this.pinnedHashes = null;
+    this.pendingFeedback = [];
+    let baselineRecorded = false;
 
     const basePrompt = `Read .ml-ralph/RALPH.md for instructions.
 
 Execute one iteration of the cognitive loop. Update state files as needed.
 When done, output exactly: <iteration_complete>
 
-If the project is complete (success criteria met), output: <project_complete>`;
+If you have a candidate you believe is a new best, follow "Completing a Candidate" in RALPH.md and also output: <candidate_complete eval_id="...">
+Only the runner decides whether a candidate is promoted, and only the runner ends the run.`;
 
     try {
       for (let i = 1; i <= this.config.maxIterations!; i++) {
@@ -113,12 +123,21 @@ If the project is complete (success criteria met), output: <project_complete>`;
         this.pinnedHashes ??=
           (await readEvalLock(this.config.projectPath))?.files ?? null;
 
+        if (!baselineRecorded) {
+          baselineRecorded = true;
+          await recordBaselineRef(
+            this.config.projectPath,
+            this.config.promotionDeps?.gitHead,
+          );
+        }
+
         this.currentIteration = i;
         this.config.onIterationStart?.(i);
 
-        // Build prompt with any pending hints
-        const hints = this.consumeHints();
-        const prompt = hints ? basePrompt + hints : basePrompt;
+        // Build prompt with the runner's last decision and any pending hints
+        const prompt =
+          basePrompt + this.consumeFeedback() + (this.consumeHints() ?? "");
+        const iterationStartedAt = new Date().toISOString();
 
         // Emit iteration marker
         this.config.onOutput?.({
@@ -130,13 +149,10 @@ If the project is complete (success criteria met), output: <project_complete>`;
 
         this.config.onIterationEnd?.(i, result);
 
-        if (result.includes("<project_complete>")) {
-          this.config.onComplete?.("project_complete");
-          break;
-        }
+        await this.judgeIteration(result, iterationStartedAt);
       }
 
-      if (this.currentIteration >= this.config.maxIterations!) {
+      if (this.running && this.currentIteration >= this.config.maxIterations!) {
         this.config.onComplete?.("max_iterations");
       }
     } catch (error) {
@@ -159,6 +175,41 @@ If the project is complete (success criteria met), output: <project_complete>`;
       this.currentProcess.kill();
       this.currentProcess = null;
     }
+  }
+
+  /**
+   * Act on the agent's output: a <candidate_complete> goes to the promotion
+   * gate and its decision is queued for the next prompt. <project_complete> is
+   * ignored; the agent cannot end a run.
+   */
+  private async judgeIteration(
+    result: string,
+    iterationStartedAt: string,
+  ): Promise<void> {
+    const candidate = parseCandidateComplete(result);
+    if (candidate && this.pinnedHashes) {
+      const decision = await judgeCandidate(
+        {
+          projectPath: this.config.projectPath,
+          claimedEvalId: candidate.evalId,
+          iterationStartedAt,
+          lockedFiles: this.pinnedHashes,
+        },
+        this.config.promotionDeps,
+      );
+      this.pendingFeedback.push(decision.feedback);
+    }
+    if (result.includes("<project_complete>")) {
+      this.pendingFeedback.push(
+        'The runner ignores <project_complete>: only the runner ends a run. Hand in a candidate with <candidate_complete eval_id="..."> instead.',
+      );
+    }
+  }
+
+  private consumeFeedback(): string {
+    const feedback = this.pendingFeedback;
+    this.pendingFeedback = [];
+    return feedback.map((line) => `\n\n${line}`).join("");
   }
 
   /**
