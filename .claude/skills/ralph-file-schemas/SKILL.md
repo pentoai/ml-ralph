@@ -53,6 +53,34 @@ Always log changes with rationale!
 
 ---
 
+## eval/ (The Eval Contract)
+
+Drafted in SETUP with the user. Once `prd.json` is `approved`, the runner validates and locks it. Never edit these files after the lock.
+
+| File | Written by | Purpose |
+|------|------------|---------|
+| `.ml-ralph/eval/evaluate.py` | Agent (SETUP) | Eval script |
+| `.ml-ralph/eval/contract.json` | Agent (SETUP) | Eval protocol and baseline score |
+| `.ml-ralph/eval/lock.json` | Runner only | SHA-256 of the two files plus lock time |
+
+```json
+{
+  "primary_metric": "auc",
+  "direction": "max|min",
+  "search_split": "cv_5fold",
+  "seeds": [0, 1, 2],
+  "protocol": "5-fold stratified CV, mean over seeds",
+  "success_threshold": 0.9,
+  "holdout_gap_threshold": 0.02,
+  "eval_timeout_seconds": 1800,
+  "baseline_score": 0.81
+}
+```
+
+All fields are required. `seeds` is a non-empty array of integers, `holdout_gap_threshold` >= 0, `eval_timeout_seconds` > 0. Do not put a holdout data path in the contract. Run the baseline in SETUP and record it as `baseline_score`. The runner refuses to run iterations after approval if the contract is invalid, `baseline_score` is missing, `evaluate.py` is missing, or `lock.json` is missing or malformed. After setting `status: "approved"`, end the iteration; the lock is written when the next one starts.
+
+---
+
 ## kanban.json (The Journey)
 
 Your working plan. Updated EVERY iteration.
