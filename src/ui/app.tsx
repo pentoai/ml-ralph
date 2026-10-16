@@ -65,6 +65,8 @@ export function App({ projectPath, enableTeams }: AppProps) {
     changes: EvalChange[];
     relockError?: string;
   } | null>(null);
+  // Why the last run ended, when the user needs to see it (e.g. contract_changed)
+  const [runNotice, setRunNotice] = useState<string | null>(null);
   // Initialization state
   const [isInitialized, setIsInitialized] = useState(false);
   // Current iteration
@@ -161,8 +163,13 @@ export function App({ projectPath, enableTeams }: AppProps) {
 
   // Handle completion
   const handleComplete = useCallback(
-    (_reason: RunCompleteReason) => {
+    (reason: RunCompleteReason) => {
       setContractChange(null);
+      setRunNotice(
+        reason === "contract_changed"
+          ? "Run stopped: reason contract_changed (a locked eval file was changed and you chose to stop)"
+          : null,
+      );
       setAgentStatus("idle");
       setPendingHints([]);
     },
@@ -242,6 +249,7 @@ export function App({ projectPath, enableTeams }: AppProps) {
   // Start the agent
   const doStart = async () => {
     setShowStartConfirm(false);
+    setRunNotice(null);
     setAgentStatus("running");
     setCurrentIteration(0);
     setAgentStartTime(Date.now()); // Track start time for elapsed timer
@@ -280,9 +288,9 @@ export function App({ projectPath, enableTeams }: AppProps) {
       return; // Ignore other keys while dialog is open
     }
 
-    // Locked eval file changed: only re-lock or stop (Ctrl+C still quits)
+    // Locked eval file changed: only re-lock, stop or quit (quit ends the wait)
     if (contractChange) {
-      if (key.ctrl && input === "c") {
+      if ((key.ctrl && input === "c") || input === "q") {
         setShowQuitConfirm(true);
       } else if (input === "r" || input === "R") {
         setContractChange(null);
@@ -387,6 +395,10 @@ export function App({ projectPath, enableTeams }: AppProps) {
       }
       if (error) {
         setError(null);
+        return;
+      }
+      if (runNotice) {
+        setRunNotice(null);
         return;
       }
     }
@@ -633,6 +645,18 @@ export function App({ projectPath, enableTeams }: AppProps) {
       {error && (
         <Box paddingX={1} borderStyle="single" borderColor={colors.accentRed}>
           <Text color={colors.accentRed}>Error: {error}</Text>
+          <Text color={colors.textMuted}> (Esc to dismiss)</Text>
+        </Box>
+      )}
+
+      {/* Why the last run ended */}
+      {runNotice && (
+        <Box
+          paddingX={1}
+          borderStyle="single"
+          borderColor={colors.accentYellow}
+        >
+          <Text color={colors.accentYellow}>{runNotice}</Text>
           <Text color={colors.textMuted}> (Esc to dismiss)</Text>
         </Box>
       )}
