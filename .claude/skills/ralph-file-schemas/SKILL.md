@@ -79,6 +79,10 @@ Drafted in SETUP with the user. Once `prd.json` is `approved`, the runner valida
 
 All fields are required. `seeds` is a non-empty array of integers, `holdout_gap_threshold` >= 0, `eval_timeout_seconds` > 0. Do not put a holdout data path in the contract. Run the baseline in SETUP and record it as `baseline_score`. The runner refuses to run iterations after approval if the contract is invalid, `baseline_score` is missing, `evaluate.py` is missing, or `lock.json` is missing or malformed. After setting `status: "approved"`, end the iteration; the lock is written when the next one starts.
 
+### evals/ (runner-written scores)
+
+Submit a candidate with `ml-ralph eval <path>`: the runner runs a private copy of the locked `evaluate.py` over every contract seed (find files beside it through `ML_RALPH_EVAL_DIR`, not `__file__`) and writes `.ml-ralph/evals/<eval_id>/metrics.json` (`eval_id`, `contract_hash`, `candidate`, per-seed `scores`, `mean`, `std`, `status`). Never create or edit files there or write a metrics file yourself; log the `eval_id` in your `experiment` event.
+
 ---
 
 ## kanban.json (The Journey)

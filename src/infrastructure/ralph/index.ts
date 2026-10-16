@@ -2,6 +2,11 @@
  * ML-Ralph infrastructure - init, runner, and log parser
  */
 
+export type {
+  EvalCommandOptions,
+  EvalCommandResult,
+} from "./eval-command.ts";
+export { runEvalCommand } from "./eval-command.ts";
 export type { EvalChange, EvalLock, EvalLockResult } from "./eval-lock.ts";
 export {
   checkEvalGate,
@@ -11,6 +16,23 @@ export {
   readEvalLock,
   relockEvalContract,
 } from "./eval-lock.ts";
+export type {
+  EvalCache,
+  EvalMetrics,
+  EvalMetricsFailed,
+  EvalMetricsOk,
+  EvalScoring,
+  EvalSeedScore,
+  EvalSummary,
+  VerifiedEvals,
+} from "./eval-metrics.ts";
+export {
+  createEvalCache,
+  EVALS_DIR,
+  readEvalMetrics,
+  readEvalScoring,
+  readVerifiedEvals,
+} from "./eval-metrics.ts";
 export type { InitOptions, InitResult } from "./init.ts";
 export {
   enableAgentTeamsSettings,
@@ -47,6 +69,7 @@ export { createRunner, RalphRunner } from "./runner.ts";
 export type {
   ContractRelockedEvent,
   DecisionEvent,
+  EvalEvent,
   ExperimentEvent,
   HypothesisEvent,
   LearningEvent,

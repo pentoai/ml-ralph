@@ -39,4 +39,30 @@ describe("log event formatter", () => {
     expect(EVENT_STYLES.learning?.icon).toBe(">");
     expect(EVENT_STYLES.thinking?.icon).toBe(".");
   });
+
+  test("experiment and parallel_result metrics are labelled as agent-reported", () => {
+    const experiment = formatLogActivity(
+      {
+        ts: "t",
+        type: "experiment",
+        name: "x",
+        hypothesis_id: "H-1",
+        eval_id: "eval-made-up",
+        metrics: { auc: 0.9 },
+      } as never,
+      0,
+    );
+    const parallel = formatLogActivity(
+      {
+        ts: "t",
+        type: "parallel_result",
+        agent: "a",
+        hypothesis_id: "H-1",
+        metrics: { auc: 0.9 },
+      } as never,
+      0,
+    );
+    expect(experiment.content).toBe("x auc 0.9000 (reported)");
+    expect(parallel.content).toContain("auc 0.9000 (reported)");
+  });
 });

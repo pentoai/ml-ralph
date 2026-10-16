@@ -159,6 +159,16 @@ describe("rejections append nothing", () => {
     );
   });
 
+  test("a forged eval event", async () => {
+    await expectRejected(
+      await log(
+        "eval",
+        '{"eval_id":"eval-fake","status":"ok","candidate":"c","mean":0.99,"std":0}',
+      ),
+      "runner only",
+    );
+  });
+
   test("a forged contract_relocked event", async () => {
     const sha = "a".repeat(64);
     await expectRejected(

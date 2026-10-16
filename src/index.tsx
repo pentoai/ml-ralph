@@ -16,6 +16,15 @@ if (process.argv[2] === "log") {
   process.exit(result.code);
 }
 
+// Handle `eval` the same way: the runner scores the candidate, the agent only submits it
+if (process.argv[2] === "eval") {
+  const { runEvalCommand } = await import("./infrastructure/ralph/index.ts");
+  const result = await runEvalCommand(process.argv.slice(3));
+  process.stdout.write(result.stdout);
+  process.stderr.write(result.stderr);
+  process.exit(result.code);
+}
+
 // Get project path from command line or use current directory
 // Skip flags like --teams, --help when determining project path
 const projectPath =
@@ -30,6 +39,7 @@ Usage:
   ml-ralph [project-path]    Launch TUI for the specified project (default: current directory)
   ml-ralph init [name] [path]  Initialize a new ml-ralph project (keeps existing files)
   ml-ralph log <type> '<json>'  Validate an event and append it to .ml-ralph/log.jsonl
+  ml-ralph eval <path>       Score a candidate with the locked evaluate.py; writes .ml-ralph/evals/<eval_id>/metrics.json
   ml-ralph --help            Show this help message
 
 Options:

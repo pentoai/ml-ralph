@@ -35,7 +35,6 @@ interface CognitiveState {
   cycleCount: number;
   retreatCount: number;
   hypotheses: HypothesisState[];
-  bestScore: number;
   latestInsight: string | null;
 }
 
@@ -49,6 +48,11 @@ const PHASE_ABBR: Record<string, string> = {
   REFLECT: "REF",
 };
 
+/**
+ * Scores here are what the agent logged; this view reads only log.jsonl, so it
+ * cannot check them against .ml-ralph/evals/. They are drawn muted with a
+ * trailing "?" and never picked out as best.
+ */
 function extractScoreWithKey(
   metrics: Record<string, unknown>,
 ): { score: number; key: string } | null {
@@ -109,7 +113,6 @@ function extractCognitiveState(logEvents: RalphEvent[]): CognitiveState {
   let currentPhase: string | null = null;
   let cycleCount = 0;
   let retreatCount = 0;
-  let bestScore = 0;
   let latestInsight: string | null = null;
   let lastPhaseIndex = -1;
 
@@ -168,7 +171,6 @@ function extractCognitiveState(logEvents: RalphEvent[]): CognitiveState {
             existing.metricKey = shortMetricKey(result.key);
           }
         }
-        if (result && result.score > bestScore) bestScore = result.score;
         break;
       }
       case "decision": {
@@ -193,7 +195,6 @@ function extractCognitiveState(logEvents: RalphEvent[]): CognitiveState {
     cycleCount,
     retreatCount,
     hypotheses: Array.from(hypotheses.values()),
-    bestScore,
     latestInsight,
   };
 }
@@ -240,10 +241,8 @@ interface RenderLine {
 
 function buildHypothesisLines({
   hypotheses,
-  bestScore,
 }: {
   hypotheses: HypothesisState[];
-  bestScore: number;
 }): RenderLine[] {
   if (hypotheses.length === 0) return [];
 
@@ -276,8 +275,6 @@ function buildHypothesisLines({
 
     for (let ei = 0; ei < h.experiments.length; ei++) {
       const exp = h.experiments[ei]!;
-      const isBest =
-        exp.score !== null && exp.score === bestScore && bestScore > 0;
       const innerPrefix = isLast ? "  " : "| ";
       const expConn = ei === h.experiments.length - 1 ? "\\" : "|";
       lines.push({
@@ -285,9 +282,8 @@ function buildHypothesisLines({
         text:
           `${innerPrefix}${expConn} ${sanitizeLogText(exp.name)}` +
           (exp.metricKey ? ` ${exp.metricKey}` : "") +
-          (exp.score !== null ? ` ${exp.score.toFixed(3)}` : "") +
-          (isBest ? " *" : ""),
-        color: isBest ? colors.accentGreen : colors.textMuted,
+          (exp.score !== null ? ` ${exp.score.toFixed(3)}?` : ""),
+        color: colors.textMuted,
       });
     }
   }
@@ -322,12 +318,7 @@ export function CognitiveMap({ logEvents }: CognitiveMapProps) {
     });
   }
 
-  lines.push(
-    ...buildHypothesisLines({
-      hypotheses: state.hypotheses,
-      bestScore: state.bestScore,
-    }),
-  );
+  lines.push(...buildHypothesisLines({ hypotheses: state.hypotheses }));
 
   if (state.latestInsight) {
     lines.push({
@@ -367,6 +358,8 @@ export function CognitiveMap({ logEvents }: CognitiveMapProps) {
 
 export const __testing = {
   formatPhaseLine,
+  extractCognitiveState,
+  buildHypothesisLines,
   statusIcons: {
     active: STATUS_ICONS.active?.icon,
     kept: STATUS_ICONS.kept?.icon,

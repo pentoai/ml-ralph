@@ -45,7 +45,7 @@ async function isDirectory(path: string): Promise<boolean> {
 }
 
 /** Walk up from `start` to the nearest directory containing .ml-ralph/ */
-async function findProjectDir(start: string): Promise<string | null> {
+export async function findProjectDir(start: string): Promise<string | null> {
   let dir = resolve(start);
   while (true) {
     if (await isDirectory(join(dir, ".ml-ralph"))) return dir;
@@ -53,6 +53,20 @@ async function findProjectDir(start: string): Promise<string | null> {
     if (parent === dir) return null;
     dir = parent;
   }
+}
+
+/** Append one event, stamped with ts, to .ml-ralph/log.jsonl without rewriting the file */
+export async function appendLogLine(
+  projectDir: string,
+  event: Record<string, unknown>,
+): Promise<void> {
+  const logPath = join(projectDir, ".ml-ralph", "log.jsonl");
+  const line = `${JSON.stringify({ ts: new Date().toISOString(), ...event })}\n`;
+  const file = Bun.file(logPath);
+  // Start on a fresh line if an earlier writer left the log unterminated
+  const needsNewline =
+    file.size > 0 && (await file.slice(file.size - 1).text()) !== "\n";
+  await appendFile(logPath, needsNewline ? `\n${line}` : line);
 }
 
 /**
@@ -109,13 +123,7 @@ export async function runLogCommand(
     );
   }
 
-  const logPath = join(projectDir, ".ml-ralph", "log.jsonl");
-  const line = `${JSON.stringify({ ts: new Date().toISOString(), type, ...body })}\n`;
-  const file = Bun.file(logPath);
-  // Start on a fresh line if an earlier writer left the log unterminated
-  const needsNewline =
-    file.size > 0 && (await file.slice(file.size - 1).text()) !== "\n";
-  await appendFile(logPath, needsNewline ? `\n${line}` : line);
+  await appendLogLine(projectDir, { type, ...body });
 
   return { code: 0, stdout: `Logged ${type} event\n`, stderr: "" };
 }

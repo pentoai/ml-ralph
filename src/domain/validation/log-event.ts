@@ -124,6 +124,7 @@ export const LOG_EVENT_SCHEMAS: Record<string, LogEventSchema> = {
       metrics,
       observations: str,
       name: optional(str),
+      eval_id: optional(str),
       wandb_run_id: optional(str),
       wandb_url: optional(str),
       config: optional({ spec: { kind: "object", fields: {} } }),
@@ -170,6 +171,17 @@ export const LOG_EVENT_SCHEMAS: Record<string, LogEventSchema> = {
           fields: { "evaluate.py": str, "contract.json": str },
         },
       },
+    },
+  },
+  eval: {
+    runnerOnly: true,
+    fields: {
+      eval_id: str,
+      status: oneOf("ok", "failed"),
+      candidate: str,
+      mean: optional(num),
+      std: optional(num),
+      reason: optional(str),
     },
   },
   verifier_verdict: {

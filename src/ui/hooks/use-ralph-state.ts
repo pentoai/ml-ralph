@@ -6,12 +6,17 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   aggregateEvents,
+  createEvalCache,
+  type EvalScoring,
   type Kanban,
   type LogSummary,
   type PRD,
+  readEvalScoring,
   readKanbanFile,
   readLogFile,
   readPrdFile,
+  readVerifiedEvals,
+  type VerifiedEvals,
 } from "../../infrastructure/ralph/index.ts";
 
 export interface UseRalphStateOptions {
@@ -27,6 +32,10 @@ export interface UseRalphStateResult {
   log: LogSummary | null;
   /** The current Kanban (working plan) */
   kanban: Kanban | null;
+  /** Runner evals under .ml-ralph/evals/ that finished ok, by eval_id */
+  evals: VerifiedEvals;
+  /** primary_metric and direction from the eval contract, if there is one */
+  scoring: EvalScoring | null;
   /** Whether initial load is complete */
   isLoaded: boolean;
   /** Any error that occurred */
@@ -43,6 +52,9 @@ export function useRalphState(
   const [prd, setPrd] = useState<PRD | null>(null);
   const [log, setLog] = useState<LogSummary | null>(null);
   const [kanban, setKanban] = useState<Kanban | null>(null);
+  const [evals, setEvals] = useState<VerifiedEvals>(new Map());
+  const [scoring, setScoring] = useState<EvalScoring | null>(null);
+  const [evalCache] = useState(createEvalCache);
   const [isLoaded, setIsLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -61,6 +73,9 @@ export function useRalphState(
       const kanbanData = await readKanbanFile(projectPath);
       setKanban(kanbanData);
 
+      setEvals(await readVerifiedEvals(projectPath, evalCache));
+      setScoring(await readEvalScoring(projectPath));
+
       setError(null);
       setIsLoaded(true);
     } catch (err) {
@@ -68,7 +83,7 @@ export function useRalphState(
         err instanceof Error ? err.message : "Failed to read Ralph state",
       );
     }
-  }, [projectPath]);
+  }, [projectPath, evalCache]);
 
   // Initial load
   useEffect(() => {
@@ -88,6 +103,8 @@ export function useRalphState(
     prd,
     log,
     kanban,
+    evals,
+    scoring,
     isLoaded,
     error,
     refresh,

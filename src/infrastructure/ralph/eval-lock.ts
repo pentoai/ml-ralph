@@ -26,7 +26,7 @@ export type EvalLockResult =
   | { ok: true; lock: EvalLock }
   | { ok: false; error: string };
 
-const sha256 = (data: Uint8Array) =>
+export const sha256 = (data: Uint8Array) =>
   createHash("sha256").update(data).digest("hex");
 
 const CONTRACT_PATH = ".ml-ralph/eval/contract.json";
