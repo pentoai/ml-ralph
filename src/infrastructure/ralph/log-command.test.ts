@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import pkg from "../../../package.json" with { type: "json" };
 import { runLogCommand } from "./log-command.ts";
 import { RALPH_MD } from "./templates.ts";
 
@@ -215,9 +216,23 @@ describe("hypothesis fields", () => {
 
 describe("RALPH_MD", () => {
   test("logs through ml-ralph log, never by echoing into log.jsonl", () => {
-    expect(RALPH_MD).toContain("bunx @pentoai/ml-ralph log ");
+    expect(RALPH_MD).toContain(`bunx @pentoai/ml-ralph@${pkg.version} log `);
     expect(RALPH_MD).not.toMatch(/echo[^\n]*log\.jsonl/);
     expect(RALPH_MD).not.toMatch(/>>\s*\S*log\.jsonl/);
+  });
+
+  test("every invocation pins the package version", () => {
+    expect(RALPH_MD).not.toMatch(/bunx @pentoai\/ml-ralph(?!@)/);
+    expect(RALPH_MD).not.toMatch(/ml-ralph@(?!\d)/);
+  });
+
+  test("the data_verified diagram names every required field", () => {
+    const line = RALPH_MD.split("\n").find((l) =>
+      l.includes("Log: data_verified"),
+    );
+    for (const field of ["dataset", "checks", "issues", "action"]) {
+      expect(line).toContain(field);
+    }
   });
 
   test("its hypothesis example passes validation", () => {

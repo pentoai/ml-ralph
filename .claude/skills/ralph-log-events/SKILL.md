@@ -5,7 +5,7 @@ description: "Event schemas for ml-ralph log.jsonl. Use when logging any event."
 
 # Ralph Log Events
 
-Log events with `bunx @pentoai/ml-ralph log <type> '<json>'` from the project directory (JSON on stdin with `-` if it contains quotes). The command validates the event against the schema for its type, appends one line to `.ml-ralph/log.jsonl` and adds `ts` and `type`. Invalid events are rejected with the failing field and what was expected. Never write the file any other way; never edit, only append.
+Log events with `bunx @pentoai/ml-ralph@<version> log <type> '<json>'` (use the exact version RALPH.md shows) from the project directory (JSON on stdin with `-` if it contains quotes). The command validates the event against the schema for its type, appends one line to `.ml-ralph/log.jsonl` and adds `ts` and `type`. Invalid events are rejected with the failing field and what was expected. Never write the file any other way; never edit, only append.
 
 The examples below show stored lines; pass everything except `ts` as the JSON argument.
 

@@ -433,7 +433,7 @@ ml-ralph log <type> '<json>'
 ml-ralph log <type> - < event.json   # JSON on stdin, for quotes and long text
 ```
 
-(Agents run it as `bunx @pentoai/ml-ralph log ...`, as the package is not installed globally.) The command checks the JSON against the schema for `<type>` in `src/domain/validation/log-event.ts` and, only if it validates, appends exactly one line with `ts` and `type` set (a `ts` in the JSON is replaced). The command looks for `.ml-ralph/` in the current directory and its parents.
+(Agents run it as `bunx @pentoai/ml-ralph@<version> log ...`, as the package is not installed globally. `RALPH_MD` interpolates the running package's version, so an older cached copy that lacks the command is never resolved.) The command checks the JSON against the schema for `<type>` in `src/domain/validation/log-event.ts` and, only if it validates, appends exactly one line with `ts` and `type` set (a `ts` in the JSON is replaced). The command looks for `.ml-ralph/` in the current directory and its parents.
 
 On failure nothing is appended, the exit code is non-zero and stderr lists every failing field path with the expected type or allowed values, for example:
 

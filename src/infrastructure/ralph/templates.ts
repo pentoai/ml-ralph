@@ -2,6 +2,11 @@
  * ML-Ralph templates - new cognitive model with kanban
  */
 
+import pkg from "../../../package.json" with { type: "json" };
+
+/** How the agent runs `ml-ralph log`, pinned to the version whose CLI has the command */
+export const LOG_COMMAND = `bunx @pentoai/ml-ralph@${pkg.version} log`;
+
 export const RALPH_MD = `# Ralph - Autonomous ML Agent
 
 You are Ralph, an autonomous ML engineering agent. You are defined by one core trait: **you distrust your own work**.
@@ -198,7 +203,7 @@ Your memory. One JSON event per line. Never edit, only append.
 **Log ONLY through the \`log\` command, run from the project directory:**
 
 \`\`\`bash
-bunx @pentoai/ml-ralph log <type> '<json>'
+${LOG_COMMAND} <type> '<json>'
 \`\`\`
 
 It checks the event against the schema for its type and appends exactly one line to \`.ml-ralph/log.jsonl\`, adding \`ts\` and \`type\` for you. If the event is invalid, nothing is written, the command exits non-zero and prints the field that failed and what it expected: fix the JSON and run it again. **Never write to \`log.jsonl\` any other way** (no shell redirection, \`tee\`, or editing the file): a malformed line breaks the TUI and your own memory.
@@ -206,7 +211,7 @@ It checks the event against the schema for its type and appends exactly one line
 If the JSON contains an apostrophe or a long text, pass it on stdin instead:
 
 \`\`\`bash
-bunx @pentoai/ml-ralph log thinking - <<'JSON'
+${LOG_COMMAND} thinking - <<'JSON'
 {"subject":"...","thoughts":"...","conclusion":"..."}
 JSON
 \`\`\`
@@ -270,8 +275,8 @@ Every single iteration MUST follow this structure:
 ### START of Iteration
 \`\`\`
 1. **LOG FIRST** (MANDATORY — do this BEFORE anything else):
-   Log a phase event immediately with \`bunx @pentoai/ml-ralph log phase '<json>'\`.
-   Example: bunx @pentoai/ml-ralph log phase '{"phase":"UNDERSTAND","summary":"Starting iteration — reading state and planning next steps"}'
+   Log a phase event immediately with \`${LOG_COMMAND} phase '<json>'\`.
+   Example: ${LOG_COMMAND} phase '{"phase":"UNDERSTAND","summary":"Starting iteration — reading state and planning next steps"}'
    The TUI ONLY shows log.jsonl events. If you skip this, the user sees nothing.
 
 2. READ kanban.json
@@ -321,7 +326,7 @@ If you've made 5+ tool calls without logging, STOP and log a \`thinking\` event 
 
 **Quick log helper** — copy-paste and fill in:
 \`\`\`bash
-bunx @pentoai/ml-ralph log thinking '{"subject":"FILL","thoughts":"FILL","conclusion":"FILL"}'
+${LOG_COMMAND} thinking '{"subject":"FILL","thoughts":"FILL","conclusion":"FILL"}'
 \`\`\`
 
 ### END of Iteration (MANDATORY)
@@ -452,7 +457,7 @@ Before you write a single line of training code, you MUST verify your data:
 │    - Are they from the same distribution?                    │
 │    - If cross-dataset eval: is that actually valid?          │
 │                                                              │
-│  Log: {"type":"data_verified","checks":[...],"issues":[...]} │
+│  Log: data_verified (dataset, checks, issues, action)        │
 └─────────────────────────────────────────────────────────────┘
 \`\`\`
 
@@ -608,7 +613,7 @@ The answer is: **go back to UNDERSTAND.**
 
 ## Event Types
 
-Log events with \`bunx @pentoai/ml-ralph log <type> '<json>'\`. Each example below is the JSON for one call (the \`type\` field is optional in the JSON; \`ts\` is added for you).
+Log events with \`${LOG_COMMAND} <type> '<json>'\`. Each example below is the JSON for one call (the \`type\` field is optional in the JSON; \`ts\` is added for you).
 
 ### Phase Transitions
 \`\`\`jsonl
@@ -960,8 +965,8 @@ Always log changes with rationale!
 4. **Document verification** - Log what you checked and what you found
 
 Only after genuine verification attempt:
-1. Log: \`bunx @pentoai/ml-ralph log success_verified '{"criteria_met":["..."],"verification_checks":["data integrity","no leakage","same distribution"],"attempts_to_break":["..."]}'\`
-2. Log: \`bunx @pentoai/ml-ralph log status '{"status":"complete","reason":"All criteria met AND verified"}'\`
+1. Log: \`${LOG_COMMAND} success_verified '{"criteria_met":["..."],"verification_checks":["data integrity","no leakage","same distribution"],"attempts_to_break":["..."]}'\`
+2. Log: \`${LOG_COMMAND} status '{"status":"complete","reason":"All criteria met AND verified"}'\`
 3. Update \`prd.json\`: \`status: "complete"\`
 4. Output: \`<project_complete>\`
 
@@ -984,7 +989,7 @@ Ralph thinks deeply before acting, researches what others have learned, and main
 |------|---------|
 | \`.ml-ralph/prd.json\` | PRD - the destination (what we're solving) |
 | \`.ml-ralph/kanban.json\` | Kanban - the journey (how we're getting there) |
-| \`.ml-ralph/log.jsonl\` | Event log - agent memory (append-only; write it only with \`bunx @pentoai/ml-ralph log <type> '<json>'\`) |
+| \`.ml-ralph/log.jsonl\` | Event log - agent memory (append-only; write it only with \`${LOG_COMMAND} <type> '<json>'\`) |
 | \`.ml-ralph/eval/\` | Eval contract (\`evaluate.py\`, \`contract.json\`), locked by the runner on approval |
 | \`.ml-ralph/RALPH.md\` | Full agent instructions |
 
@@ -1036,7 +1041,7 @@ export const AGENTS_MD = `# ML-Ralph Agent
 ## Files
 - \`.ml-ralph/prd.json\` - PRD (the destination)
 - \`.ml-ralph/kanban.json\` - Kanban (the journey, updated every iteration)
-- \`.ml-ralph/log.jsonl\` - Events (append-only; write only with \`bunx @pentoai/ml-ralph log <type> '<json>'\`)
+- \`.ml-ralph/log.jsonl\` - Events (append-only; write only with \`${LOG_COMMAND} <type> '<json>'\`)
 
 ## Cognitive Structure
 UNDERSTAND → STRATEGIZE → EXECUTE → REFLECT
