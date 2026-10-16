@@ -235,7 +235,7 @@ Before approval, write \`.ml-ralph/eval/evaluate.py\` and \`.ml-ralph/eval/contr
 }
 \`\`\`
 
-All fields are required; \`direction\` is \`"max"\` or \`"min"\`, \`seeds\` is a non-empty array. Do NOT put any holdout data path in the contract. When the PRD is approved the runner validates both files and locks them by hash in \`.ml-ralph/eval/lock.json\`. If the contract is invalid, \`baseline_score\` is missing or \`evaluate.py\` does not exist, the runner refuses to run EXECUTION. After the lock, never edit these files.
+All fields are required; \`direction\` is \`"max"\` or \`"min"\`, \`seeds\` is a non-empty array. Do NOT put any holdout data path in the contract. When the PRD is approved the runner validates both files and locks them by hash in \`.ml-ralph/eval/lock.json\`. If the contract is invalid, \`baseline_score\` is missing or \`evaluate.py\` does not exist, the runner refuses to run EXECUTION. After the lock, never edit these files: the runner re-hashes them before every iteration and pauses the run for the user if one changed or was deleted.
 
 ### EXECUTION Mode (PRD approved)
 When \`prd.json\` has \`status: "approved"\`:
@@ -1274,6 +1274,18 @@ export interface VerifierVerdictEvent extends BaseEvent {
   output_path: string;
 }
 
+/** Written by the runner (never the agent) when the user re-locks the eval files after a change */
+export interface ContractRelockedEvent extends BaseEvent {
+  type: "contract_relocked";
+  /** The locked files that differed from the lock when the run paused */
+  changes: Array<{
+    file: "evaluate.py" | "contract.json";
+    kind: "edited" | "deleted";
+  }>;
+  /** The new SHA-256 hashes now in lock.json */
+  files: Record<"evaluate.py" | "contract.json", string>;
+}
+
 export interface LearningEvent extends BaseEvent {
   type: "learning";
   insight: string;
@@ -1350,6 +1362,7 @@ export type RalphEvent =
   | LearningEvent
   | DecisionEvent
   | VerifierVerdictEvent
+  | ContractRelockedEvent
   | StrategicRetreatEvent
   | PrdUpdatedEvent
   | StatusEvent

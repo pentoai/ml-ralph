@@ -6,7 +6,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentOrchestrator } from "../application/orchestrator/index.ts";
 import { createOrchestrator } from "../application/orchestrator/index.ts";
 import { useAppStore } from "../application/state/index.ts";
-import { ensureInitialized } from "../infrastructure/ralph/index.ts";
+import {
+  describeEvalChanges,
+  type EvalChange,
+  ensureInitialized,
+  type RunCompleteReason,
+} from "../infrastructure/ralph/index.ts";
 import { useTmuxLayout } from "./hooks/index.ts";
 import {
   Box,
@@ -55,6 +60,11 @@ export function App({ projectPath, enableTeams }: AppProps) {
   const [showHintDialog, setShowHintDialog] = useState(false);
   const [hintText, setHintText] = useState("");
   const [pendingHints, setPendingHints] = useState<string[]>([]);
+  // Locked eval file changed: the run is paused until the user decides
+  const [contractChange, setContractChange] = useState<{
+    changes: EvalChange[];
+    relockError?: string;
+  } | null>(null);
   // Initialization state
   const [isInitialized, setIsInitialized] = useState(false);
   // Current iteration
@@ -151,7 +161,8 @@ export function App({ projectPath, enableTeams }: AppProps) {
 
   // Handle completion
   const handleComplete = useCallback(
-    (_reason: "project_complete" | "max_iterations") => {
+    (_reason: RunCompleteReason) => {
+      setContractChange(null);
       setAgentStatus("idle");
       setPendingHints([]);
     },
@@ -169,6 +180,9 @@ export function App({ projectPath, enableTeams }: AppProps) {
       // Subscribe to events
       orchestratorRef.current.onIterationChange(handleIterationChange);
       orchestratorRef.current.onComplete(handleComplete);
+      orchestratorRef.current.onContractChange((changes, relockError) =>
+        setContractChange({ changes, relockError }),
+      );
       orchestratorRef.current.onOutput((event) => {
         appendAgentOutput(event);
       });
@@ -245,6 +259,7 @@ export function App({ projectPath, enableTeams }: AppProps) {
             : "Unknown error starting agent";
       setError(errorMsg);
     } finally {
+      setContractChange(null);
       setAgentStatus("idle");
       setPendingHints([]);
     }
@@ -263,6 +278,20 @@ export function App({ projectPath, enableTeams }: AppProps) {
         return;
       }
       return; // Ignore other keys while dialog is open
+    }
+
+    // Locked eval file changed: only re-lock or stop (Ctrl+C still quits)
+    if (contractChange) {
+      if (key.ctrl && input === "c") {
+        setShowQuitConfirm(true);
+      } else if (input === "r" || input === "R") {
+        setContractChange(null);
+        orchestratorRef.current?.relockContract();
+      } else if (input === "x" || input === "X") {
+        setContractChange(null);
+        orchestratorRef.current?.stopForContractChange();
+      }
+      return;
     }
 
     // Handle start confirmation dialog
@@ -605,6 +634,29 @@ export function App({ projectPath, enableTeams }: AppProps) {
         <Box paddingX={1} borderStyle="single" borderColor={colors.accentRed}>
           <Text color={colors.accentRed}>Error: {error}</Text>
           <Text color={colors.textMuted}> (Esc to dismiss)</Text>
+        </Box>
+      )}
+
+      {/* Locked eval file changed */}
+      {contractChange && (
+        <Box
+          flexDirection="column"
+          paddingX={1}
+          borderStyle="single"
+          borderColor={colors.accentYellow}
+        >
+          <Text color={colors.accentYellow}>
+            Run paused: locked eval file changed (
+            {describeEvalChanges(contractChange.changes)})
+          </Text>
+          {contractChange.relockError && (
+            <Text color={colors.accentRed}>
+              Re-lock failed: {contractChange.relockError}
+            </Text>
+          )}
+          <Text color={colors.textMuted}>
+            [r] re-lock the current files and resume [x] stop the run
+          </Text>
         </Box>
       )}
 

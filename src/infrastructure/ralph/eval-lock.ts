@@ -14,6 +14,14 @@ export interface EvalLock {
   };
 }
 
+export type EvalFileName = keyof EvalLock["files"];
+
+/** A locked file whose current content no longer matches the locked hash */
+export interface EvalChange {
+  file: EvalFileName;
+  kind: "edited" | "deleted";
+}
+
 export type EvalLockResult =
   | { ok: true; lock: EvalLock }
   | { ok: false; error: string };
@@ -26,6 +34,10 @@ const EVALUATE_PATH = ".ml-ralph/eval/evaluate.py";
 const LOCK_PATH = ".ml-ralph/eval/lock.json";
 const LOCK_MARKER_PATH = ".ml-ralph/eval-lock.created";
 const HEX_SHA256 = /^[0-9a-f]{64}$/;
+const LOCKED_FILES: Record<EvalFileName, string> = {
+  "evaluate.py": EVALUATE_PATH,
+  "contract.json": CONTRACT_PATH,
+};
 
 /**
  * Check that contract.json validates and evaluate.py exists, collecting every
@@ -78,18 +90,8 @@ async function checkEvalFiles(
   return { ok: true, contractBytes, evaluateBytes };
 }
 
-/**
- * Validate the eval contract and write .ml-ralph/eval/lock.json.
- * Fails with a message naming every field or file at fault.
- */
-export async function lockEvalContract(
-  projectPath: string,
-): Promise<EvalLockResult> {
-  const prd = await readPrdFile(projectPath);
-  if (prd?.status !== "approved") {
-    return { ok: false, error: 'prd.json: status must be "approved" to lock' };
-  }
-
+/** Hash the validated eval files and write lock.json plus the creation marker */
+async function writeLock(projectPath: string): Promise<EvalLockResult> {
   const files = await checkEvalFiles(projectPath);
   if (!files.ok) return { ok: false, error: files.errors.join("; ") };
 
@@ -109,17 +111,32 @@ export async function lockEvalContract(
 }
 
 /**
- * Check an existing lock.json: it must have the lock shape and the files it
- * covers must still exist and validate. Hash drift is not checked here.
+ * Validate the eval contract and write .ml-ralph/eval/lock.json.
+ * Fails with a message naming every field or file at fault.
  */
-async function checkExistingLock(projectPath: string): Promise<string | null> {
-  let lock: unknown;
-  try {
-    lock = await Bun.file(`${projectPath}/${LOCK_PATH}`).json();
-  } catch {
-    return `${LOCK_PATH} is not valid JSON`;
+export async function lockEvalContract(
+  projectPath: string,
+): Promise<EvalLockResult> {
+  const prd = await readPrdFile(projectPath);
+  if (prd?.status !== "approved") {
+    return { ok: false, error: 'prd.json: status must be "approved" to lock' };
   }
+  return writeLock(projectPath);
+}
 
+/**
+ * Lock the files as they are now, after the user accepted a change. Unlike
+ * lockEvalContract it does not look at the PRD status: the decision is the
+ * user's. The files must still validate.
+ */
+export async function relockEvalContract(
+  projectPath: string,
+): Promise<EvalLockResult> {
+  return writeLock(projectPath);
+}
+
+/** Return the lock if it has the lock shape (locked_at and two SHA-256 hashes) */
+function parseLock(lock: unknown): EvalLock | null {
   const l = lock as {
     locked_at?: unknown;
     files?: Record<string, unknown> | null;
@@ -132,11 +149,62 @@ async function checkExistingLock(projectPath: string): Promise<string | null> {
     !Number.isNaN(Date.parse(l.locked_at)) &&
     typeof hashes === "object" &&
     hashes !== null &&
-    ["evaluate.py", "contract.json"].every((name) => {
+    Object.keys(LOCKED_FILES).every((name) => {
       const hash = hashes[name];
       return typeof hash === "string" && HEX_SHA256.test(hash);
     });
-  if (!wellFormed) {
+  return wellFormed ? (lock as EvalLock) : null;
+}
+
+/** Read lock.json; null when it is missing, unparseable or malformed */
+export async function readEvalLock(
+  projectPath: string,
+): Promise<EvalLock | null> {
+  try {
+    return parseLock(await Bun.file(`${projectPath}/${LOCK_PATH}`).json());
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Re-hash the locked files and list those that no longer match `expected`.
+ * A missing file is "deleted"; any other difference is "edited".
+ */
+export async function findEvalChanges(
+  projectPath: string,
+  expected: EvalLock["files"],
+): Promise<EvalChange[]> {
+  const changes: EvalChange[] = [];
+  for (const file of Object.keys(LOCKED_FILES) as EvalFileName[]) {
+    const handle = Bun.file(`${projectPath}/${LOCKED_FILES[file]}`);
+    if (!(await handle.exists())) {
+      changes.push({ file, kind: "deleted" });
+    } else if (
+      sha256(new Uint8Array(await handle.arrayBuffer())) !== expected[file]
+    ) {
+      changes.push({ file, kind: "edited" });
+    }
+  }
+  return changes;
+}
+
+/** One line naming each changed file, e.g. "evaluate.py was edited" */
+export function describeEvalChanges(changes: EvalChange[]): string {
+  return changes.map((c) => `${c.file} was ${c.kind}`).join("; ");
+}
+
+/**
+ * Check an existing lock.json: it must have the lock shape and the files it
+ * covers must still exist and validate. Hash drift is not checked here.
+ */
+async function checkExistingLock(projectPath: string): Promise<string | null> {
+  try {
+    await Bun.file(`${projectPath}/${LOCK_PATH}`).json();
+  } catch {
+    return `${LOCK_PATH} is not valid JSON`;
+  }
+  if (!(await readEvalLock(projectPath))) {
     return `${LOCK_PATH} is malformed (needs locked_at and SHA-256 hashes of evaluate.py and contract.json)`;
   }
 
@@ -145,8 +213,9 @@ async function checkExistingLock(projectPath: string): Promise<string | null> {
 }
 
 /**
- * Decide whether an iteration may start. Only a draft or missing PRD counts as
- * SETUP and always may. Past SETUP (approved, complete, blocked, anything
+ * Decide whether an iteration may start. A draft or missing PRD counts as
+ * SETUP and may start, unless a lock or its marker exists: resetting the PRD to
+ * draft must not switch the checks off. Past SETUP (approved, complete, blocked, anything
  * else) an existing lock.json must be well-formed and still cover valid files.
  * A missing lock is created once, for an approved PRD; if one was created
  * before and has since disappeared, the gate refuses rather than re-locking
@@ -156,11 +225,16 @@ export async function checkEvalGate(
   projectPath: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const prd = await readPrdFile(projectPath);
-  if (!prd || prd.status === "draft") {
+  const lockExists = await Bun.file(`${projectPath}/${LOCK_PATH}`).exists();
+  const markerExists = await Bun.file(
+    `${projectPath}/${LOCK_MARKER_PATH}`,
+  ).exists();
+
+  if ((!prd || prd.status === "draft") && !lockExists && !markerExists) {
     return { ok: true };
   }
 
-  if (await Bun.file(`${projectPath}/${LOCK_PATH}`).exists()) {
+  if (lockExists) {
     const problem = await checkExistingLock(projectPath);
     if (problem === null) return { ok: true };
     return {
@@ -169,19 +243,20 @@ export async function checkEvalGate(
     };
   }
 
-  if (await Bun.file(`${projectPath}/${LOCK_MARKER_PATH}`).exists()) {
+  if (markerExists) {
     return {
       ok: false,
       error: `Refusing to run: ${LOCK_PATH} was removed after the eval contract was locked. Restore it, or if the eval files were changed on purpose, remove ${LOCK_MARKER_PATH} to lock them again.`,
     };
   }
 
+  // Reaching here means a PRD past SETUP: the draft/missing case returned above
   const locked =
-    prd.status === "approved"
+    prd?.status === "approved"
       ? await lockEvalContract(projectPath)
       : {
           ok: false as const,
-          error: `prd.json: status is "${prd.status}", not "approved"`,
+          error: `prd.json: status is "${prd?.status}", not "approved"`,
         };
   if (locked.ok) return { ok: true };
 
