@@ -471,7 +471,7 @@ interface UserConfig {
 }
 ```
 
-This file is user-level, outside every project. A missing file, a missing `projects["<project path>"].holdout_path` entry, a relative path, a path that does not exist or a path inside the project directory (also through a symlink) is an error naming the file and the key (never the path).
+This file is user-level, outside every project. A missing file, a missing `projects["<project path>"].holdout_path` entry, a relative path, a path that does not exist or a path inside the project directory (also through a symlink) is an error naming the file and the key (never the path). The same path is what the holdout access guard looks for in the agent's tool calls (see [ARCHITECTURE.md](./ARCHITECTURE.md#holdout-access-guard)).
 
 ---
 
@@ -496,7 +496,7 @@ rubrics: expected non-empty array of non-empty strings
 kill_criterion: missing required field, expected non-empty string
 ```
 
-An unknown type, JSON that does not parse or is not an object, a `type` in the JSON that differs from the argument, and runner-only types (`promotion`, `verifier_verdict`, `contract_relocked`, `eval`, `overfitting`) are rejected the same way. Fields not in the schema are kept.
+An unknown type, JSON that does not parse or is not an object, a `type` in the JSON that differs from the argument, and runner-only types (`promotion`, `verifier_verdict`, `contract_relocked`, `eval`, `overfitting`, `holdout_access`) are rejected the same way. Fields not in the schema are kept.
 
 ### Hypothesis
 
@@ -539,6 +539,7 @@ A hypothesis is rejected unless `id`, `claim`, `expected_delta`, `rubrics` (at l
 | `parallel_synthesis` | `winner`, `reason`, `merged_branch` |
 | `eval` (runner-only) | `eval_id`, `status` (`ok`, `failed`), `candidate`; optional `mean`, `std`, `reason` |
 | `overfitting` (runner-only) | `eval_id`, `search_score`, `holdout_score`, `holdout_gap`, `threshold` |
+| `holdout_access` (runner-only) | `tool` (name of the tool whose input contained the holdout path), `iteration` |
 | `promotion` (runner-only) | `verdict` (`promoted`, `rejected`), `reason`; optional `candidate_eval_id`, `incumbent_eval_id`, `verifier_id`, `candidate_mean`, `reference_mean` |
 | `verifier_verdict` (runner-only) | `id`, `verdict`, `checks`, `reason`, `output_path`; optional `model` |
 | `contract_relocked` (runner-only) | `changes` (each with `file` and `kind`: `edited` or `deleted`), `files` (SHA-256 of `evaluate.py` and `contract.json`) |

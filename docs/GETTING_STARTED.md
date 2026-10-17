@@ -78,7 +78,7 @@ ML-Ralph scores each candidate once on a holdout split the agent never sees, and
 - The runner passes the path only to your `evaluate.py`, as the `ML_RALPH_HOLDOUT_PATH` environment variable, when it runs it with `--split holdout`. Read the data from there; never copy it into the project or put it in `contract.json`.
 - Each eval is scored on the holdout at most once. The result is written to that eval's `metrics.json` as `holdout_score` and `holdout_gap` (search score minus holdout score, in the contract's direction). A gap above `holdout_gap_threshold` in `contract.json` logs an `overfitting` event and blocks the candidate.
 - The holdout must live outside the project directory. A `holdout_path` inside it (also through a symlink) is refused with an error naming the file and the key.
-- Today nothing stops the agent from reading files elsewhere on your machine, so keep the holdout somewhere the agent has no reason to look.
+- While a run is active the runner checks every tool call the agent makes. A call whose input contains the holdout path (or its symlink-resolved form) kills the `claude` session and ends the run with reason `holdout_access`; the TUI shows it and `log.jsonl` gets a `holdout_access` event naming the tool. This detects an obvious read, it does not sandbox the agent (see [ARCHITECTURE.md](./ARCHITECTURE.md#holdout-access-guard)), so keep the holdout somewhere the agent has no reason to look.
 
 ### 3. Launch the TUI
 
