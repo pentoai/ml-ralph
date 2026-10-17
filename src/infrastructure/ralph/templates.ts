@@ -1387,6 +1387,14 @@ export interface OverfittingEvent extends BaseEvent {
   threshold: number;
 }
 
+/** Written by the runner (never the agent) when a tool call named the sealed holdout path; the run ends with reason holdout_access */
+export interface HoldoutAccessEvent extends BaseEvent {
+  type: "holdout_access";
+  /** Name of the tool whose input contained the holdout path (never the input itself) */
+  tool: string;
+  iteration: number;
+}
+
 /** Written by the runner (never the agent) when the user re-locks the eval files after a change */
 export interface ContractRelockedEvent extends BaseEvent {
   type: "contract_relocked";
@@ -1478,6 +1486,7 @@ export type RalphEvent =
   | VerifierVerdictEvent
   | PromotionEvent
   | OverfittingEvent
+  | HoldoutAccessEvent
   | ContractRelockedEvent
   | StrategicRetreatEvent
   | PrdUpdatedEvent

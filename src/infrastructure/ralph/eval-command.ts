@@ -63,12 +63,15 @@ const fail = (stderr: string, code = 1): EvalCommandResult => ({
 
 type SeedRun = { ok: true; score: number } | { ok: false; reason: string };
 
-/** SIGKILL the child's whole process group so a training run it started dies too */
-function killTree(proc: { pid: number; kill: (signal: "SIGKILL") => void }) {
+/** Signal the child's whole process group (it must be spawned `detached`) so what it started dies too */
+export function killTree(
+  proc: { pid: number; kill: (signal: "SIGTERM" | "SIGKILL") => void },
+  signal: "SIGTERM" | "SIGKILL" = "SIGKILL",
+) {
   try {
-    process.kill(-proc.pid, "SIGKILL");
+    process.kill(-proc.pid, signal);
   } catch {
-    proc.kill("SIGKILL");
+    proc.kill(signal);
   }
 }
 

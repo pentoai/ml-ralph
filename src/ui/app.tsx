@@ -21,6 +21,7 @@ import {
   useInput,
   useStdout,
 } from "./ink.tsx";
+import { runStopNotice } from "./run-notice.ts";
 import { MonitorScreen } from "./screens/monitor.tsx";
 import { OutputScreen } from "./screens/output.tsx";
 import { PlanningScreen } from "./screens/planning.tsx";
@@ -165,11 +166,7 @@ export function App({ projectPath, enableTeams }: AppProps) {
   const handleComplete = useCallback(
     (reason: RunCompleteReason) => {
       setContractChange(null);
-      setRunNotice(
-        reason === "contract_changed"
-          ? "Run stopped: reason contract_changed (a locked eval file was changed and you chose to stop)"
-          : "Run stopped: reason max_iterations (the iteration limit was reached; the run is not complete)",
-      );
+      setRunNotice(runStopNotice(reason));
       setAgentStatus("idle");
       setPendingHints([]);
     },

@@ -155,6 +155,7 @@ describe("schema coverage", () => {
     "eval",
     "promotion",
     "overfitting",
+    "holdout_access",
   ])("%s is runner-only and not offered to the agent", (type) => {
     expect(isRunnerOnlyEvent(type)).toBe(true);
     expect(logEventTypes()).not.toContain(type);

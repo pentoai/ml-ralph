@@ -35,6 +35,12 @@ export {
 } from "./eval-metrics.ts";
 export type { HoldoutOptions, HoldoutResult } from "./holdout.ts";
 export { holdoutConfigFile, readHoldoutPath, scoreHoldout } from "./holdout.ts";
+export type { HoldoutNeedles } from "./holdout-guard.ts";
+export {
+  findHoldoutToolUse,
+  holdoutNeedles,
+  loadHoldoutNeedles,
+} from "./holdout-guard.ts";
 export type { InitOptions, InitResult } from "./init.ts";
 export {
   enableAgentTeamsSettings,
@@ -84,6 +90,7 @@ export type {
   DecisionEvent,
   EvalEvent,
   ExperimentEvent,
+  HoldoutAccessEvent,
   HypothesisEvent,
   LearningEvent,
   OverfittingEvent,

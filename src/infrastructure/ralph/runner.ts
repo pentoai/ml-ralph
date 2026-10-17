@@ -3,7 +3,7 @@
  */
 
 import type { Subprocess } from "bun";
-import { HOLDOUT_PATH_ENV } from "./eval-command.ts";
+import { HOLDOUT_PATH_ENV, killTree } from "./eval-command.ts";
 import {
   checkEvalGate,
   describeEvalChanges,
@@ -15,6 +15,11 @@ import {
 } from "./eval-lock.ts";
 import { type HoldoutResult, scoreHoldout } from "./holdout.ts";
 import {
+  findHoldoutToolUse,
+  type HoldoutNeedles,
+  loadHoldoutNeedles,
+} from "./holdout-guard.ts";
+import {
   judgeCandidate,
   type PromotionDeps,
   parseCandidateComplete,
@@ -22,7 +27,10 @@ import {
 } from "./promotion.ts";
 
 /** Why a run ended. Only the runner ends a run: the agent's output never does */
-export type RunCompleteReason = "max_iterations" | "contract_changed";
+export type RunCompleteReason =
+  | "max_iterations"
+  | "contract_changed"
+  | "holdout_access";
 
 export interface RunnerConfig {
   projectPath: string;
@@ -66,6 +74,8 @@ export class RalphRunner {
   private pendingHints: string[] = [];
   private pendingFeedback: string[] = [];
   private lastToolCall: ToolCallRef | null = null;
+  private holdoutNeedles: HoldoutNeedles = [];
+  private holdoutAccess: { toolName: string } | null = null;
   private pinnedHashes: EvalLock["files"] | null = null;
   private contractDecision: ((d: ContractDecision | null) => void) | null =
     null;
@@ -101,6 +111,7 @@ export class RalphRunner {
     this.currentIteration = 0;
     this.pinnedHashes = null;
     this.pendingFeedback = [];
+    this.holdoutAccess = null;
     let baselineRecorded = false;
 
     const basePrompt = `Read .ml-ralph/RALPH.md for instructions.
@@ -147,7 +158,14 @@ Only the runner decides whether a candidate is promoted, and only the runner end
           content: `═══ Iteration ${i} ═══`,
         });
 
+        this.holdoutNeedles = await loadHoldoutNeedles(this.config.projectPath);
         const result = await this.runIteration(prompt);
+
+        const access = this.holdoutAccessed();
+        if (access) {
+          await this.endForHoldoutAccess(access.toolName);
+          return;
+        }
 
         this.config.onIterationEnd?.(i, result);
 
@@ -174,7 +192,7 @@ Only the runner decides whether a candidate is promoted, and only the runner end
     this.running = false;
     this.settleContractDecision(null);
     if (this.currentProcess) {
-      this.currentProcess.kill();
+      killTree(this.currentProcess, "SIGTERM");
       this.currentProcess = null;
     }
   }
@@ -186,6 +204,25 @@ Only the runner decides whether a candidate is promoted, and only the runner end
    */
   scoreHoldout(evalId: string): Promise<HoldoutResult> {
     return scoreHoldout(evalId, { projectPath: this.config.projectPath });
+  }
+
+  /** The tool call that named the holdout in this run, if any (a method so TS does not narrow the field across awaits) */
+  private holdoutAccessed(): { toolName: string } | null {
+    return this.holdoutAccess;
+  }
+
+  /**
+   * The agent's tool call named the sealed holdout path and its claude process
+   * was killed: record which tool did it (never the call itself, so the path
+   * stays out of log.jsonl) and end the run. No candidate is judged.
+   */
+  private async endForHoldoutAccess(toolName: string): Promise<void> {
+    await this.appendLogEvent({
+      type: "holdout_access",
+      tool: toolName,
+      iteration: this.currentIteration,
+    });
+    this.config.onComplete?.("holdout_access");
   }
 
   /**
@@ -382,8 +419,10 @@ Only the runner decides whether a candidate is promoted, and only the runner end
 
     // The agent's environment never carries the holdout path, even if the user exported it
     const { [HOLDOUT_PATH_ENV]: _holdout, ...agentEnv } = process.env;
+    // Own process group, so stop() and the holdout guard also reach what claude's tools started
     const proc = Bun.spawn(cmd, {
       cwd: this.config.projectPath,
+      detached: true,
       stdout: "pipe",
       stderr: "pipe",
       env: {
@@ -395,6 +434,21 @@ Only the runner decides whether a candidate is promoted, and only the runner end
     });
     this.currentProcess = proc;
 
+    // claude is no longer in the TUI's process group, so a normal exit must reap it
+    const killOnExit = () => killTree(proc, "SIGKILL");
+    process.on("exit", killOnExit);
+    try {
+      return await this.readIteration(proc);
+    } finally {
+      process.off("exit", killOnExit);
+    }
+  }
+
+  /**
+   * Read claude's stdout until it ends (or the holdout guard fired) and return
+   * the final result text; a non-zero exit is an error unless the guard killed it
+   */
+  private async readIteration(proc: Subprocess): Promise<string> {
     let fullResult = "";
     const stdout = proc.stdout;
     if (!stdout || typeof stdout === "number") {
@@ -415,18 +469,25 @@ Only the runner decides whether a candidate is promoted, and only the runner end
 
         for (const line of lines) {
           fullResult = this.processLine(line, fullResult);
+          if (this.holdoutAccess) break;
+        }
+        if (this.holdoutAccess) {
+          await reader.cancel().catch(() => {});
+          break;
         }
       }
 
       // Process remaining buffer
-      fullResult = this.processLine(buffer, fullResult);
+      if (!this.holdoutAccess) {
+        fullResult = this.processLine(buffer, fullResult);
+      }
     } finally {
       reader.releaseLock();
     }
 
     const exitCode = await proc.exited;
 
-    if (exitCode !== 0) {
+    if (exitCode !== 0 && !this.holdoutAccess) {
       // Read stderr for error details
       let stderrText = "";
       try {
@@ -448,11 +509,19 @@ Only the runner decides whether a candidate is promoted, and only the runner end
   /**
    * Parse one stdout line, emit its events and return the running result text
    */
-  private processLine(line: string, fullResult: string): string {
-    const parsed = parseStreamLine(line, this.lastToolCall);
+  protected processLine(line: string, fullResult: string): string {
+    const parsed = parseStreamLine(
+      line,
+      this.lastToolCall,
+      this.holdoutNeedles,
+    );
     this.lastToolCall = parsed.lastToolCall;
     for (const output of parsed.outputs) {
       this.config.onOutput?.(output);
+    }
+    if (parsed.holdoutAccess && !this.holdoutAccess) {
+      this.holdoutAccess = parsed.holdoutAccess;
+      if (this.currentProcess) killTree(this.currentProcess, "SIGKILL");
     }
     return parsed.result ?? fullResult;
   }
@@ -600,15 +669,20 @@ export interface ParsedStreamLine {
   lastToolCall: ToolCallRef | null;
   /** Final result text, set only for a "result" event */
   result?: string;
+  /** Set when a tool_use input contains a holdout needle; the tool's name only */
+  holdoutAccess?: { toolName: string };
 }
 
 /**
  * Parse one raw stdout line from `claude --output-format stream-json`.
- * Blank lines yield no output; non-JSON lines are surfaced as text.
+ * Blank lines yield no output; non-JSON lines are surfaced as text. With
+ * holdout `needles`, a tool_use whose input contains one is flagged in
+ * `holdoutAccess`, whatever else the line parses to.
  */
 export function parseStreamLine(
   line: string,
   lastToolCall: ToolCallRef | null,
+  needles: HoldoutNeedles = [],
 ): ParsedStreamLine {
   if (!line.trim()) return { outputs: [], lastToolCall };
 
@@ -624,17 +698,23 @@ export function parseStreamLine(
   }
 
   const record = event as Record<string, unknown>;
+  const access = findHoldoutToolUse(record, needles);
+  const flag = access ? { holdoutAccess: access } : {};
   let parsed: ReturnType<typeof parseStreamEvent>;
   try {
     parsed = parseStreamEvent(record, lastToolCall);
   } catch {
     // Valid JSON with an unexpected shape: surface the raw line instead of aborting the loop
-    return { outputs: [{ type: "text", content: line }], lastToolCall };
+    return {
+      outputs: [{ type: "text", content: line }],
+      lastToolCall,
+      ...flag,
+    };
   }
   if (record.type === "result") {
-    return { ...parsed, result: (record.result as string) || "" };
+    return { ...parsed, result: (record.result as string) || "", ...flag };
   }
-  return parsed;
+  return { ...parsed, ...flag };
 }
 
 /**

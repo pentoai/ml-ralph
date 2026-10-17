@@ -176,6 +176,7 @@ ml-ralph/
 │   │   │   ├── runner.ts            # RalphRunner: spawns claude per iteration, parses stream-json
 │   │   │   ├── init.ts              # initRalph / ensureInitialized
 │   │   │   ├── eval-lock.ts         # Lock .ml-ralph/eval/ by hash; gate iterations on the lock
+│   │   │   ├── holdout-guard.ts     # Spot tool calls that name the sealed holdout path in the claude stream
 │   │   │   ├── log-parser.ts        # Read/watch log.jsonl, prd.json, kanban.json
 │   │   │   ├── templates.ts         # Agent prompts and log event types
 │   │   │   └── index.ts

@@ -206,6 +206,10 @@ export const LOG_EVENT_SCHEMAS: Record<string, LogEventSchema> = {
       threshold: num,
     },
   },
+  holdout_access: {
+    runnerOnly: true,
+    fields: { tool: str, iteration: num },
+  },
   verifier_verdict: {
     runnerOnly: true,
     fields: {

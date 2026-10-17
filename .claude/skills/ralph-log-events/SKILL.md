@@ -94,6 +94,11 @@ You hand in a candidate by printing `<candidate_complete eval_id="eval-...">`; y
 The runner scores a candidate once on a sealed holdout you never see and writes this event when the search score beats the holdout score by more than the contract's `holdout_gap_threshold`. It blocks that candidate. Never look for the holdout data, and never write this event.
 
 ```jsonl
+{"ts":"...","type":"holdout_access","tool":"Bash","iteration":3}
+```
+The runner watches every tool call you make. If one mentions the sealed holdout path, it kills your session, writes this event naming the tool and ends the run with reason `holdout_access`. Never look for, list or read the holdout, and never write this event.
+
+```jsonl
 {"ts":"...","type":"eval","eval_id":"eval-lq3k2m-9f3a1c","status":"ok","candidate":"submissions/h001.csv","mean":0.832,"std":0.004}
 ```
 `ml-ralph eval <path>` writes this after scoring a candidate. Put its `eval_id` in your `experiment` event; the TUI shows that eval's mean as the result, lists your own numbers as unverified, and flags a `primary_metric` number that disagrees with the eval. Without a real `eval_id` your metrics are unverified. Never write anything under `.ml-ralph/evals/` yourself.
@@ -128,6 +133,7 @@ See RALPH.md for when and how to use these events.
 | `limitation_claim` | claim, devils_advocate_id, validation_attempts, confidence, user_approved |
 | `eval` (runner-only) | eval_id, status, candidate (+ mean, std or reason) |
 | `overfitting` (runner-only) | eval_id, search_score, holdout_score, holdout_gap, threshold |
+| `holdout_access` (runner-only) | tool, iteration |
 | `promotion` (runner-only) | verdict, reason (+ candidate_eval_id, incumbent_eval_id, verifier_id, candidate_mean, reference_mean) |
 | `verifier_verdict` (runner-only) | id, verdict, checks, reason, output_path (+ model) |
 | `contract_relocked` (runner-only) | changes, files |
