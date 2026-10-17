@@ -77,7 +77,8 @@ ML-Ralph scores each candidate once on a holdout split the agent never sees, and
 - `holdout_path` must be an absolute path that exists. If the file, the project entry or the path is missing, the runner reports an error naming the file and the key.
 - The runner passes the path only to your `evaluate.py`, as the `ML_RALPH_HOLDOUT_PATH` environment variable, when it runs it with `--split holdout`. Read the data from there; never copy it into the project or put it in `contract.json`.
 - Each eval is scored on the holdout at most once. The result is written to that eval's `metrics.json` as `holdout_score` and `holdout_gap` (search score minus holdout score, in the contract's direction). A gap above `holdout_gap_threshold` in `contract.json` logs an `overfitting` event and blocks the candidate.
-- Keep the holdout files outside the project directory. Today nothing stops the agent from reading files elsewhere on your machine, so also keep them somewhere the agent has no reason to look.
+- The holdout must live outside the project directory. A `holdout_path` inside it (also through a symlink) is refused with an error naming the file and the key.
+- Today nothing stops the agent from reading files elsewhere on your machine, so keep the holdout somewhere the agent has no reason to look.
 
 ### 3. Launch the TUI
 

@@ -88,12 +88,24 @@ function parseScore(stdout: string): number | null {
   }
 }
 
+/** Replace every occurrence of each secret with `<holdout>` */
+function redactSecrets(text: string, secrets: string[]): string {
+  let out = text;
+  for (const secret of [...new Set(secrets)]
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length)) {
+    out = out.split(secret).join("<holdout>");
+  }
+  return out;
+}
+
 async function runSeed(
   argv: string[],
   cwd: string,
   env: Record<string, string | undefined>,
   seed: number,
   timeoutSeconds: number,
+  redact: string[],
 ): Promise<SeedRun> {
   let proc: ReturnType<typeof Bun.spawn>;
   try {
@@ -132,7 +144,10 @@ async function runSeed(
   }
 
   if (outcome !== 0) {
-    const tail = (await stderr).trim().slice(-MAX_STDERR_CHARS);
+    // Redact before cutting, so a cut inside a secret cannot leave half of it behind
+    const tail = redactSecrets((await stderr).trim(), redact).slice(
+      -MAX_STDERR_CHARS,
+    );
     const how =
       proc.signalCode !== null
         ? `was killed by ${proc.signalCode}`
@@ -244,6 +259,8 @@ export interface EvaluatorRunOptions {
   timeoutSeconds: number;
   /** Added to the evaluator's environment, and to nothing else */
   extraEnv?: Record<string, string>;
+  /** Strings that must not appear in a failure reason (replaced with `<holdout>`) */
+  redact?: string[];
 }
 
 /**
@@ -267,6 +284,7 @@ export async function runEvaluatorSeeds(
       ...options.extraEnv,
     };
     const scores: EvalSeedScore[] = [];
+    const redact = options.redact ?? [];
     for (const seed of options.seeds) {
       const run = await runSeed(
         [
@@ -283,8 +301,10 @@ export async function runEvaluatorSeeds(
         env,
         seed,
         options.timeoutSeconds,
+        redact,
       );
-      if (!run.ok) return run;
+      if (!run.ok)
+        return { ok: false, reason: redactSecrets(run.reason, redact) };
       scores.push({ seed, score: run.score });
     }
     return { ok: true, scores };

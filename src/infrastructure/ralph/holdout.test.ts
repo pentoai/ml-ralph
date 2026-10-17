@@ -3,9 +3,16 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  symlink,
+} from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { runEvalCommand } from "./eval-command.ts";
 import { lockEvalContract } from "./eval-lock.ts";
 import { EVALS_DIR, readEvalMetrics } from "./eval-metrics.ts";
@@ -31,8 +38,12 @@ with open(os.path.join(ED, "calls.jsonl"), "a") as f:
     f.write(json.dumps({"split": a.split, "seed": a.seed, "holdout_env": "ML_RALPH_HOLDOUT_PATH" in os.environ}) + "\\n")
 if a.split == "holdout":
     path = os.environ["ML_RALPH_HOLDOUT_PATH"]
-    if open(a.candidate).read().strip() == "crash":
+    mode = open(a.candidate).read().strip()
+    if mode == "crash":
         sys.stderr.write("FileNotFoundError: " + path + ".missing\\n")
+        sys.exit(1)
+    if mode == "crash-tail":
+        sys.stderr.write(path + "y" * 280 + "\\n")
         sys.exit(1)
     print(json.dumps({"score": float(open(path).read())}))
 else:
@@ -144,10 +155,45 @@ describe("holdout config", () => {
       [dir]: { holdout_path: holdoutFile },
     });
     await Bun.write(holdoutFile, "1");
-    expect(await readHoldoutPath(dir, env)).toEqual({
+    expect(await readHoldoutPath(dir, env)).toMatchObject({
       ok: true,
       path: holdoutFile,
     });
+  });
+
+  test("a path inside the project is refused, also through a symlink", async () => {
+    const inside = join(dir, "data", "holdout.txt");
+    await mkdir(join(dir, "data"), { recursive: true });
+    await Bun.write(inside, "1");
+    const link = join(secretDir, "link.txt");
+    await symlink(inside, link);
+
+    for (const holdoutPath of [
+      inside,
+      link,
+      join(dir, "data/../data/holdout.txt"),
+    ]) {
+      await writeConfig({ [dir]: { holdout_path: holdoutPath } });
+      const result = await readHoldoutPath(dir, env);
+      expect(result.ok).toBe(false);
+      const error = !result.ok ? result.error : "";
+      expect(error).toContain(configFile());
+      expect(error).toContain(`projects[${JSON.stringify(dir)}].holdout_path`);
+      expect(error).toContain("inside the project");
+      expect(error).not.toContain(holdoutPath);
+    }
+  });
+
+  test("a sibling directory whose name starts with the project's is outside it", async () => {
+    const sibling = `${dir}-sealed`;
+    await mkdir(sibling);
+    try {
+      await Bun.write(join(sibling, "h.txt"), "1");
+      await writeConfig({ [dir]: { holdout_path: join(sibling, "h.txt") } });
+      expect((await readHoldoutPath(dir, env)).ok).toBe(true);
+    } finally {
+      await rm(sibling, { recursive: true, force: true });
+    }
   });
 
   test("a missing file names the file and the key", async () => {
@@ -355,6 +401,28 @@ describe("scoreHoldout", () => {
     const second = await scoreHoldout(evalId, { projectPath: dir, env });
     expect(second).toMatchObject({ ok: false, alreadyScored: true });
     expect((await holdoutCalls()).length).toBe(1);
+  });
+
+  test("a failure reason cut inside the holdout path leaves no part of it behind", async () => {
+    await setup(0.89);
+    const evalId = await evalCandidate("crash-tail");
+
+    const result = await scoreHoldout(evalId, { projectPath: dir, env });
+
+    expect(result.ok).toBe(false);
+    const raw = await Bun.file(
+      join(dir, EVALS_DIR, evalId, "metrics.json"),
+    ).text();
+    expect(raw).toContain("<holdout>yyy");
+    // The 300-char cut would have started inside the path; no tail of it may remain
+    for (const tail of [
+      basename(secretDir),
+      "sealed-holdout.txt",
+      holdoutFile.slice(-20),
+    ]) {
+      expect(raw).not.toContain(tail);
+      expect(!result.ok && result.error).not.toContain(tail);
+    }
   });
 
   test("refuses unknown evals, failed evals and drifted locks without running", async () => {

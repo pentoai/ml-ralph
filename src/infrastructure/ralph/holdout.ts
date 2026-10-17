@@ -4,7 +4,7 @@
 
 import { open, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import type { EvalContract } from "../../domain/validation/index.ts";
 import {
   defaultPython,
@@ -23,7 +23,6 @@ import type { OverfittingEvent } from "./templates.ts";
 
 const HOLDOUT_SPLIT = "holdout";
 const CLAIM_FILE = "holdout.claim";
-const SECRET_PLACEHOLDER = "<holdout>";
 
 export interface HoldoutOptions {
   projectPath: string;
@@ -57,15 +56,26 @@ export function holdoutConfigFile(
   return join(base, "ml-ralph", "config.json");
 }
 
+const isInside = (parent: string, child: string) => {
+  const rel = relative(parent, child);
+  return (
+    rel === "" || (rel !== ".." && !rel.startsWith("../") && !isAbsolute(rel))
+  );
+};
+
 /**
  * Read the holdout path for a project from the user-level config:
  * `{"projects": {"<absolute project path>": {"holdout_path": "<absolute path>"}}}`.
- * Errors name the file and the key, never the path itself.
+ * Errors name the file and the key, never the path itself. A path inside the
+ * project directory (also through a symlink) is refused. `realPath` is the path
+ * with symlinks resolved, for redacting it from recorded text.
  */
 export async function readHoldoutPath(
   projectPath: string,
   env: Record<string, string | undefined> = process.env,
-): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
+): Promise<
+  { ok: true; path: string; realPath: string } | { ok: false; error: string }
+> {
   const file = holdoutConfigFile(env);
   const keys = [resolve(projectPath)];
   try {
@@ -107,12 +117,20 @@ export async function readHoldoutPath(
   if (!isAbsolute(holdoutPath)) {
     return { ok: false, error: `${where} must be an absolute path` };
   }
+  let realPath: string;
   try {
     await stat(holdoutPath);
+    realPath = await realpath(holdoutPath);
   } catch {
     return { ok: false, error: `${where} does not exist` };
   }
-  return { ok: true, path: holdoutPath };
+  if (keys.some((k) => isInside(k, holdoutPath) || isInside(k, realPath))) {
+    return {
+      ok: false,
+      error: `${where} is inside the project directory; the holdout must live outside it`,
+    };
+  }
+  return { ok: true, path: holdoutPath, realPath };
 }
 
 /** Search score minus holdout score when higher is better, the reverse when lower is: positive means it did worse on holdout */
@@ -124,17 +142,6 @@ export function holdoutGap(
   return direction === "max"
     ? searchScore - holdoutScore
     : holdoutScore - searchScore;
-}
-
-/** Hide the holdout path in text that is about to be written inside the project */
-function scrub(text: string, secrets: string[]): string {
-  let out = text;
-  for (const secret of [...new Set(secrets)].sort(
-    (a, b) => b.length - a.length,
-  )) {
-    out = out.split(secret).join(SECRET_PLACEHOLDER);
-  }
-  return out;
 }
 
 function recordedResult(
@@ -244,18 +251,12 @@ export async function scoreHoldout(
     seeds: contract.seeds,
     timeoutSeconds: contract.eval_timeout_seconds,
     extraEnv: { [HOLDOUT_PATH_ENV]: holdout.path },
+    redact: [holdout.path, holdout.realPath],
   });
 
   const scoredAt = new Date().toISOString();
   if (!run.ok) {
-    const secrets = [
-      holdout.path,
-      await realpath(holdout.path).catch(() => ""),
-    ];
-    const reason = scrub(
-      run.reason,
-      secrets.filter((s) => s !== ""),
-    );
+    const reason = run.reason;
     await writeMetrics(projectDir, {
       ...metrics,
       holdout_status: "failed",
