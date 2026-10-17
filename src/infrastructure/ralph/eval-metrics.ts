@@ -36,6 +36,15 @@ export interface EvalMetricsOk extends EvalMetricsBase {
   mean: number;
   /** Sample standard deviation (n - 1) of the per-seed scores; 0 for one seed */
   std: number;
+  /** Set once by scoreHoldout, the single sealed-holdout run for this eval */
+  holdout_status?: "ok" | "failed";
+  /** Mean holdout score over the contract seeds; with holdout_status "ok" */
+  holdout_score?: number;
+  /** Search mean minus holdout score, in the contract direction; positive means worse on holdout */
+  holdout_gap?: number;
+  /** Why the holdout run failed; with holdout_status "failed" */
+  holdout_reason?: string;
+  holdout_scored_at?: string;
 }
 
 export interface EvalMetricsFailed extends EvalMetricsBase {

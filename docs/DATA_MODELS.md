@@ -459,6 +459,20 @@ Every run also appends a runner-only `eval` event (`eval_id`, `status`, `candida
 
 The TUI shows the eval's `mean` from `metrics.json` (only for an `eval_id` whose file has `status: "ok"`) as the verified result. The numbers in the `experiment` event are shown as reported by the agent, never as verified, and are flagged when the one under `primary_metric` disagrees with the mean. An experiment with no real `eval_id` is counted as unverified and never counts as best. `readEvalMetrics` and `readVerifiedEvals` read nothing outside `.ml-ralph/evals/` (ids must be plain names, and a symlink out of the directory is ignored). Gates that need a score must read `metrics.json`, not the event. This is not tamper-proof against an agent that writes into `.ml-ralph/evals/` itself; that needs the evals stored outside the project, like the lock. An agent can also cite a real `eval_id` for a different candidate; the eval records which candidate it scored.
 
+**Sealed holdout fields.** `scoreHoldout(evalId)` (`infrastructure/ralph/holdout.ts`) adds these to an `ok` eval's `metrics.json`, once: `holdout_status` (`ok` or `failed`), `holdout_score` (mean over the contract seeds) and `holdout_gap` (the search `mean` minus `holdout_score` when `direction` is `max`, the reverse when it is `min`, so a positive gap always means worse on the holdout), or `holdout_reason` for a failed run, and `holdout_scored_at`. The holdout runs the same locked `evaluate.py` bytes with `--split holdout`, once per contract seed. The holdout location is read from the user-level config (below) and set only in that subprocess's environment as `ML_RALPH_HOLDOUT_PATH`; search evals and the agent's own process never get it, even when the user exported it. A failure reason has the holdout path replaced by `<holdout>` before it is written. The run is claimed first with an exclusive `holdout.claim` file next to `metrics.json`, so a second call, a concurrent call or a call after a crash returns the recorded result (or an error) and runs nothing. A gap above the contract's `holdout_gap_threshold` appends a runner-only `overfitting` event and the result is reported as `blocked`.
+
+**File**: `~/.config/ml-ralph/config.json` (or `$XDG_CONFIG_HOME/ml-ralph/config.json`)
+
+```typescript
+interface UserConfig {
+  projects: {
+    [absoluteProjectPath: string]: { holdout_path: string }; // absolute path to the sealed holdout
+  };
+}
+```
+
+This file is user-level, outside every project. A missing file, a missing `projects["<project path>"].holdout_path` entry, a relative path or a path that does not exist is an error naming the file and the key (never the path).
+
 ---
 
 ## Log Events
@@ -482,7 +496,7 @@ rubrics: expected non-empty array of non-empty strings
 kill_criterion: missing required field, expected non-empty string
 ```
 
-An unknown type, JSON that does not parse or is not an object, a `type` in the JSON that differs from the argument, and runner-only types (`promotion`, `verifier_verdict`, `contract_relocked`, `eval`) are rejected the same way. Fields not in the schema are kept.
+An unknown type, JSON that does not parse or is not an object, a `type` in the JSON that differs from the argument, and runner-only types (`promotion`, `verifier_verdict`, `contract_relocked`, `eval`, `overfitting`) are rejected the same way. Fields not in the schema are kept.
 
 ### Hypothesis
 
@@ -524,6 +538,7 @@ A hypothesis is rejected unless `id`, `claim`, `expected_delta`, `rubrics` (at l
 | `parallel_result` | `hypothesis_id`, `agent`, `metrics`, `branch` |
 | `parallel_synthesis` | `winner`, `reason`, `merged_branch` |
 | `eval` (runner-only) | `eval_id`, `status` (`ok`, `failed`), `candidate`; optional `mean`, `std`, `reason` |
+| `overfitting` (runner-only) | `eval_id`, `search_score`, `holdout_score`, `holdout_gap`, `threshold` |
 | `promotion` (runner-only) | `verdict` (`promoted`, `rejected`), `reason`; optional `candidate_eval_id`, `incumbent_eval_id`, `verifier_id`, `candidate_mean`, `reference_mean` |
 | `verifier_verdict` (runner-only) | `id`, `verdict`, `checks`, `reason`, `output_path`; optional `model` |
 | `contract_relocked` (runner-only) | `changes` (each with `file` and `kind`: `edited` or `deleted`), `files` (SHA-256 of `evaluate.py` and `contract.json`) |

@@ -1374,6 +1374,19 @@ export interface PromotionEvent extends BaseEvent {
   reference_mean?: number;
 }
 
+/** Written by the runner (never the agent) when a candidate's holdout gap exceeds holdout_gap_threshold */
+export interface OverfittingEvent extends BaseEvent {
+  type: "overfitting";
+  eval_id: string;
+  /** Mean from the eval's metrics.json */
+  search_score: number;
+  holdout_score: number;
+  /** Search score minus holdout score, in the contract's direction */
+  holdout_gap: number;
+  /** holdout_gap_threshold from the locked contract */
+  threshold: number;
+}
+
 /** Written by the runner (never the agent) when the user re-locks the eval files after a change */
 export interface ContractRelockedEvent extends BaseEvent {
   type: "contract_relocked";
@@ -1464,6 +1477,7 @@ export type RalphEvent =
   | DecisionEvent
   | VerifierVerdictEvent
   | PromotionEvent
+  | OverfittingEvent
   | ContractRelockedEvent
   | StrategicRetreatEvent
   | PrdUpdatedEvent

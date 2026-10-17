@@ -89,6 +89,11 @@ An independent read-only verifier judges each promotion candidate; this event re
 You hand in a candidate by printing `<candidate_complete eval_id="eval-...">`; you never decide that it is the new best. The runner writes this event for every one. It promotes only when that eval (from this iteration, `status: ok`) beats the incumbent's mean in the contract's direction by more than the larger of the two seed stds (the first candidate is compared with `baseline_score`), and the verifier approves the committed diff. `verifier_id` names the `verifier_verdict` it used. `.ml-ralph/incumbent.json` points at the current best. Scores come from the runner's `eval` event and `metrics.json`, never from your `experiment` event. You see the verdict and one line of reason in your next prompt. Never write `.ml-ralph/incumbent.json` or `.ml-ralph/baseline.json`.
 
 ```jsonl
+{"ts":"...","type":"overfitting","eval_id":"eval-lq3k2m-9f3a1c","search_score":0.91,"holdout_score":0.84,"holdout_gap":0.07,"threshold":0.02}
+```
+The runner scores a candidate once on a sealed holdout you never see and writes this event when the search score beats the holdout score by more than the contract's `holdout_gap_threshold`. It blocks that candidate. Never look for the holdout data, and never write this event.
+
+```jsonl
 {"ts":"...","type":"eval","eval_id":"eval-lq3k2m-9f3a1c","status":"ok","candidate":"submissions/h001.csv","mean":0.832,"std":0.004}
 ```
 `ml-ralph eval <path>` writes this after scoring a candidate. Put its `eval_id` in your `experiment` event; the TUI shows that eval's mean as the result, lists your own numbers as unverified, and flags a `primary_metric` number that disagrees with the eval. Without a real `eval_id` your metrics are unverified. Never write anything under `.ml-ralph/evals/` yourself.
@@ -122,6 +127,7 @@ See RALPH.md for when and how to use these events.
 | `devils_advocate` | conclusion, attacks, survived, next_action |
 | `limitation_claim` | claim, devils_advocate_id, validation_attempts, confidence, user_approved |
 | `eval` (runner-only) | eval_id, status, candidate (+ mean, std or reason) |
+| `overfitting` (runner-only) | eval_id, search_score, holdout_score, holdout_gap, threshold |
 | `promotion` (runner-only) | verdict, reason (+ candidate_eval_id, incumbent_eval_id, verifier_id, candidate_mean, reference_mean) |
 | `verifier_verdict` (runner-only) | id, verdict, checks, reason, output_path (+ model) |
 | `contract_relocked` (runner-only) | changes, files |

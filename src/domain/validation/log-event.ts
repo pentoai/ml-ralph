@@ -196,6 +196,16 @@ export const LOG_EVENT_SCHEMAS: Record<string, LogEventSchema> = {
       reference_mean: optional(num),
     },
   },
+  overfitting: {
+    runnerOnly: true,
+    fields: {
+      eval_id: str,
+      search_score: num,
+      holdout_score: num,
+      holdout_gap: num,
+      threshold: num,
+    },
+  },
   verifier_verdict: {
     runnerOnly: true,
     fields: {

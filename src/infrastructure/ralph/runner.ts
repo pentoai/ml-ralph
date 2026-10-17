@@ -3,6 +3,7 @@
  */
 
 import type { Subprocess } from "bun";
+import { HOLDOUT_PATH_ENV } from "./eval-command.ts";
 import {
   checkEvalGate,
   describeEvalChanges,
@@ -12,6 +13,7 @@ import {
   readEvalLock,
   relockEvalContract,
 } from "./eval-lock.ts";
+import { type HoldoutResult, scoreHoldout } from "./holdout.ts";
 import {
   judgeCandidate,
   type PromotionDeps,
@@ -175,6 +177,15 @@ Only the runner decides whether a candidate is promoted, and only the runner end
       this.currentProcess.kill();
       this.currentProcess = null;
     }
+  }
+
+  /**
+   * Score an eval's candidate on the sealed holdout, at most once per eval_id.
+   * The holdout path is read from the user-level config and reaches only the
+   * evaluator subprocess; it is never part of a prompt.
+   */
+  scoreHoldout(evalId: string): Promise<HoldoutResult> {
+    return scoreHoldout(evalId, { projectPath: this.config.projectPath });
   }
 
   /**
@@ -369,12 +380,14 @@ Only the runner decides whether a candidate is promoted, and only the runner end
       "stream-json",
     ];
 
+    // The agent's environment never carries the holdout path, even if the user exported it
+    const { [HOLDOUT_PATH_ENV]: _holdout, ...agentEnv } = process.env;
     const proc = Bun.spawn(cmd, {
       cwd: this.config.projectPath,
       stdout: "pipe",
       stderr: "pipe",
       env: {
-        ...process.env,
+        ...agentEnv,
         ...(this.config.enableTeams
           ? { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1" }
           : {}),

@@ -6,9 +6,13 @@ import { randomBytes } from "node:crypto";
 import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { validateEvalContract } from "../../domain/validation/index.ts";
+import {
+  type EvalContract,
+  validateEvalContract,
+} from "../../domain/validation/index.ts";
 import {
   describeEvalChanges,
+  type EvalLock,
   findEvalChanges,
   readEvalLock,
   sha256,
@@ -26,6 +30,8 @@ export const DEFAULT_EVAL_TIMEOUT_SECONDS = 3600;
 const EVAL_DIR = ".ml-ralph/eval";
 /** Tells evaluate.py where its original directory is, since it runs from a copy */
 export const EVAL_DIR_ENV = "ML_RALPH_EVAL_DIR";
+/** Where the evaluator finds the sealed holdout; set for holdout runs only */
+export const HOLDOUT_PATH_ENV = "ML_RALPH_HOLDOUT_PATH";
 const MAX_STDERR_CHARS = 300;
 
 export interface EvalCommandResult {
@@ -158,11 +164,140 @@ function summarize(scores: number[]): { mean: number; std: number } {
   return { mean, std };
 }
 
+/** The locked evaluator, read once and checked against lock.json */
+export type LockedEval =
+  | {
+      ok: true;
+      lock: EvalLock;
+      evaluateBytes: Uint8Array;
+      contract: EvalContract;
+    }
+  | { ok: false; error: string };
+
+/**
+ * Read lock.json, then evaluate.py and contract.json once each, and check those
+ * bytes against the lock hashes, so nothing can be swapped in between the check
+ * and the run. The contract is parsed from the checked bytes.
+ */
+export async function readLockedEval(projectDir: string): Promise<LockedEval> {
+  const lock = await readEvalLock(projectDir);
+  if (!lock) {
+    return {
+      ok: false,
+      error:
+        "No valid eval lock (.ml-ralph/eval/lock.json): the runner creates it when the PRD is approved.",
+    };
+  }
+  const changes = await findEvalChanges(projectDir, lock.files);
+  if (changes.length > 0) {
+    return {
+      ok: false,
+      error: `Locked eval files changed since the lock (${describeEvalChanges(changes)}).`,
+    };
+  }
+
+  const readLocked = async (name: "evaluate.py" | "contract.json") => {
+    try {
+      const bytes = new Uint8Array(
+        await Bun.file(join(projectDir, EVAL_DIR, name)).arrayBuffer(),
+      );
+      return sha256(bytes) === lock.files[name] ? bytes : null;
+    } catch {
+      return null;
+    }
+  };
+  const [evaluateBytes, contractBytes] = await Promise.all([
+    readLocked("evaluate.py"),
+    readLocked("contract.json"),
+  ]);
+  if (!evaluateBytes || !contractBytes) {
+    return {
+      ok: false,
+      error: "Locked eval files changed while the eval was starting.",
+    };
+  }
+
+  let contract: ReturnType<typeof validateEvalContract>;
+  try {
+    contract = validateEvalContract(
+      JSON.parse(new TextDecoder().decode(contractBytes)),
+    );
+  } catch {
+    return { ok: false, error: "contract.json could not be read." };
+  }
+  if (!contract.valid) {
+    return { ok: false, error: "contract.json is invalid." };
+  }
+  return { ok: true, lock, evaluateBytes, contract: contract.contract };
+}
+
+export const defaultPython = () => (Bun.which("python") ? "python" : "python3");
+
+export interface EvaluatorRunOptions {
+  python: string;
+  /** The lock-verified bytes of evaluate.py */
+  evaluateBytes: Uint8Array;
+  projectDir: string;
+  candidatePath: string;
+  split: string;
+  seeds: number[];
+  timeoutSeconds: number;
+  /** Added to the evaluator's environment, and to nothing else */
+  extraEnv?: Record<string, string>;
+}
+
+/**
+ * Run the verified evaluate.py bytes from a private copy, once per seed, and
+ * stop at the first seed that fails. The environment never carries the holdout
+ * path unless the caller passes it in extraEnv.
+ */
+export async function runEvaluatorSeeds(
+  options: EvaluatorRunOptions,
+): Promise<
+  { ok: true; scores: EvalSeedScore[] } | { ok: false; reason: string }
+> {
+  const privateDir = await mkdtemp(join(tmpdir(), "ml-ralph-eval-"));
+  try {
+    const script = join(privateDir, "evaluate.py");
+    await writeFile(script, options.evaluateBytes, { mode: 0o400 });
+    const { [HOLDOUT_PATH_ENV]: _inherited, ...inherited } = process.env;
+    const env = {
+      ...inherited,
+      [EVAL_DIR_ENV]: join(options.projectDir, EVAL_DIR),
+      ...options.extraEnv,
+    };
+    const scores: EvalSeedScore[] = [];
+    for (const seed of options.seeds) {
+      const run = await runSeed(
+        [
+          options.python,
+          script,
+          "--candidate",
+          options.candidatePath,
+          "--split",
+          options.split,
+          "--seed",
+          String(seed),
+        ],
+        options.projectDir,
+        env,
+        seed,
+        options.timeoutSeconds,
+      );
+      if (!run.ok) return run;
+      scores.push({ seed, score: run.score });
+    }
+    return { ok: true, scores };
+  } finally {
+    await rm(privateDir, { recursive: true, force: true });
+  }
+}
+
 const newEvalId = () =>
   `eval-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`;
 
 /** Write metrics.json by rename, so a reader never sees a half-written file */
-async function writeMetrics(
+export async function writeMetrics(
   projectDir: string,
   metrics: EvalMetrics,
 ): Promise<void> {
@@ -195,55 +330,12 @@ export async function runEvalCommand(
     );
   }
 
-  const lock = await readEvalLock(projectDir);
-  if (!lock) {
-    return fail(
-      "No valid eval lock (.ml-ralph/eval/lock.json): the runner creates it when the PRD is approved. Nothing was run.",
-    );
-  }
-  const changes = await findEvalChanges(projectDir, lock.files);
-  if (changes.length > 0) {
-    return fail(
-      `Locked eval files changed since the lock (${describeEvalChanges(changes)}). Nothing was run.`,
-    );
-  }
-
-  // Read each locked file once and check those bytes against the lock, so
-  // nothing can be swapped in between the check and the run
-  const readLocked = async (name: "evaluate.py" | "contract.json") => {
-    try {
-      const bytes = new Uint8Array(
-        await Bun.file(join(projectDir, EVAL_DIR, name)).arrayBuffer(),
-      );
-      return sha256(bytes) === lock.files[name] ? bytes : null;
-    } catch {
-      return null;
-    }
-  };
-  const [evaluateBytes, contractBytes] = await Promise.all([
-    readLocked("evaluate.py"),
-    readLocked("contract.json"),
-  ]);
-  if (!evaluateBytes || !contractBytes) {
-    return fail(
-      "Locked eval files changed while the eval was starting. Nothing was run.",
-    );
-  }
-
-  let contract: ReturnType<typeof validateEvalContract>;
-  try {
-    contract = validateEvalContract(
-      JSON.parse(new TextDecoder().decode(contractBytes)),
-    );
-  } catch {
-    return fail("contract.json could not be read. Nothing was run.");
-  }
-  if (!contract.valid) {
-    return fail("contract.json is invalid. Nothing was run.");
-  }
-  const { seeds, search_split: split } = contract.contract;
+  const locked = await readLockedEval(projectDir);
+  if (!locked.ok) return fail(`${locked.error} Nothing was run.`);
+  const { lock, evaluateBytes, contract } = locked;
+  const { seeds, search_split: split } = contract;
   const timeoutSeconds =
-    contract.contract.eval_timeout_seconds ?? DEFAULT_EVAL_TIMEOUT_SECONDS;
+    contract.eval_timeout_seconds ?? DEFAULT_EVAL_TIMEOUT_SECONDS;
 
   const candidatePath = isAbsolute(candidateArg)
     ? candidateArg
@@ -252,7 +344,7 @@ export async function runEvalCommand(
   const candidate =
     rel.startsWith("..") || isAbsolute(rel) ? candidatePath : rel;
 
-  const python = options.python ?? (Bun.which("python") ? "python" : "python3");
+  const python = options.python ?? defaultPython();
   const base = {
     eval_id: newEvalId(),
     contract_hash: lock.files["contract.json"],
@@ -262,43 +354,18 @@ export async function runEvalCommand(
     created_at: new Date().toISOString(),
   };
 
-  // Run the verified bytes from a private copy, not the file in the project
-  const privateDir = await mkdtemp(join(tmpdir(), "ml-ralph-eval-"));
-  const scores: EvalSeedScore[] = [];
+  const run = await runEvaluatorSeeds({
+    python,
+    evaluateBytes,
+    projectDir,
+    candidatePath,
+    split,
+    seeds,
+    timeoutSeconds,
+  });
   let metrics: EvalMetrics | undefined;
-  try {
-    const script = join(privateDir, "evaluate.py");
-    await writeFile(script, evaluateBytes, { mode: 0o400 });
-    const env = {
-      ...process.env,
-      [EVAL_DIR_ENV]: join(projectDir, EVAL_DIR),
-    };
-    for (const seed of seeds) {
-      const run = await runSeed(
-        [
-          python,
-          script,
-          "--candidate",
-          candidatePath,
-          "--split",
-          split,
-          "--seed",
-          String(seed),
-        ],
-        projectDir,
-        env,
-        seed,
-        timeoutSeconds,
-      );
-      if (!run.ok) {
-        metrics = { ...base, status: "failed", reason: run.reason };
-        break;
-      }
-      scores.push({ seed, score: run.score });
-    }
-  } finally {
-    await rm(privateDir, { recursive: true, force: true });
-  }
+  if (!run.ok) metrics = { ...base, status: "failed", reason: run.reason };
+  const scores = run.ok ? run.scores : [];
   metrics ??= {
     ...base,
     status: "ok",
