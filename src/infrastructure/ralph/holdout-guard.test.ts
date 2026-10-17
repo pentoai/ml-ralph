@@ -206,12 +206,20 @@ describe("loadHoldoutNeedles and the runner", () => {
     );
   };
 
-  /** Make `claude` print these stdout lines, then hang (as a long iteration would) or exit */
-  const stubClaude = async (lines: string[], hang: boolean) => {
+  /**
+   * Make `claude` print these stdout lines, then hang (as a long iteration would) or exit.
+   * With `child`, it first starts a background process (like a Bash tool's script) and writes its pid.
+   */
+  const stubClaude = async (lines: string[], hang: boolean, child = false) => {
     await Bun.write(join(stubDir, "lines"), `${lines.join("\n")}\n`);
     await Bun.write(
       join(stubDir, "claude"),
-      `#!/bin/sh\ncat "$(dirname "$0")/lines"\n${hang ? "exec sleep 60" : "exit 0"}\n`,
+      `#!/bin/sh
+d="$(dirname "$0")"
+${child ? `sh -c 'exec sleep 60' &\necho $! > "$d/child.pid.tmp" && mv "$d/child.pid.tmp" "$d/child.pid"` : ""}
+cat "$d/lines"
+${hang ? "exec sleep 60" : "exit 0"}
+`,
     );
     await chmod(join(stubDir, "claude"), 0o755);
     process.env.PATH = `${stubDir}:${saved.path}`;
@@ -239,6 +247,27 @@ describe("loadHoldoutNeedles and the runner", () => {
       ends,
       elapsed: Date.now() - started,
     };
+  };
+
+  const waitForChildPid = async (): Promise<number> => {
+    for (let i = 0; i < 200; i++) {
+      const text = await Bun.file(join(stubDir, "child.pid"))
+        .text()
+        .catch(() => "");
+      if (text.trim()) return Number(text.trim());
+      await Bun.sleep(25);
+    }
+    throw new Error("the stub never started its child");
+  };
+
+  /** Dead, or a zombie waiting to be reaped by an init that may not exist in a container */
+  const waitUntilDead = async (pid: number): Promise<boolean> => {
+    for (let i = 0; i < 120; i++) {
+      const stat = (await Bun.$`ps -o stat= -p ${pid}`.nothrow().text()).trim();
+      if (stat === "" || stat.startsWith("Z")) return true;
+      await Bun.sleep(25);
+    }
+    return false;
   };
 
   const logEvents = async () =>
@@ -283,6 +312,34 @@ describe("loadHoldoutNeedles and the runner", () => {
     ).toBe(true);
   });
 
+  test("loadHoldoutNeedles also covers the config file and its real path", async () => {
+    const linkedHome = join(dir, "..", `xdg-link-${Date.now()}`);
+    await symlink(configHome, linkedHome);
+    try {
+      process.env.XDG_CONFIG_HOME = linkedHome;
+      await setConfig({ [dir]: { holdout_path: sealed } });
+      const found = await loadHoldoutNeedles(dir);
+      for (const config of [
+        join(linkedHome, "ml-ralph/config.json"),
+        join(configHome, "ml-ralph/config.json"),
+      ]) {
+        const line = assistantLine(
+          toolUse("Bash", { command: `cat ${config}` }),
+        );
+        expect(parseStreamLine(line, null, found).holdoutAccess).toEqual({
+          toolName: "Bash",
+        });
+      }
+    } finally {
+      await rm(linkedHome, { force: true });
+    }
+  });
+
+  test("a project with no usable holdout does not guard the config file", async () => {
+    await setConfig({ "/somewhere/else": { holdout_path: sealed } });
+    expect(await loadHoldoutNeedles(dir)).toEqual([]);
+  });
+
   test("loadHoldoutNeedles is empty without a config, an entry or a usable path", async () => {
     expect(await loadHoldoutNeedles(dir)).toEqual([]);
     await setConfig({ "/somewhere/else": { holdout_path: sealed } });
@@ -322,6 +379,55 @@ describe("loadHoldoutNeedles and the runner", () => {
     expect(
       await Bun.file(join(dir, ".ml-ralph/log.jsonl")).text(),
     ).not.toContain(sealed);
+  });
+
+  test("reading the config file ends the run with holdout_access", async () => {
+    await setConfig({ [dir]: { holdout_path: sealed } });
+    await stubClaude(
+      [
+        assistantLine(
+          toolUse("Read", {
+            file_path: join(configHome, "ml-ralph/config.json"),
+          }),
+        ),
+      ],
+      true,
+    );
+    const { completions, errors } = await run();
+    expect(errors).toEqual([]);
+    expect(completions).toEqual(["holdout_access"]);
+    expect((await logEvents()).at(-1)).toMatchObject({
+      type: "holdout_access",
+      tool: "Read",
+    });
+  });
+
+  test("the guard also kills what claude started, even a child that outlives it", async () => {
+    await setConfig({ [dir]: { holdout_path: sealed } });
+    await stubClaude(
+      [
+        assistantLine(
+          toolUse("Bash", { command: `cp ${sealed}/holdout.csv .` }),
+        ),
+      ],
+      true,
+      true,
+    );
+    const { completions, errors } = await run();
+    expect(errors).toEqual([]);
+    expect(completions).toEqual(["holdout_access"]);
+    expect(await waitUntilDead(await waitForChildPid())).toBe(true);
+  });
+
+  test("stop() also kills what claude started", async () => {
+    await stubClaude([], true, true);
+    const runner = new RalphRunner({ projectPath: dir, maxIterations: 1 });
+    const started = runner.start().catch(() => {});
+    const child = await waitForChildPid();
+    expect((await Bun.$`ps -o stat= -p ${child}`.text()).trim()).not.toBe("");
+    runner.stop();
+    await started;
+    expect(await waitUntilDead(child)).toBe(true);
   });
 
   test("unrelated tool calls run to the iteration limit as before", async () => {

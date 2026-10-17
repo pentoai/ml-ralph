@@ -3,7 +3,7 @@
  */
 
 import type { Subprocess } from "bun";
-import { HOLDOUT_PATH_ENV } from "./eval-command.ts";
+import { HOLDOUT_PATH_ENV, killTree } from "./eval-command.ts";
 import {
   checkEvalGate,
   describeEvalChanges,
@@ -192,7 +192,7 @@ Only the runner decides whether a candidate is promoted, and only the runner end
     this.running = false;
     this.settleContractDecision(null);
     if (this.currentProcess) {
-      this.currentProcess.kill();
+      killTree(this.currentProcess, "SIGTERM");
       this.currentProcess = null;
     }
   }
@@ -419,8 +419,10 @@ Only the runner decides whether a candidate is promoted, and only the runner end
 
     // The agent's environment never carries the holdout path, even if the user exported it
     const { [HOLDOUT_PATH_ENV]: _holdout, ...agentEnv } = process.env;
+    // Own process group, so stop() and the holdout guard also reach what claude's tools started
     const proc = Bun.spawn(cmd, {
       cwd: this.config.projectPath,
+      detached: true,
       stdout: "pipe",
       stderr: "pipe",
       env: {
@@ -432,6 +434,21 @@ Only the runner decides whether a candidate is promoted, and only the runner end
     });
     this.currentProcess = proc;
 
+    // claude is no longer in the TUI's process group, so a normal exit must reap it
+    const killOnExit = () => killTree(proc, "SIGKILL");
+    process.on("exit", killOnExit);
+    try {
+      return await this.readIteration(proc);
+    } finally {
+      process.off("exit", killOnExit);
+    }
+  }
+
+  /**
+   * Read claude's stdout until it ends (or the holdout guard fired) and return
+   * the final result text; a non-zero exit is an error unless the guard killed it
+   */
+  private async readIteration(proc: Subprocess): Promise<string> {
     let fullResult = "";
     const stdout = proc.stdout;
     if (!stdout || typeof stdout === "number") {
@@ -504,7 +521,7 @@ Only the runner decides whether a candidate is promoted, and only the runner end
     }
     if (parsed.holdoutAccess && !this.holdoutAccess) {
       this.holdoutAccess = parsed.holdoutAccess;
-      this.currentProcess?.kill("SIGKILL");
+      if (this.currentProcess) killTree(this.currentProcess, "SIGKILL");
     }
     return parsed.result ?? fullResult;
   }

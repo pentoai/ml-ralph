@@ -2,7 +2,8 @@
  * Holdout guard - spots a tool call in the claude stream that mentions the sealed holdout path
  */
 
-import { readHoldoutPath } from "./holdout.ts";
+import { realpath } from "node:fs/promises";
+import { holdoutConfigFile, readHoldoutPath } from "./holdout.ts";
 
 /** What the runner holds while a run is active; only matching text, never the path, leaves it */
 export type HoldoutNeedles = readonly string[];
@@ -27,7 +28,8 @@ export function holdoutNeedles(...paths: string[]): HoldoutNeedles {
 
 /**
  * Read the holdout path for a project from the user-level config and return
- * its needles. Empty when no usable holdout is configured: the config is
+ * its needles: the holdout path and the config file's own path, since reading
+ * the config reveals the holdout path (each also by its real path). Empty when no usable holdout is configured: the config is
  * missing, has no entry for this project, or `readHoldoutPath` refuses it. The
  * path is read again every iteration, so a config change applies to the next one.
  */
@@ -37,7 +39,9 @@ export async function loadHoldoutNeedles(
 ): Promise<HoldoutNeedles> {
   const holdout = await readHoldoutPath(projectPath, env);
   if (!holdout.ok) return [];
-  return holdoutNeedles(holdout.path, holdout.realPath);
+  const config = holdoutConfigFile(env);
+  const configReal = await realpath(config).catch(() => config);
+  return holdoutNeedles(holdout.path, holdout.realPath, config, configReal);
 }
 
 /**
