@@ -62,7 +62,25 @@ This creates a `.ml-ralph/` folder with:
 
 <!-- 📸 SCREENSHOT: Terminal after running `mlr init` showing created files -->
 
-### 2. Launch the TUI
+### 2. Set the sealed holdout path (optional but recommended)
+
+ML-Ralph scores each candidate once on a holdout split the agent never sees, and compares it with the search score. The holdout path is not part of the project: it lives in a user-level config, `~/.config/ml-ralph/config.json` (or `$XDG_CONFIG_HOME/ml-ralph/config.json`), keyed by the project's absolute path:
+
+```json
+{
+  "projects": {
+    "/home/me/my-kaggle-competition": { "holdout_path": "/data/sealed/my-kaggle-holdout.parquet" }
+  }
+}
+```
+
+- `holdout_path` must be an absolute path that exists. If the file, the project entry or the path is missing, the runner reports an error naming the file and the key.
+- The runner passes the path only to your `evaluate.py`, as the `ML_RALPH_HOLDOUT_PATH` environment variable, when it runs it with `--split holdout`. Read the data from there; never copy it into the project or put it in `contract.json`.
+- Each eval is scored on the holdout at most once. The result is written to that eval's `metrics.json` as `holdout_score` and `holdout_gap` (search score minus holdout score, in the contract's direction). A gap above `holdout_gap_threshold` in `contract.json` logs an `overfitting` event and blocks the candidate.
+- The holdout must live outside the project directory. A `holdout_path` inside it (also through a symlink) is refused with an error naming the file and the key.
+- Today nothing stops the agent from reading files elsewhere on your machine, so keep the holdout somewhere the agent has no reason to look.
+
+### 3. Launch the TUI
 
 ```bash
 mlr
@@ -72,7 +90,7 @@ This opens the ML-Ralph dashboard in a tmux session.
 
 <!-- 📸 SCREENSHOT: Initial TUI view showing the Planning mode with empty PRD -->
 
-### 3. Start the agent
+### 4. Start the agent
 
 Press `s` to start Ralph. The agent will:
 1. Read your PRD and understand the problem

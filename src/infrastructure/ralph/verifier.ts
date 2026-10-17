@@ -7,6 +7,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { JsonFileStore } from "../file-store/index.ts";
+import { HOLDOUT_PATH_ENV } from "./eval-command.ts";
 import { appendEvent, readLogFile } from "./log-parser.ts";
 import type { VerifierVerdictEvent } from "./templates.ts";
 
@@ -262,8 +263,11 @@ async function runClaude(
   timeoutMs: number,
   killGraceMs: number,
 ): Promise<SessionOutput> {
+  // The verifier session never gets the holdout path, even if the user exported it
+  const { [HOLDOUT_PATH_ENV]: _holdout, ...env } = process.env;
   const proc = Bun.spawn(args, {
     cwd,
+    env,
     stdin: new Response(prompt),
     stdout: "pipe",
     stderr: "pipe",

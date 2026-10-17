@@ -135,6 +135,7 @@ for a in "$@"; do printf '%s\\n' "$a"; done > "$d/argv"
 cat > "$d/stdin"
 mode="$(cat "$d/mode")"
 echo $$ > "$d/pid"
+if env | grep -q "^ML_RALPH_HOLDOUT_PATH="; then echo set; else echo unset; fi > "$d/holdout_env"
 pwd -P > "$d/cwd"
 if [ "$mode" = "hang" ]; then exec sleep 30; fi
 if [ "$mode" = "ignore-term" ]; then trap '' TERM; sleep 8; exit 0; fi
@@ -347,6 +348,20 @@ describe("verifyCandidate: session flags", () => {
     expect(cwd).toContain("ml-ralph-verifier-");
     // Cleaned up afterwards
     await expect(stat(cwd)).rejects.toThrow();
+  });
+
+  test("never passes ML_RALPH_HOLDOUT_PATH to the session", async () => {
+    const saved = process.env.ML_RALPH_HOLDOUT_PATH;
+    process.env.ML_RALPH_HOLDOUT_PATH = "/sealed/holdout.csv";
+    try {
+      await verify();
+    } finally {
+      if (saved === undefined) delete process.env.ML_RALPH_HOLDOUT_PATH;
+      else process.env.ML_RALPH_HOLDOUT_PATH = saved;
+    }
+    expect((await Bun.file(`${dir}/stub/holdout_env`).text()).trim()).toBe(
+      "unset",
+    );
   });
 
   test("buildVerifierArgs uses the default model unless one is given", () => {

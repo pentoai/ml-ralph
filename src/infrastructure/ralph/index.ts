@@ -33,6 +33,8 @@ export {
   readEvalScoring,
   readVerifiedEvals,
 } from "./eval-metrics.ts";
+export type { HoldoutOptions, HoldoutResult } from "./holdout.ts";
+export { holdoutConfigFile, readHoldoutPath, scoreHoldout } from "./holdout.ts";
 export type { InitOptions, InitResult } from "./init.ts";
 export {
   enableAgentTeamsSettings,
@@ -84,6 +86,7 @@ export type {
   ExperimentEvent,
   HypothesisEvent,
   LearningEvent,
+  OverfittingEvent,
   ParallelResultEvent,
   ParallelStartEvent,
   ParallelSynthesisEvent,

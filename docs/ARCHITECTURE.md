@@ -183,7 +183,15 @@ The scores and the eval id come only from the runner's own `eval` event and `met
 
 **What the agent sees.** Its next prompt gets one line, `Runner decision on "<eval_id>": promoted|rejected - <reason>`. For a verifier rejection the reason is the verifier's own `Verifier verdict: reject - <first line>`; the per-check results are not in the prompt.
 
-**Limits.** The agent runs with full permissions in the project, so it can still write `incumbent.json`, `baseline.json`, `log.jsonl` (including forged `eval` events) and `.ml-ralph/evals/`, and read `.ml-ralph/verifier/` and the `checks` in `verifier_verdict` events. Closing that needs these files stored outside the project (R3, R14), as with the eval lock. Completion is not a runner decision yet: no holdout score or budget ends a run, so it runs to `maxIterations`.
+**Limits.** The agent runs with full permissions in the project, so it can still write `incumbent.json`, `baseline.json`, `log.jsonl` (including forged `eval` events) and `.ml-ralph/evals/`, and read `.ml-ralph/verifier/` and the `checks` in `verifier_verdict` events. Closing that needs these files stored outside the project (R3, R14), as with the eval lock. Completion is not a runner decision yet: no holdout score (see Sealed holdout) or budget ends a run, so it runs to `maxIterations`.
+
+### Sealed holdout (`infrastructure/ralph/holdout.ts`)
+
+`RalphRunner.scoreHoldout(evalId)` scores an eval's candidate on data the agent never sees, to show whether the search score was tuned on. It checks the lock like `ml-ralph eval` does, reads the holdout path for this project from `~/.config/ml-ralph/config.json` (outside the project; `XDG_CONFIG_HOME` is honoured), runs the locked `evaluate.py` with `--split holdout` once per contract seed with the path in `ML_RALPH_HOLDOUT_PATH` in that subprocess's environment only, and writes `holdout_score` and `holdout_gap` to the eval's `metrics.json` (format in [DATA_MODELS.md](./DATA_MODELS.md#eval-metrics)). Each `eval_id` is scored at most once; later calls return the recorded result. When `holdout_gap` is above the contract's `holdout_gap_threshold` the runner logs an `overfitting` event with both scores and the result is `blocked`.
+
+The path is never put in a prompt, an event, `metrics.json` or an error message: the runner builds prompts from the base prompt, its own feedback lines and user hints, and strips `ML_RALPH_HOLDOUT_PATH` from the environment of the `claude` process, the verifier's `claude -p` session and search evals. A `holdout_path` inside the project directory (also through a symlink) is refused. A failed holdout run's stderr has the path redacted before it is cut to its last 300 characters, so a cut inside the path leaves no fragment of it. A test covers this by scanning every file in a project after init, lock, eval and holdout score.
+
+**Limits.** Nothing calls `scoreHoldout` yet: wiring it into runner-owned completion is a later goal, as is stopping the agent's own tool calls from reading `~/.config/ml-ralph/config.json` or the holdout files. Until then an agent with full permissions can read both. The runner scores whatever is at the candidate path when it is called, and the eval does not hash the candidate, so call it right after the candidate is handed in.
 
 ### DefaultOrchestrator (`application/orchestrator/orchestrator.ts`)
 
