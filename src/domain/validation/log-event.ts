@@ -294,6 +294,7 @@ export const LOG_EVENT_SCHEMAS: Record<string, LogEventSchema> = {
       },
       reason: str,
       output_path: str,
+      cost_usd: optional(num),
       model: optional(str),
     },
   },

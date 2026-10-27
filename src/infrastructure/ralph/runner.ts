@@ -268,7 +268,6 @@ Only the runner decides whether a candidate is promoted, and only the runner end
           return;
         }
 
-        const stopped = this.budgetStop ?? exhaustedCap(this.budgetNow());
         if (this.budgetStop) {
           await this.endForBudget(this.budgetStop);
           return;
@@ -281,8 +280,10 @@ Only the runner decides whether a candidate is promoted, and only the runner end
           return;
         }
 
-        if (stopped) {
-          await this.endForBudget(stopped);
+        // Judging spends time and verifier USD: re-check before building the next prompt
+        const exhausted = exhaustedCap(this.budgetNow());
+        if (exhausted) {
+          await this.endForBudget(exhausted);
           return;
         }
       }
@@ -375,6 +376,19 @@ Only the runner decides whether a candidate is promoted, and only the runner end
     this.config.onBudget?.(status);
   }
 
+  /** The verifier is a claude session the runner spawns: its cost counts against max_usd */
+  private async addVerifierCost(costUsd: number): Promise<void> {
+    this.budgetUsd += costUsd;
+    const status = this.budgetNow();
+    await this.appendLogEvent({
+      type: "budget_status",
+      run_id: this.budgetRunId,
+      iteration: this.currentIteration,
+      ...status,
+    });
+    this.config.onBudget?.(status);
+  }
+
   /** A cap was reached: log it and end the run. The claude session, if still alive, is already killed */
   private async endForBudget(cap: BudgetExhaustion): Promise<void> {
     await this.appendLogEvent({
@@ -437,6 +451,7 @@ Only the runner decides whether a candidate is promoted, and only the runner end
         this.config.promotionDeps,
       );
       this.pendingFeedback.push(decision.feedback);
+      if (decision.costUsd) await this.addVerifierCost(decision.costUsd);
       if (
         decision.promoted &&
         meetsSuccess(decision.promoted.contract, decision.promoted.searchScore)
@@ -544,6 +559,7 @@ Only the runner decides whether a candidate is promoted, and only the runner end
       } catch (error) {
         return await blocked("verifier_error", errorText(error));
       }
+      if (verdict.costUsd) await this.addVerifierCost(verdict.costUsd);
       if (verdict.reason === "verifier_error") {
         return await blocked(
           "verifier_error",

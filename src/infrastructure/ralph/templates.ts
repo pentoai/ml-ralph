@@ -1353,6 +1353,8 @@ export interface VerifierVerdictEvent extends BaseEvent {
   >;
   reason: string;
   model?: string;
+  /** total_cost_usd the verifier session reported; counted against max_usd */
+  cost_usd?: number;
   output_path: string;
 }
 

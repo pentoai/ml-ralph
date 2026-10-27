@@ -208,6 +208,7 @@ describe("verifyCandidate: verdicts", () => {
     expect(saved.reason).toBe(REJECT.reason);
     expect(saved.hypothesis_id).toBe("H-001");
     expect(saved.raw_output).toBe(stdout);
+    expect(result.costUsd).toBe(0.02);
 
     const events = await readLogTypes();
     const event = events.at(-1);
@@ -217,6 +218,7 @@ describe("verifyCandidate: verdicts", () => {
       verdict: "reject",
       checks: REJECT.checks,
       reason: REJECT.reason,
+      cost_usd: 0.02,
       output_path: ".ml-ralph/verifier/v1.json",
     });
     expect(typeof event?.ts).toBe("string");

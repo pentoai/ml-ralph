@@ -51,11 +51,14 @@ let verifierCalls: VerifyCandidateOptions[];
 let verifierAnswer: "approve" | "reject" | "throw";
 let head: Awaited<ReturnType<PromotionDeps["gitHead"]>>;
 let evalCounter = 0;
+let verifierCost: number | undefined;
+let verifierDelayMs = 0;
 
 const deps = (): Partial<PromotionDeps> => ({
   gitHead: async () => head,
   verify: async (options) => {
     verifierCalls.push(options);
+    if (verifierDelayMs) await Bun.sleep(verifierDelayMs);
     if (verifierAnswer === "throw") throw new Error("claude exploded");
     const approve = verifierAnswer === "approve";
     return {
@@ -68,6 +71,7 @@ const deps = (): Partial<PromotionDeps> => ({
       },
       reason: approve ? "looks fine" : "test labels used in training",
       outputPath: `.ml-ralph/verifier/v-${verifierCalls.length}.json`,
+      ...(verifierCost !== undefined ? { costUsd: verifierCost } : {}),
       feedback: approve
         ? "Verifier verdict: approve - looks fine"
         : "Verifier verdict: reject - test labels used in training",
@@ -195,6 +199,8 @@ beforeEach(async () => {
   await Bun.write(join(dir, ".ml-ralph/log.jsonl"), "");
   verifierCalls = [];
   verifierAnswer = "approve";
+  verifierCost = undefined;
+  verifierDelayMs = 0;
   head = { ok: true, ref: HEAD_REF };
 });
 
@@ -712,6 +718,62 @@ describe("RalphRunner promotion", () => {
     );
     expect(feedback).not.toContain("protocol_change");
     expect(await incumbentFile().exists()).toBe(false);
+  });
+
+  const candidateIteration = (maxIterations: number) =>
+    run(maxIterations, async (i) => {
+      if (i === 1) {
+        const id = await writeEval({ mean: 0.9 });
+        return `<candidate_complete eval_id="${id}">`;
+      }
+      return "";
+    });
+  const budgetStatuses = async () =>
+    (await Bun.file(join(dir, ".ml-ralph/log.jsonl")).text())
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+      .filter((e) => e.type === "budget_status");
+
+  test("the verifier's reported cost counts toward usd_spent", async () => {
+    await logHypothesis();
+    await Bun.write(
+      join(dir, ".ml-ralph/config.json"),
+      JSON.stringify({ max_usd: 10 }),
+    );
+    verifierCost = 0.75;
+    const { runner } = candidateIteration(2);
+    await runner.start();
+    const spent = (await budgetStatuses()).map((e) => e.usd_spent);
+    // iteration 1 status ($0 from the fake), then the verifier's cost, then iteration 2
+    expect(spent).toEqual([0, 0.75, 0.75]);
+    expect(runner.prompts[1]).toContain("USD remaining: $9.25");
+  });
+
+  test("a verifier that pushes spend past max_usd ends the run before the next iteration", async () => {
+    await logHypothesis();
+    await Bun.write(
+      join(dir, ".ml-ralph/config.json"),
+      JSON.stringify({ max_usd: 0.5 }),
+    );
+    verifierCost = 0.75;
+    const { runner, completions } = candidateIteration(3);
+    await runner.start();
+    expect(runner.prompts).toHaveLength(1);
+    expect(completions).toEqual(["budget_exhausted"]);
+  });
+
+  test("a wall-clock cap crossed while judging ends the run without spawning another iteration", async () => {
+    await logHypothesis();
+    await Bun.write(
+      join(dir, ".ml-ralph/config.json"),
+      JSON.stringify({ max_wall_clock_minutes: 0.0025 }),
+    );
+    verifierDelayMs = 400;
+    const { runner, completions } = candidateIteration(3);
+    await runner.start();
+    expect(runner.prompts).toHaveLength(1);
+    expect(completions).toEqual(["budget_exhausted"]);
   });
 
   test("stopping the run before the last iteration ends is not max_iterations", async () => {
