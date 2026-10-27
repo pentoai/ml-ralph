@@ -159,6 +159,9 @@ describe("schema coverage", () => {
     "run_complete",
     "completion_rejected",
     "completion_blocked",
+    "budget_status",
+    "budget_warning",
+    "budget_exhausted",
   ])("%s is runner-only and not offered to the agent", (type) => {
     expect(isRunnerOnlyEvent(type)).toBe(true);
     expect(logEventTypes()).not.toContain(type);

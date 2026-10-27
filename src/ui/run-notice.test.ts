@@ -10,6 +10,7 @@ describe("runStopNotice", () => {
     "max_iterations",
     "contract_changed",
     "holdout_access",
+    "budget_exhausted",
   ] as const)("names the reason %s", (reason) => {
     expect(runStopNotice(reason)).toContain(`reason ${reason}`);
   });

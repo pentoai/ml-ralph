@@ -61,6 +61,26 @@ The run ends with a `run_complete` event (eval id, search score, holdout score, 
 
 Otherwise the run continues. A failed check logs `completion_rejected` with reason `verifier_rejected`, `holdout_failed` or `overfitting_gap`; the agent's next prompt gets the verdict and one line of reason, with no scores. A check that could not run (verifier error or timeout, unreadable holdout, no `holdout_path`) logs `completion_blocked` with the error or reason `holdout_not_configured`, and the TUI shows it in the agent output (`Completion blocked for <eval_id>: holdout_not_configured (...)`; the `completion gate` tests in `src/infrastructure/ralph/runner.test.ts` assert that line). The check runs again only on a later promotion.
 
+## Run budgets
+
+By default a run is limited only by the iteration count. Add any of these optional keys to `.ml-ralph/config.json` to cap it further; an unset key is not enforced.
+
+```json
+{
+  "max_wall_clock_minutes": 240,
+  "max_usd": 25,
+  "max_experiments_per_iteration": 3
+}
+```
+
+- `max_wall_clock_minutes` — minutes of wall-clock time for the run. A timer checks it during the iteration and stops the claude process when it is reached.
+- `max_usd` — dollars spent, summed from `total_cost_usd` in claude's `result` events (an API-equivalent estimate, not a subscription bill). Checked at each result event, so one iteration's overshoot is possible.
+- `max_experiments_per_iteration` — `ml-ralph eval` calls per iteration. Once reached, further calls exit non-zero with `experiment cap reached for this iteration (<n>)`.
+
+When `max_wall_clock_minutes` or `max_usd` is reached the run ends with reason `budget_exhausted`, logged in `log.jsonl`. After each iteration the runner logs a `budget_status` event (`usd_spent`, `elapsed_minutes` and the caps); an iteration with no `total_cost_usd` counts as $0 and logs `budget_warning`. Each iteration's prompt states the remaining USD and minutes and the experiment cap, and the TUI shows spend and elapsed time against the caps (or `no cap`).
+
+A restarted run keeps its `run_id` (in `.ml-ralph/budget/run.json`) and starts from the spend and elapsed time in its earlier `budget_status` events, so a restart does not reset the budget; the id is dropped when the run ends with `max_iterations`. Raise a cap in `config.json` to continue after `budget_exhausted`. A negative, zero or non-numeric cap stops the run at start with an error naming the key. GPU-hours are not capped yet.
+
 ## License
 
 MIT

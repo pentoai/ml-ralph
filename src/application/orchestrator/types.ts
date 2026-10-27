@@ -9,6 +9,7 @@ import type {
   Story,
 } from "../../domain/types/index.ts";
 import type {
+  BudgetStatus,
   EvalChange,
   RunCompleteReason,
   StreamEvent,
@@ -28,6 +29,8 @@ export interface AgentOrchestrator {
   onOutput(callback: (event: StreamEvent) => void): () => void;
   onIterationChange(callback: (iteration: number) => void): () => void;
   onComplete(callback: (reason: RunCompleteReason) => void): () => void;
+  /** Spend and elapsed time against the budget caps */
+  onBudget(callback: (status: BudgetStatus) => void): () => void;
   /** A locked eval file changed and the run is paused awaiting a decision */
   onContractChange(
     callback: (changes: EvalChange[], relockError?: string) => void,

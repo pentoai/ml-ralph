@@ -10,6 +10,7 @@ import {
   type EvalContract,
   validateEvalContract,
 } from "../../domain/validation/index.ts";
+import { claimExperiment, ITERATION_ENV, readBudgetCaps } from "./budget.ts";
 import {
   describeEvalChanges,
   type EvalLock,
@@ -356,6 +357,19 @@ export async function runEvalCommand(
   const locked = await readLockedEval(projectDir);
   if (!locked.ok) return fail(`${locked.error} Nothing was run.`);
   const { lock, evaluateBytes, contract } = locked;
+
+  // Under the runner, the iteration's eval calls are capped by config.json
+  const iterationId = process.env[ITERATION_ENV];
+  const budget = await readBudgetCaps(projectDir);
+  const cap = budget.ok ? budget.caps.max_experiments_per_iteration : undefined;
+  if (iterationId && cap !== undefined) {
+    if (!(await claimExperiment(projectDir, iterationId, cap))) {
+      return fail(
+        `experiment cap reached for this iteration (${cap}). Nothing was run.`,
+      );
+    }
+  }
+
   const { seeds, search_split: split } = contract;
   const timeoutSeconds =
     contract.eval_timeout_seconds ?? DEFAULT_EVAL_TIMEOUT_SECONDS;

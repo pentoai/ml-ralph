@@ -244,6 +244,35 @@ export const LOG_EVENT_SCHEMAS: Record<string, LogEventSchema> = {
       error: str,
     },
   },
+  budget_status: {
+    runnerOnly: true,
+    fields: {
+      run_id: str,
+      iteration: num,
+      usd_spent: num,
+      elapsed_minutes: num,
+      max_usd: optional(num),
+      max_wall_clock_minutes: optional(num),
+      max_experiments_per_iteration: optional(num),
+    },
+  },
+  budget_warning: {
+    runnerOnly: true,
+    fields: { run_id: str, iteration: num, reason: str },
+  },
+  budget_exhausted: {
+    runnerOnly: true,
+    fields: {
+      run_id: str,
+      iteration: num,
+      cap: oneOf("usd", "wall_clock"),
+      usd_spent: num,
+      elapsed_minutes: num,
+      max_usd: optional(num),
+      max_wall_clock_minutes: optional(num),
+      max_experiments_per_iteration: optional(num),
+    },
+  },
   holdout_access: {
     runnerOnly: true,
     fields: { tool: str, iteration: num },

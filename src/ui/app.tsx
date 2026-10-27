@@ -7,9 +7,11 @@ import type { AgentOrchestrator } from "../application/orchestrator/index.ts";
 import { createOrchestrator } from "../application/orchestrator/index.ts";
 import { useAppStore } from "../application/state/index.ts";
 import {
+  type BudgetStatus,
   describeEvalChanges,
   type EvalChange,
   ensureInitialized,
+  formatBudget,
   type RunCompleteReason,
 } from "../infrastructure/ralph/index.ts";
 import { useTmuxLayout } from "./hooks/index.ts";
@@ -66,6 +68,11 @@ export function App({ projectPath, enableTeams }: AppProps) {
     changes: EvalChange[];
     relockError?: string;
   } | null>(null);
+  // Spend and elapsed time against the budget caps (zero until a run reports)
+  const [budget, setBudget] = useState<BudgetStatus>({
+    usd_spent: 0,
+    elapsed_minutes: 0,
+  });
   // Why the last run ended, when the user needs to see it (e.g. contract_changed)
   const [runNotice, setRunNotice] = useState<string | null>(null);
   // Initialization state
@@ -184,6 +191,7 @@ export function App({ projectPath, enableTeams }: AppProps) {
       // Subscribe to events
       orchestratorRef.current.onIterationChange(handleIterationChange);
       orchestratorRef.current.onComplete(handleComplete);
+      orchestratorRef.current.onBudget(setBudget);
       orchestratorRef.current.onContractChange((changes, relockError) =>
         setContractChange({ changes, relockError }),
       );
@@ -595,6 +603,14 @@ export function App({ projectPath, enableTeams }: AppProps) {
   // Warning if not in tmux
   const showTmuxWarning = !tmuxLayout.isInTmux && tmuxLayout.isInitialized;
 
+  // Caps come from config.json until a run reports them
+  const budgetWithCaps: BudgetStatus = {
+    ...budget,
+    max_usd: budget.max_usd ?? config?.max_usd,
+    max_wall_clock_minutes:
+      budget.max_wall_clock_minutes ?? config?.max_wall_clock_minutes,
+  };
+
   return (
     <Box flexDirection="column" height={terminalHeight}>
       {/* Logo - disabled for now
@@ -611,6 +627,14 @@ export function App({ projectPath, enableTeams }: AppProps) {
           agentStatus={agentStatus}
           pendingHintsCount={pendingHints.length}
         />
+      </Box>
+
+      {/* Budget: spend and elapsed time against the caps */}
+      <Box paddingX={1}>
+        <Text color={colors.textMuted}>
+          Spend: {formatBudget(budgetWithCaps).usd} | Elapsed:{" "}
+          {formatBudget(budgetWithCaps).time}
+        </Text>
       </Box>
 
       {/* Tmux warning */}

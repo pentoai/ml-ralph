@@ -3,6 +3,21 @@
  */
 
 import type { Subprocess } from "bun";
+import {
+  type BudgetCaps,
+  type BudgetExhaustion,
+  type BudgetStatus,
+  budgetPrompt,
+  budgetStatus,
+  clearRunId,
+  exhaustedCap,
+  ITERATION_ENV,
+  priorBudget,
+  readBudgetCaps,
+  readRunId,
+  resetExperimentCount,
+  writeRunId,
+} from "./budget.ts";
 import { HOLDOUT_PATH_ENV, killTree } from "./eval-command.ts";
 import {
   checkEvalGate,
@@ -38,7 +53,13 @@ export type RunCompleteReason =
   | "completed"
   | "max_iterations"
   | "contract_changed"
-  | "holdout_access";
+  | "holdout_access"
+  | "budget_exhausted";
+
+/** How often the TUI hears about elapsed time while claude runs */
+const BUDGET_TICK_MS = 15_000;
+/** setTimeout rejects delays above 2^31 - 1 ms */
+const MAX_TIMER_MS = 2_147_483_647;
 
 export interface RunnerConfig {
   projectPath: string;
@@ -48,6 +69,8 @@ export interface RunnerConfig {
   onIterationStart?: (iteration: number) => void;
   onIterationEnd?: (iteration: number, result: string) => void;
   onComplete?: (reason: RunCompleteReason) => void;
+  /** Spend and elapsed time against the caps: at start, at each result event, and while claude runs */
+  onBudget?: (status: BudgetStatus) => void;
   /**
    * A locked eval file changed; the run is paused until resolveContractChange
    * is called. `relockError` is set when the previous re-lock attempt failed.
@@ -122,6 +145,13 @@ export class RalphRunner {
   private holdoutNeedles: HoldoutNeedles = [];
   private holdoutAccess: { toolName: string } | null = null;
   private pinnedHashes: EvalLock["files"] | null = null;
+  private budgetCaps: BudgetCaps = {};
+  private budgetRunId = "";
+  private budgetBase = { usd_spent: 0, elapsed_minutes: 0 };
+  private budgetStartedAt = 0;
+  private budgetUsd = 0;
+  private iterationCost: number | null = null;
+  private budgetStop: BudgetExhaustion | null = null;
   private contractDecision: ((d: ContractDecision | null) => void) | null =
     null;
 
@@ -152,8 +182,15 @@ export class RalphRunner {
       return;
     }
 
+    const caps = await readBudgetCaps(this.config.projectPath);
+    if (!caps.ok) {
+      this.config.onError?.(new Error(caps.error));
+      return;
+    }
+
     this.running = true;
     this.currentIteration = 0;
+    this.budgetStop = null;
     this.pinnedHashes = null;
     this.pendingFeedback = [];
     this.holdoutScored = new Set();
@@ -169,6 +206,13 @@ If you have a candidate you believe is a new best, follow "Completing a Candidat
 Only the runner decides whether a candidate is promoted, and only the runner ends the run.`;
 
     try {
+      await this.startBudget(caps.caps);
+      const spent = exhaustedCap(this.budgetNow());
+      if (spent) {
+        await this.endForBudget(spent);
+        return;
+      }
+
       for (let i = 1; i <= this.config.maxIterations!; i++) {
         if (!this.running) break;
 
@@ -195,7 +239,10 @@ Only the runner decides whether a candidate is promoted, and only the runner end
 
         // Build prompt with the runner's last decision and any pending hints
         const prompt =
-          basePrompt + this.consumeFeedback() + (this.consumeHints() ?? "");
+          basePrompt +
+          budgetPrompt(this.budgetNow()) +
+          this.consumeFeedback() +
+          (this.consumeHints() ?? "");
         const iterationStartedAt = new Date().toISOString();
 
         // Emit iteration marker
@@ -205,11 +252,24 @@ Only the runner decides whether a candidate is promoted, and only the runner end
         });
 
         this.holdoutNeedles = await loadHoldoutNeedles(this.config.projectPath);
-        const result = await this.runIteration(prompt);
+        let result: string;
+        try {
+          result = await this.runIteration(prompt);
+        } catch (error) {
+          await this.recordBudget();
+          throw error;
+        }
+        await this.recordBudget();
 
         const access = this.holdoutAccessed();
         if (access) {
           await this.endForHoldoutAccess(access.toolName);
+          return;
+        }
+
+        const stopped = this.budgetStop ?? exhaustedCap(this.budgetNow());
+        if (this.budgetStop) {
+          await this.endForBudget(this.budgetStop);
           return;
         }
 
@@ -219,9 +279,15 @@ Only the runner decides whether a candidate is promoted, and only the runner end
           this.config.onComplete?.("completed");
           return;
         }
+
+        if (stopped) {
+          await this.endForBudget(stopped);
+          return;
+        }
       }
 
       if (this.running && this.currentIteration >= this.config.maxIterations!) {
+        await clearRunId(this.config.projectPath);
         this.config.onComplete?.("max_iterations");
       }
     } catch (error) {
@@ -256,6 +322,75 @@ Only the runner decides whether a candidate is promoted, and only the runner end
       projectPath: this.config.projectPath,
       onInvalidEvent: this.reportInvalidEvent,
     });
+  }
+
+  /** Load the caps and the spend this run already recorded, and start its clock */
+  private async startBudget(caps: BudgetCaps): Promise<void> {
+    const projectPath = this.config.projectPath;
+    this.budgetCaps = caps;
+    this.budgetRunId = (await readRunId(projectPath)) ?? crypto.randomUUID();
+    await writeRunId(projectPath, this.budgetRunId);
+    const logFile = Bun.file(`${projectPath}/.ml-ralph/log.jsonl`);
+    this.budgetBase = priorBudget(
+      (await logFile.exists()) ? await logFile.text() : "",
+      this.budgetRunId,
+    );
+    this.budgetStartedAt = Date.now();
+    this.budgetUsd = 0;
+    this.iterationCost = null;
+    this.config.onBudget?.(this.budgetNow());
+  }
+
+  /** Spend and elapsed time of the whole run, including what earlier starts recorded */
+  private budgetNow(): BudgetStatus {
+    return budgetStatus(
+      this.budgetCaps,
+      this.budgetBase.usd_spent + this.budgetUsd,
+      this.budgetBase.elapsed_minutes +
+        (Date.now() - this.budgetStartedAt) / 60_000,
+    );
+  }
+
+  /** After an iteration: log the running totals, and a warning when claude reported no cost */
+  private async recordBudget(): Promise<void> {
+    const reported = this.iterationCost !== null;
+    this.iterationCost = null;
+    const status = this.budgetNow();
+    if (!reported) {
+      await this.appendLogEvent({
+        type: "budget_warning",
+        run_id: this.budgetRunId,
+        iteration: this.currentIteration,
+        reason:
+          "no result event with total_cost_usd; this iteration counted as $0",
+      });
+    }
+    await this.appendLogEvent({
+      type: "budget_status",
+      run_id: this.budgetRunId,
+      iteration: this.currentIteration,
+      ...status,
+    });
+    this.config.onBudget?.(status);
+  }
+
+  /** A cap was reached: log it and end the run. The claude session, if still alive, is already killed */
+  private async endForBudget(cap: BudgetExhaustion): Promise<void> {
+    await this.appendLogEvent({
+      type: "budget_exhausted",
+      run_id: this.budgetRunId,
+      iteration: this.currentIteration,
+      cap,
+      ...this.budgetNow(),
+    });
+    this.config.onComplete?.("budget_exhausted");
+  }
+
+  /** Stop the claude process because a cap was reached; the iteration is not judged */
+  private stopForBudget(cap: BudgetExhaustion): void {
+    if (this.budgetStop) return;
+    this.budgetStop = cap;
+    if (this.currentProcess) killTree(this.currentProcess, "SIGKILL");
   }
 
   /** The tool call that named the holdout in this run, if any (a method so TS does not narrow the field across awaits) */
@@ -632,6 +767,10 @@ Only the runner decides whether a candidate is promoted, and only the runner end
    */
   protected async runIteration(prompt: string): Promise<string> {
     // Inject an initial log event so the TUI shows something immediately
+    await resetExperimentCount(
+      this.config.projectPath,
+      String(this.currentIteration),
+    );
     await this.appendLogEvent({
       type: "phase",
       phase: this.currentIteration === 1 ? "UNDERSTAND" : "EXECUTE",
@@ -658,6 +797,7 @@ Only the runner decides whether a candidate is promoted, and only the runner end
       stderr: "pipe",
       env: {
         ...agentEnv,
+        [ITERATION_ENV]: String(this.currentIteration),
         ...(this.config.enableTeams
           ? { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1" }
           : {}),
@@ -668,9 +808,26 @@ Only the runner decides whether a candidate is promoted, and only the runner end
     // claude is no longer in the TUI's process group, so a normal exit must reap it
     const killOnExit = () => killTree(proc, "SIGKILL");
     process.on("exit", killOnExit);
+
+    // Wall-clock is enforced by a timer so a long iteration cannot overshoot the cap
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const wallClock = this.budgetCaps.max_wall_clock_minutes;
+    if (wallClock !== undefined) {
+      const leftMs = (wallClock - this.budgetNow().elapsed_minutes) * 60_000;
+      timer = setTimeout(
+        () => this.stopForBudget("wall_clock"),
+        Math.min(Math.max(0, leftMs), MAX_TIMER_MS),
+      );
+    }
+    const ticker = setInterval(
+      () => this.config.onBudget?.(this.budgetNow()),
+      BUDGET_TICK_MS,
+    );
     try {
       return await this.readIteration(proc);
     } finally {
+      clearTimeout(timer);
+      clearInterval(ticker);
       process.off("exit", killOnExit);
     }
   }
@@ -700,16 +857,16 @@ Only the runner decides whether a candidate is promoted, and only the runner end
 
         for (const line of lines) {
           fullResult = this.processLine(line, fullResult);
-          if (this.holdoutAccess) break;
+          if (this.holdoutAccess || this.budgetStop) break;
         }
-        if (this.holdoutAccess) {
+        if (this.holdoutAccess || this.budgetStop) {
           await reader.cancel().catch(() => {});
           break;
         }
       }
 
       // Process remaining buffer
-      if (!this.holdoutAccess) {
+      if (!this.holdoutAccess && !this.budgetStop) {
         fullResult = this.processLine(buffer, fullResult);
       }
     } finally {
@@ -718,7 +875,7 @@ Only the runner decides whether a candidate is promoted, and only the runner end
 
     const exitCode = await proc.exited;
 
-    if (exitCode !== 0 && !this.holdoutAccess) {
+    if (exitCode !== 0 && !this.holdoutAccess && !this.budgetStop) {
       // Read stderr for error details
       let stderrText = "";
       try {
@@ -753,6 +910,14 @@ Only the runner decides whether a candidate is promoted, and only the runner end
     if (parsed.holdoutAccess && !this.holdoutAccess) {
       this.holdoutAccess = parsed.holdoutAccess;
       if (this.currentProcess) killTree(this.currentProcess, "SIGKILL");
+    }
+    if (parsed.costUsd !== undefined) {
+      this.budgetUsd += parsed.costUsd;
+      this.iterationCost = (this.iterationCost ?? 0) + parsed.costUsd;
+      const status = this.budgetNow();
+      this.config.onBudget?.(status);
+      const cap = exhaustedCap(status);
+      if (cap === "usd") this.stopForBudget(cap);
     }
     return parsed.result ?? fullResult;
   }
@@ -902,6 +1067,8 @@ export interface ParsedStreamLine {
   result?: string;
   /** Set when a tool_use input contains a holdout needle; the tool's name only */
   holdoutAccess?: { toolName: string };
+  /** total_cost_usd of a "result" event, when it is a finite non-negative number */
+  costUsd?: number;
 }
 
 /**
@@ -943,7 +1110,17 @@ export function parseStreamLine(
     };
   }
   if (record.type === "result") {
-    return { ...parsed, result: (record.result as string) || "", ...flag };
+    const cost = record.total_cost_usd;
+    const costUsd =
+      typeof cost === "number" && Number.isFinite(cost) && cost >= 0
+        ? { costUsd: cost }
+        : {};
+    return {
+      ...parsed,
+      result: (record.result as string) || "",
+      ...costUsd,
+      ...flag,
+    };
   }
   return { ...parsed, ...flag };
 }
