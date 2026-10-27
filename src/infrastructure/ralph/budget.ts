@@ -9,6 +9,9 @@ import { join } from "node:path";
 /** Set by the runner on the claude process so `ml-ralph eval` knows which iteration it serves */
 export const ITERATION_ENV = "ML_RALPH_ITERATION";
 
+/** The experiment cap the runner read at start; `ml-ralph eval` never trusts a looser one from config.json */
+export const MAX_EXPERIMENTS_ENV = "ML_RALPH_MAX_EXPERIMENTS";
+
 const ITERATION_ID = /^[A-Za-z0-9_-]+$/;
 const BUDGET_DIR = ".ml-ralph/budget";
 
@@ -170,6 +173,42 @@ export async function resetExperimentCount(
 }
 
 /**
+ * The experiment cap that applies to an `ml-ralph eval` call: the smaller of
+ * the cap the runner pinned in the environment and the one in config.json, so
+ * raising either alone does not loosen it. A set cap needs a valid iteration
+ * id; without one the call is refused (fail closed) rather than uncapped.
+ */
+export function experimentCapFor(
+  env: Record<string, string | undefined>,
+  configCap: number | undefined,
+):
+  | { ok: true; cap: number | undefined; iterationId: string }
+  | { ok: false; error: string } {
+  const pinned = env[MAX_EXPERIMENTS_ENV];
+  const caps: number[] = [];
+  if (pinned !== undefined) {
+    const n = Number(pinned);
+    if (!Number.isInteger(n) || n <= 0) {
+      return {
+        ok: false,
+        error: `${MAX_EXPERIMENTS_ENV} is not a positive integer`,
+      };
+    }
+    caps.push(n);
+  }
+  if (configCap !== undefined) caps.push(configCap);
+  if (caps.length === 0) return { ok: true, cap: undefined, iterationId: "" };
+  const iterationId = env[ITERATION_ENV];
+  if (!iterationId || !ITERATION_ID.test(iterationId)) {
+    return {
+      ok: false,
+      error: `an experiment cap is set but ${ITERATION_ENV} is missing or invalid; run eval from the runner's agent session`,
+    };
+  }
+  return { ok: true, cap: Math.min(...caps), iterationId };
+}
+
+/**
  * Count one `ml-ralph eval` call against the iteration's cap. Each call claims
  * one of `cap` slot files with an exclusive create, so parallel calls cannot
  * both take the last slot. Returns false when every slot is taken.
@@ -208,6 +247,39 @@ export function formatBudget(status: BudgetStatus): {
       ? `${elapsed}, no cap`
       : `${elapsed} / ${status.max_wall_clock_minutes} min`;
   return { usd, time };
+}
+
+/** Spend and time recorded for the run in progress (zeros for a new run), read from log.jsonl */
+export async function readRecordedBudget(
+  projectPath: string,
+): Promise<{ usd_spent: number; elapsed_minutes: number }> {
+  const runId = await readRunId(projectPath);
+  if (!runId) return { usd_spent: 0, elapsed_minutes: 0 };
+  const log = Bun.file(join(projectPath, ".ml-ralph/log.jsonl"));
+  return priorBudget((await log.exists()) ? await log.text() : "", runId);
+}
+
+/**
+ * What the TUI header shows before a run reports: the recorded totals and the
+ * caps from config.json. Invalid caps are not shown as caps; `error` names them.
+ */
+export function headerBudget(
+  config: unknown,
+  recorded: { usd_spent: number; elapsed_minutes: number },
+): { status: BudgetStatus; error?: string } {
+  const parsed = parseBudgetCaps(config);
+  return parsed.ok
+    ? {
+        status: budgetStatus(
+          parsed.caps,
+          recorded.usd_spent,
+          recorded.elapsed_minutes,
+        ),
+      }
+    : {
+        status: budgetStatus({}, recorded.usd_spent, recorded.elapsed_minutes),
+        error: parsed.error,
+      };
 }
 
 /** Run id store: a run keeps its id across restarts so its budget_status events add up */

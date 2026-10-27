@@ -7,7 +7,12 @@ export type {
   BudgetExhaustion,
   BudgetStatus,
 } from "./budget.ts";
-export { formatBudget, readBudgetCaps } from "./budget.ts";
+export {
+  formatBudget,
+  headerBudget,
+  readBudgetCaps,
+  readRecordedBudget,
+} from "./budget.ts";
 export type {
   EvalCommandOptions,
   EvalCommandResult,

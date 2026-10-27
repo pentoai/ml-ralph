@@ -12,6 +12,7 @@ import {
   clearRunId,
   exhaustedCap,
   ITERATION_ENV,
+  MAX_EXPERIMENTS_ENV,
   priorBudget,
   readBudgetCaps,
   readRunId,
@@ -798,6 +799,14 @@ Only the runner decides whether a candidate is promoted, and only the runner end
       env: {
         ...agentEnv,
         [ITERATION_ENV]: String(this.currentIteration),
+        // Pinned at start, so editing config.json mid-run cannot loosen the cap
+        ...(this.budgetCaps.max_experiments_per_iteration !== undefined
+          ? {
+              [MAX_EXPERIMENTS_ENV]: String(
+                this.budgetCaps.max_experiments_per_iteration,
+              ),
+            }
+          : {}),
         ...(this.config.enableTeams
           ? { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1" }
           : {}),

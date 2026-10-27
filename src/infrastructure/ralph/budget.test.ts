@@ -12,8 +12,10 @@ import {
   budgetPrompt,
   claimExperiment,
   formatBudget,
+  headerBudget,
   parseBudgetCaps,
   priorBudget,
+  readRecordedBudget,
 } from "./budget.ts";
 import { runEvalCommand } from "./eval-command.ts";
 import { lockEvalContract } from "./eval-lock.ts";
@@ -23,6 +25,7 @@ import { RalphRunner, type RunCompleteReason } from "./runner.ts";
 const STUB_CLAUDE = `#!/bin/sh
 printf '%s' "$4" > prompt-$ML_RALPH_ITERATION.txt
 echo "$ML_RALPH_ITERATION" >> iterations.txt
+echo "$ML_RALPH_MAX_EXPERIMENTS" > maxexp-$ML_RALPH_ITERATION.txt
 [ -f sleep.txt ] && sleep "$(cat sleep.txt)"
 if [ -f cost.txt ]; then
   echo "{\\"type\\":\\"result\\",\\"subtype\\":\\"success\\",\\"result\\":\\"done <iteration_complete>\\",\\"total_cost_usd\\":$(cat cost.txt)}"
@@ -174,6 +177,49 @@ describe("prompt and TUI text", () => {
     const open = formatBudget({ usd_spent: 1, elapsed_minutes: 2 });
     expect(open.usd).toContain("no cap");
     expect(open.time).toContain("no cap");
+  });
+});
+
+describe("headerBudget", () => {
+  const none = { usd_spent: 0, elapsed_minutes: 0 };
+
+  test("an invalid cap never reaches formatBudget as a cap and is named", () => {
+    const shown = headerBudget(
+      { max_usd: "abc", max_wall_clock_minutes: 30 },
+      none,
+    );
+    expect(shown.error).toContain("max_usd");
+    expect(shown.status.max_usd).toBeUndefined();
+    expect(() => formatBudget(shown.status)).not.toThrow();
+    expect(formatBudget(shown.status).usd).toContain("no cap");
+  });
+
+  test("shows the recorded totals with the valid caps", () => {
+    const shown = headerBudget(
+      { max_usd: 10 },
+      { usd_spent: 2.5, elapsed_minutes: 12 },
+    );
+    expect(shown.error).toBeUndefined();
+    expect(formatBudget(shown.status)).toEqual({
+      usd: "$2.50 / $10.00",
+      time: "12.0 min, no cap",
+    });
+  });
+});
+
+describe("recorded budget after a restart", () => {
+  test("readRecordedBudget reads the run's budget_status events", async () => {
+    await writeConfig({ max_usd: 5 });
+    await Bun.write(join(dir, "cost.txt"), "0.7");
+    const first = run(2);
+    await first.runner.start();
+    await Bun.write(
+      join(dir, ".ml-ralph/budget/run.json"),
+      JSON.stringify({
+        run_id: (await ofType("budget_status"))[0]?.run_id,
+      }),
+    );
+    expect((await readRecordedBudget(dir)).usd_spent).toBe(1.4);
   });
 });
 
@@ -357,11 +403,86 @@ describe("experiment cap", () => {
     }
   });
 
-  test("without the iteration env or a cap, eval is not limited", async () => {
+  const withEnv = async (
+    env: Record<string, string | undefined>,
+    body: () => Promise<void>,
+  ) => {
+    const saved: Record<string, string | undefined> = {};
+    for (const [k, v] of Object.entries(env)) {
+      saved[k] = process.env[k];
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    try {
+      await body();
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  };
+
+  test("a cap with no iteration id fails closed", async () => {
     await setupEval();
     await writeConfig({ max_experiments_per_iteration: 1 });
-    expect((await runEvalCommand(["cand.txt"], { cwd: dir })).code).toBe(0);
-    expect((await runEvalCommand(["cand.txt"], { cwd: dir })).code).toBe(0);
+    await withEnv(
+      { ML_RALPH_ITERATION: undefined, ML_RALPH_MAX_EXPERIMENTS: undefined },
+      async () => {
+        const r = await runEvalCommand(["cand.txt"], { cwd: dir });
+        expect(r.code).toBe(1);
+        expect(r.stderr).toContain("ML_RALPH_ITERATION");
+      },
+    );
+    await withEnv({ ML_RALPH_ITERATION: "../x" }, async () => {
+      expect((await runEvalCommand(["cand.txt"], { cwd: dir })).code).toBe(1);
+    });
+  });
+
+  test("the runner's pinned cap holds when config.json is raised or the cap removed", async () => {
+    await setupEval();
+    await writeConfig({ max_experiments_per_iteration: 50 });
+    await withEnv(
+      { ML_RALPH_ITERATION: "3", ML_RALPH_MAX_EXPERIMENTS: "1" },
+      async () => {
+        expect((await runEvalCommand(["cand.txt"], { cwd: dir })).code).toBe(0);
+        const r = await runEvalCommand(["cand.txt"], { cwd: dir });
+        expect(r.code).toBe(1);
+        expect(r.stderr).toContain(
+          "experiment cap reached for this iteration (1)",
+        );
+        await writeConfig({});
+        expect((await runEvalCommand(["cand.txt"], { cwd: dir })).code).toBe(1);
+      },
+    );
+  });
+
+  test("a garbage pinned cap fails closed", async () => {
+    await setupEval();
+    await withEnv(
+      { ML_RALPH_ITERATION: "3", ML_RALPH_MAX_EXPERIMENTS: "lots" },
+      async () => {
+        expect((await runEvalCommand(["cand.txt"], { cwd: dir })).code).toBe(1);
+      },
+    );
+  });
+
+  test("with no cap anywhere, eval is not limited", async () => {
+    await setupEval();
+    await withEnv(
+      { ML_RALPH_ITERATION: undefined, ML_RALPH_MAX_EXPERIMENTS: undefined },
+      async () => {
+        expect((await runEvalCommand(["cand.txt"], { cwd: dir })).code).toBe(0);
+        expect((await runEvalCommand(["cand.txt"], { cwd: dir })).code).toBe(0);
+      },
+    );
+  });
+
+  test("the runner pins the cap in the claude environment", async () => {
+    await writeConfig({ max_experiments_per_iteration: 4 });
+    const { runner } = run(1);
+    await runner.start();
+    expect((await Bun.file(join(dir, "maxexp-1.txt")).text()).trim()).toBe("4");
   });
 
   test("parallel claims never exceed the cap", async () => {

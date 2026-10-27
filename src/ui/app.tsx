@@ -12,7 +12,9 @@ import {
   type EvalChange,
   ensureInitialized,
   formatBudget,
+  headerBudget,
   type RunCompleteReason,
+  readRecordedBudget,
 } from "../infrastructure/ralph/index.ts";
 import { useTmuxLayout } from "./hooks/index.ts";
 import {
@@ -179,6 +181,27 @@ export function App({ projectPath, enableTeams }: AppProps) {
     },
     [setAgentStatus],
   );
+
+  // Before a run reports: recorded spend and time, and the validated caps from config.json
+  useEffect(() => {
+    if (!config) return;
+    let cancelled = false;
+    readRecordedBudget(projectPath).then((recorded) => {
+      if (cancelled) return;
+      const shown = headerBudget(config, recorded);
+      setBudget(shown.status);
+      if (shown.error) {
+        appendAgentOutput({
+          type: "error",
+          content: shown.error,
+          isError: true,
+        });
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [config, projectPath, appendAgentOutput]);
 
   // Create orchestrator when config is loaded
   useEffect(() => {
@@ -603,14 +626,6 @@ export function App({ projectPath, enableTeams }: AppProps) {
   // Warning if not in tmux
   const showTmuxWarning = !tmuxLayout.isInTmux && tmuxLayout.isInitialized;
 
-  // Caps come from config.json until a run reports them
-  const budgetWithCaps: BudgetStatus = {
-    ...budget,
-    max_usd: budget.max_usd ?? config?.max_usd,
-    max_wall_clock_minutes:
-      budget.max_wall_clock_minutes ?? config?.max_wall_clock_minutes,
-  };
-
   return (
     <Box flexDirection="column" height={terminalHeight}>
       {/* Logo - disabled for now
@@ -632,8 +647,8 @@ export function App({ projectPath, enableTeams }: AppProps) {
       {/* Budget: spend and elapsed time against the caps */}
       <Box paddingX={1}>
         <Text color={colors.textMuted}>
-          Spend: {formatBudget(budgetWithCaps).usd} | Elapsed:{" "}
-          {formatBudget(budgetWithCaps).time}
+          Spend (est.): {formatBudget(budget).usd} | Elapsed:{" "}
+          {formatBudget(budget).time}
         </Text>
       </Box>
 
