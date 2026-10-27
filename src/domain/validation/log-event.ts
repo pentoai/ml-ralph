@@ -232,8 +232,11 @@ export const LOG_EVENT_SCHEMAS: Record<string, LogEventSchema> = {
       eval_id: str,
       reason: oneOf(
         "holdout_not_configured",
+        "holdout_unavailable",
+        "holdout_already_scored",
         "verifier_error",
         "holdout_error",
+        "completion_error",
       ),
       error: str,
     },

@@ -59,7 +59,7 @@ Only the runner ends a run; the agent's `<project_complete>` is ignored. After a
 
 The run ends with a `run_complete` event (eval id, search score, holdout score, verifier verdict) only if the verifier approves, the holdout score meets `success_threshold` and the search-holdout gap is within `holdout_gap_threshold`.
 
-Otherwise the run continues. A failed check logs `completion_rejected` with reason `verifier_rejected`, `holdout_failed` or `overfitting_gap`; the agent's next prompt gets the verdict and one line of reason, with no scores. A check that could not run (verifier error or timeout, unreadable holdout, no `holdout_path`) logs `completion_blocked` with the error or reason `holdout_not_configured`, and the TUI shows it. The check runs again only on a later promotion.
+Otherwise the run continues. A failed check logs `completion_rejected` with reason `verifier_rejected`, `holdout_failed` or `overfitting_gap`; the agent's next prompt gets the verdict and one line of reason, with no scores. A check that could not run (verifier error or timeout, unreadable holdout, no `holdout_path`) logs `completion_blocked` with the error or reason `holdout_not_configured`, and the TUI shows it in the agent output (`Completion blocked for <eval_id>: holdout_not_configured (...)`; the `completion gate` tests in `src/infrastructure/ralph/runner.test.ts` assert that line). The check runs again only on a later promotion.
 
 ## License
 

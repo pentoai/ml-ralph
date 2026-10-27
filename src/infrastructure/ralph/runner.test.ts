@@ -775,12 +775,18 @@ describe("RalphRunner completion gate", () => {
       eval_id: ids[0],
       reason: "holdout_not_configured",
     });
+    // The TUI renders onOutput text events as agent output
     expect(
-      output.some(
+      output.filter(
         (e) =>
           e.type === "text" && e.content.includes("holdout_not_configured"),
       ),
-    ).toBe(true);
+    ).toEqual([
+      {
+        type: "text",
+        content: `Completion blocked for ${ids[0]}: holdout_not_configured (config.json has no holdout_path)`,
+      },
+    ]);
     // The promotion check ran for both evals; the completion verifier only once the path existed
     expect(verifierCalls).toHaveLength(3);
     expect(holdoutCalls).toEqual([ids[1] as string]);
@@ -810,6 +816,28 @@ describe("RalphRunner completion gate", () => {
     await runner.start();
     return { completions, output, ids };
   }
+
+  test("handing in the same eval_id again does not score the holdout again", async () => {
+    holdoutAnswer = async (id) => holdoutOk(id, 0.85);
+    const completions: RunCompleteReason[] = [];
+    const ids: string[] = [];
+    const runner = new FakeRunner(
+      {
+        projectPath: dir,
+        maxIterations: 3,
+        promotionDeps: promotionDeps(),
+        completionDeps: completionDeps(),
+        onComplete: (r) => completions.push(r),
+      },
+      async (i) => {
+        if (i === 1) ids.push(await writeEval(0.91));
+        return `<candidate_complete eval_id="${ids[0]}">`;
+      },
+    );
+    await runner.start();
+    expect(holdoutCalls).toEqual([ids[0] as string]);
+    expect(completions).toEqual(["max_iterations"]);
+  });
 
   test("scoreHoldout runs at most once per eval_id across two iterations", async () => {
     holdoutAnswer = async (id) => holdoutOk(id, id === "eval-1" ? 0.85 : 0.94);

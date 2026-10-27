@@ -1412,7 +1412,13 @@ export interface CompletionRejectedEvent extends BaseEvent {
 export interface CompletionBlockedEvent extends BaseEvent {
   type: "completion_blocked";
   eval_id: string;
-  reason: "holdout_not_configured" | "verifier_error" | "holdout_error";
+  reason:
+    | "holdout_not_configured"
+    | "holdout_unavailable"
+    | "holdout_already_scored"
+    | "verifier_error"
+    | "holdout_error"
+    | "completion_error";
   error: string;
 }
 

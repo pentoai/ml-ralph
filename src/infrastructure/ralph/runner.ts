@@ -25,7 +25,6 @@ import {
 } from "./holdout-guard.ts";
 import { appendLogLine } from "./log-command.ts";
 import {
-  defaultGitHead,
   judgeCandidate,
   type PromotedCandidate,
   type PromotionDeps,
@@ -60,6 +59,14 @@ export interface RunnerConfig {
   /** Replaces the holdout lookup and scoring of the completion gate (tests); its verifier is promotionDeps.verify */
   completionDeps?: Partial<CompletionDeps>;
 }
+
+export type CompletionBlockedReason =
+  | "holdout_not_configured"
+  | "holdout_unavailable"
+  | "holdout_already_scored"
+  | "verifier_error"
+  | "holdout_error"
+  | "completion_error";
 
 export interface CompletionDeps {
   scoreHoldout: (evalId: string) => Promise<HoldoutResult>;
@@ -316,10 +323,7 @@ Only the runner decides whether a candidate is promoted, and only the runner end
    */
   private async checkCompletion(p: PromotedCandidate): Promise<boolean> {
     const evalId = p.evalId;
-    const blocked = async (
-      reason: "holdout_not_configured" | "verifier_error" | "holdout_error",
-      error: string,
-    ) => {
+    const blocked = async (reason: CompletionBlockedReason, error: string) => {
       await this.logCompletion({
         type: "completion_blocked",
         eval_id: evalId,
@@ -357,7 +361,7 @@ Only the runner decides whether a candidate is promoted, and only the runner end
     try {
       if (this.holdoutScored.has(evalId)) {
         return await blocked(
-          "holdout_error",
+          "holdout_already_scored",
           "the holdout was already scored for this eval_id",
         );
       }
@@ -370,21 +374,18 @@ Only the runner decides whether a candidate is promoted, and only the runner end
         return await blocked(
           holdoutPath.notConfigured
             ? "holdout_not_configured"
-            : "holdout_error",
+            : "holdout_unavailable",
           oneLine(holdoutPath.error),
         );
       }
 
-      const gitHead = this.config.promotionDeps?.gitHead ?? defaultGitHead;
-      const head = await gitHead(this.config.projectPath, true);
-      if (!head.ok) return await blocked("verifier_error", oneLine(head.error));
       const verify = this.config.promotionDeps?.verify ?? verifyCandidate;
       let verdict: Awaited<ReturnType<typeof verifyCandidate>>;
       try {
         verdict = await verify({
           projectPath: this.config.projectPath,
           hypothesis: p.hypothesis,
-          candidateRef: head.ref,
+          candidateRef: p.candidateRef,
           baselineRef: p.baselineRef,
         });
       } catch (error) {
@@ -446,7 +447,7 @@ Only the runner decides whether a candidate is promoted, and only the runner end
       });
       return true;
     } catch (error) {
-      return await blocked("holdout_error", errorText(error));
+      return await blocked("completion_error", errorText(error));
     }
   }
 

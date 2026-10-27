@@ -541,7 +541,7 @@ A hypothesis is rejected unless `id`, `claim`, `expected_delta`, `rubrics` (at l
 | `overfitting` (runner-only) | `eval_id`, `search_score`, `holdout_score`, `holdout_gap`, `threshold` |
 | `run_complete` (runner-only) | `eval_id`, `search_score`, `holdout_score`, `holdout_gap`, `verifier_verdict` (`approve`), `verifier_id` |
 | `completion_rejected` (runner-only) | `eval_id`, `reason` (`verifier_rejected`, `holdout_failed`, `overfitting_gap`), `detail`; optional `verifier_id` |
-| `completion_blocked` (runner-only) | `eval_id`, `reason` (`holdout_not_configured`, `verifier_error`, `holdout_error`), `error` |
+| `completion_blocked` (runner-only) | `eval_id`, `reason` (`holdout_not_configured`, `holdout_unavailable`, `holdout_already_scored`, `verifier_error`, `holdout_error`, `completion_error`), `error` |
 | `holdout_access` (runner-only) | `tool` (name of the tool whose input contained the holdout path), `iteration` |
 | `promotion` (runner-only) | `verdict` (`promoted`, `rejected`), `reason`; optional `candidate_eval_id`, `incumbent_eval_id`, `verifier_id`, `candidate_mean`, `reference_mean` |
 | `verifier_verdict` (runner-only) | `id`, `verdict`, `checks`, `reason`, `output_path`; optional `model` |
