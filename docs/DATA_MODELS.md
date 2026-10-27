@@ -496,7 +496,9 @@ rubrics: expected non-empty array of non-empty strings
 kill_criterion: missing required field, expected non-empty string
 ```
 
-An unknown type, JSON that does not parse or is not an object, a `type` in the JSON that differs from the argument, and runner-only types (`promotion`, `verifier_verdict`, `contract_relocked`, `eval`, `overfitting`, `holdout_access`, `run_complete`, `completion_rejected`, `completion_blocked`) are rejected the same way. Fields not in the schema are kept.
+An unknown type, JSON that does not parse or is not an object, a `type` in the JSON that differs from the argument, and runner-only types (`promotion`, `verifier_verdict`, `contract_relocked`, `eval`, `candidate_rejected`, `overfitting`, `holdout_access`, `run_complete`, `completion_rejected`, `completion_blocked`) are rejected the same way. Fields not in the schema are kept.
+
+The runner's own appends (`appendValidatedEvent` in `log-command.ts`: `phase`, `eval`, `promotion`, `overfitting`, `contract_relocked`, completion and holdout events) pass the same schemas. An event that fails is not appended; it is written to stderr and shown as an error line in the TUI. Lines already in a log that would fail today are still read: the parser and panels do not validate.
 
 ### Hypothesis
 
@@ -538,6 +540,7 @@ A hypothesis is rejected unless `id`, `claim`, `expected_delta`, `rubrics` (at l
 | `parallel_result` | `hypothesis_id`, `agent`, `metrics`, `branch` |
 | `parallel_synthesis` | `winner`, `reason`, `merged_branch` |
 | `eval` (runner-only) | `eval_id`, `status` (`ok`, `failed`), `candidate`; optional `mean`, `std`, `reason` |
+| `candidate_rejected` (runner-only) | `reason` (`eval_not_locked`: a `<candidate_complete>` arrived before the eval contract was locked); optional `eval_id` |
 | `overfitting` (runner-only) | `eval_id`, `threshold` |
 | `run_complete` (runner-only) | `eval_id`, `search_score`, `holdout_score`, `verifier_verdict` (`approve`), `verifier_id` |
 | `completion_rejected` (runner-only) | `eval_id`, `reason` (`verifier_rejected`, `holdout_failed`, `overfitting_gap`), `detail`; optional `verifier_id` |

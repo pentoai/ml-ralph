@@ -69,6 +69,37 @@ export async function appendLogLine(
   await appendFile(logPath, needsNewline ? `\n${line}` : line);
 }
 
+/** A runner-written event that failed its schema: why, in one block of text */
+export interface InvalidRunnerEvent {
+  type: string;
+  message: string;
+}
+
+/**
+ * Append an event the runner (or `ml-ralph eval`) wrote itself, but only when
+ * it passes the same schema `ml-ralph log` applies. An invalid event is not
+ * appended: it goes to stderr and to `onInvalid` (the TUI error line) and the
+ * call returns false. Write failures still throw, as with appendLogLine.
+ */
+export async function appendValidatedEvent(
+  projectDir: string,
+  event: Record<string, unknown>,
+  onInvalid?: (invalid: InvalidRunnerEvent) => void,
+): Promise<boolean> {
+  const type = typeof event.type === "string" ? event.type : "(missing)";
+  const { ts: _ts, type: _type, ...body } = event;
+  const validation = validateLogEvent(type, body);
+  if (validation.valid) {
+    await appendLogLine(projectDir, event);
+    return true;
+  }
+  const lines = validation.errors.map((e) => `${e.field}: ${e.message}`);
+  const message = `Invalid runner ${type} event, not logged: ${lines.join("; ")}`;
+  process.stderr.write(`${message}\n`);
+  onInvalid?.({ type, message });
+  return false;
+}
+
 /**
  * Run `ml-ralph log <type> '<json>'`. Appends nothing unless the event
  * validates; every failure names the offending field and what was expected.

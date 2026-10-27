@@ -13,7 +13,10 @@ import {
   type EvalMetricsOk,
   readEvalMetrics,
 } from "./eval-metrics.ts";
-import { appendLogLine } from "./log-command.ts";
+import {
+  appendValidatedEvent,
+  type InvalidRunnerEvent,
+} from "./log-command.ts";
 import { readLogFile } from "./log-parser.ts";
 import type {
   EvalEvent,
@@ -58,6 +61,8 @@ export interface JudgeCandidateOptions {
   iterationStartedAt: string;
   /** Hashes the runner pinned for this run; what the eval files must still match */
   lockedFiles: EvalLock["files"];
+  /** Called when the runner's own promotion event fails its schema and is not logged */
+  onInvalidEvent?: (invalid: InvalidRunnerEvent) => void;
 }
 
 type JudgeState = Partial<
@@ -292,7 +297,7 @@ export async function judgeCandidate(
         : {}),
     };
     try {
-      await appendLogLine(projectPath, event);
+      await appendValidatedEvent(projectPath, event, options.onInvalidEvent);
     } catch {
       // The decision stands even if the log line could not be written
     }
