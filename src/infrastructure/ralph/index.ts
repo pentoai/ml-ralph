@@ -61,7 +61,6 @@ export type {
 } from "./log-parser.ts";
 export {
   aggregateEvents,
-  appendEvent,
   readKanbanFile,
   readLogFile,
   readPrdFile,

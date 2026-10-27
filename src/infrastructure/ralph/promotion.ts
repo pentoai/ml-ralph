@@ -455,6 +455,9 @@ async function judge(
     candidateRef: head.ref,
     baselineRef: baselineRef ?? referenceRef,
     ...(incumbent ? { incumbentRef: incumbent.ref } : {}),
+    ...(options.onInvalidEvent
+      ? { onInvalidEvent: options.onInvalidEvent }
+      : {}),
   };
   const verdict = await verify(verifierOptions);
   state.verifier_id = verdict.id;

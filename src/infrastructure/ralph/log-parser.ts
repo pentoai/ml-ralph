@@ -311,31 +311,3 @@ export function watchLogFile(
     }
   };
 }
-
-/**
- * Append an event to the log file
- */
-export async function appendEvent(
-  projectPath: string,
-  event: Omit<RalphEvent, "ts">,
-): Promise<boolean> {
-  const logPath = `${projectPath}/.ml-ralph/log.jsonl`;
-
-  try {
-    const eventWithTs = {
-      ts: new Date().toISOString(),
-      ...event,
-    };
-
-    const line = `${JSON.stringify(eventWithTs)}\n`;
-
-    // Append to file
-    const file = Bun.file(logPath);
-    const existing = (await file.exists()) ? await file.text() : "";
-    await Bun.write(logPath, existing + line);
-
-    return true;
-  } catch {
-    return false;
-  }
-}

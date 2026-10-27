@@ -79,6 +79,14 @@ describe("invalid runner events", () => {
       expect(await readLines()).toHaveLength(1);
       expect(seen[0]).toContain("phase");
       expect(seen[0]).toContain("not logged");
+      expect(stderr).not.toHaveBeenCalled(); // the callback reports it
+      expect(
+        await appendValidatedEvent(dir, {
+          type: "phase",
+          phase: "NOPE",
+          summary: "s",
+        }),
+      ).toBe(false);
       expect(stderr.mock.calls.map((c) => String(c[0])).join("")).toContain(
         "Invalid runner phase event",
       );

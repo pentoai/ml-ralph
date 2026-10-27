@@ -403,6 +403,7 @@ Only the runner decides whether a candidate is promoted, and only the runner end
           hypothesis: p.hypothesis,
           candidateRef: p.candidateRef,
           baselineRef: p.baselineRef,
+          onInvalidEvent: this.reportInvalidEvent,
         });
       } catch (error) {
         return await blocked("verifier_error", errorText(error));
@@ -618,6 +619,7 @@ Only the runner decides whether a candidate is promoted, and only the runner end
 
   /** Show an invalid runner event as an error line in the TUI (it is already on stderr) */
   private reportInvalidEvent = (invalid: { message: string }): void => {
+    process.stderr.write(`${invalid.message}\n`);
     this.config.onOutput?.({
       type: "error",
       content: invalid.message,

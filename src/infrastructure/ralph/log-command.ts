@@ -95,8 +95,8 @@ export async function appendValidatedEvent(
   }
   const lines = validation.errors.map((e) => `${e.field}: ${e.message}`);
   const message = `Invalid runner ${type} event, not logged: ${lines.join("; ")}`;
-  process.stderr.write(`${message}\n`);
-  onInvalid?.({ type, message });
+  if (onInvalid) onInvalid({ type, message });
+  else process.stderr.write(`${message}\n`);
   return false;
 }
 
