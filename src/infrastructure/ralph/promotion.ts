@@ -65,13 +65,28 @@ type JudgeState = Partial<
     PromotionEvent,
     "incumbent_eval_id" | "verifier_id" | "candidate_mean" | "reference_mean"
   >
->;
+> & { promoted?: PromotedCandidate };
+
+/** What the completion gate needs about a candidate that was just promoted */
+export interface PromotedCandidate {
+  evalId: string;
+  /** Mean from the eval's metrics.json, never from the agent's events */
+  searchScore: number;
+  contract: EvalContract;
+  /** Commit of the candidate */
+  candidateRef: string;
+  /** Commit the run started from; the completion verifier diffs against it */
+  baselineRef: string;
+  hypothesis: VerifyCandidateOptions["hypothesis"];
+}
 
 export interface PromotionDecision {
   verdict: PromotionEvent["verdict"];
   reason: string;
   /** Terse text for the agent's next prompt: the verdict and one line of reason */
   feedback: string;
+  /** Set only when verdict is "promoted" */
+  promoted?: PromotedCandidate;
 }
 
 /**
@@ -285,6 +300,9 @@ export async function judgeCandidate(
       verdict,
       reason: text,
       feedback: `Runner decision on ${claimedEvalId ? JSON.stringify(claimedEvalId.slice(0, MAX_ID_CHARS)) : "your candidate"}: ${verdict} - ${text}`,
+      ...(verdict === "promoted" && state.promoted
+        ? { promoted: state.promoted }
+        : {}),
     };
   };
 
@@ -447,6 +465,14 @@ async function judge(
   const tmp = `${projectPath}/${INCUMBENT_PATH}.tmp`;
   await Bun.write(tmp, `${JSON.stringify(promoted, null, 2)}\n`);
   await rename(tmp, `${projectPath}/${INCUMBENT_PATH}`);
+  state.promoted = {
+    evalId: metrics.eval_id,
+    searchScore: metrics.mean,
+    contract,
+    candidateRef: head.ref,
+    baselineRef: baselineRef ?? referenceRef,
+    hypothesis,
+  };
   return finish("promoted", `${staleNote}${scoreText}; verifier approved`);
 }
 

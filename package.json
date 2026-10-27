@@ -44,7 +44,6 @@
     "@opentui/core": "^0.1.95",
     "@opentui/react": "^0.1.95",
     "asciichart": "^1.5.25",
-    "node-pty": "^1.1.0",
     "react": "^19.2.4",
     "zustand": "^5.0.12"
   }

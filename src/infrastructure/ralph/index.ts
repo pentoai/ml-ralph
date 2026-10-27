@@ -86,6 +86,8 @@ export type {
 } from "./runner.ts";
 export { createRunner, RalphRunner } from "./runner.ts";
 export type {
+  CompletionBlockedEvent,
+  CompletionRejectedEvent,
   ContractRelockedEvent,
   DecisionEvent,
   EvalEvent,
@@ -103,6 +105,7 @@ export type {
   PromotionEvent,
   RalphEvent,
   ResearchEvent,
+  RunCompleteEvent,
   StatusEvent,
   VerifierVerdictEvent,
 } from "./templates.ts";

@@ -2,16 +2,16 @@
  * Sealed holdout - the runner scores each eval on data the agent never sees, once
  */
 
-import { open, realpath, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, open, realpath, rename, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { EvalContract } from "../../domain/validation/index.ts";
 import {
   defaultPython,
   HOLDOUT_PATH_ENV,
   readLockedEval,
   runEvaluatorSeeds,
-  writeMetrics,
 } from "./eval-command.ts";
 import {
   EVALS_DIR,
@@ -22,7 +22,45 @@ import { appendLogLine } from "./log-command.ts";
 import type { OverfittingEvent } from "./templates.ts";
 
 const HOLDOUT_SPLIT = "holdout";
-const CLAIM_FILE = "holdout.claim";
+
+/**
+ * What the runner keeps about one eval's holdout run. It lives next to the
+ * user-level config, never in the project: the agent reads the project's
+ * files, and a holdout score there would let it tune to the holdout.
+ */
+interface HoldoutRecord {
+  status: "ok" | "failed";
+  score?: number;
+  gap?: number;
+  reason?: string;
+  scored_at: string;
+}
+
+/** Runner-only directory for this project's holdout claims and records */
+async function holdoutStateDir(
+  projectDir: string,
+  env: Record<string, string | undefined>,
+): Promise<string> {
+  let key = resolve(projectDir);
+  try {
+    key = await realpath(projectDir);
+  } catch {
+    // Keep the resolved path
+  }
+  const id = createHash("sha256").update(key).digest("hex").slice(0, 16);
+  return join(dirname(holdoutConfigFile(env)), "holdout", id);
+}
+
+async function readRecord(file: string): Promise<HoldoutRecord | null> {
+  try {
+    const value = (await Bun.file(file).json()) as Partial<HoldoutRecord>;
+    return value?.status === "ok" || value?.status === "failed"
+      ? (value as HoldoutRecord)
+      : null;
+  } catch {
+    return null;
+  }
+}
 
 export interface HoldoutOptions {
   projectPath: string;
@@ -45,7 +83,13 @@ export type HoldoutResult =
       /** This eval was already scored; nothing ran and the recorded result is returned */
       alreadyScored: boolean;
     }
-  | { ok: false; error: string; alreadyScored?: boolean };
+  | {
+      ok: false;
+      error: string;
+      alreadyScored?: boolean;
+      /** No holdout_path is set for this project (as opposed to one that cannot be used) */
+      notConfigured?: boolean;
+    };
 
 /** The user-level config file: $XDG_CONFIG_HOME/ml-ralph/config.json, else ~/.config/ml-ralph/config.json */
 export function holdoutConfigFile(
@@ -74,7 +118,8 @@ export async function readHoldoutPath(
   projectPath: string,
   env: Record<string, string | undefined> = process.env,
 ): Promise<
-  { ok: true; path: string; realPath: string } | { ok: false; error: string }
+  | { ok: true; path: string; realPath: string }
+  | { ok: false; error: string; notConfigured?: boolean }
 > {
   const file = holdoutConfigFile(env);
   const keys = [resolve(projectPath)];
@@ -95,6 +140,7 @@ export async function readHoldoutPath(
       error: missing
         ? `${file} does not exist; add ${keyName(keys[0] as string)}.holdout_path`
         : `${file} is not valid JSON (${error instanceof Error ? error.message : String(error)})`,
+      ...(missing ? { notConfigured: true } : {}),
     };
   }
 
@@ -110,6 +156,7 @@ export async function readHoldoutPath(
     return {
       ok: false,
       error: `${file} has no ${keyName(keys[0] as string)}.holdout_path`,
+      notConfigured: true,
     };
   }
 
@@ -145,17 +192,18 @@ export function holdoutGap(
 }
 
 function recordedResult(
+  record: HoldoutRecord | null,
   metrics: EvalMetricsOk,
   contract: EvalContract,
 ): HoldoutResult | null {
-  if (metrics.holdout_status === undefined) return null;
-  const { holdout_score: score, holdout_gap: gap } = metrics;
-  if (metrics.holdout_status === "ok") {
+  if (record === null) return null;
+  const { score, gap } = record;
+  if (record.status === "ok") {
     if (!Number.isFinite(score) || !Number.isFinite(gap)) {
       return {
         ok: false,
         alreadyScored: true,
-        error: `Eval ${metrics.eval_id} has a malformed holdout record in metrics.json; it is not scored again.`,
+        error: `Eval ${metrics.eval_id} has a malformed holdout record; it is not scored again.`,
       };
     }
     return {
@@ -172,7 +220,7 @@ function recordedResult(
   return {
     ok: false,
     alreadyScored: true,
-    error: `The holdout run for eval ${metrics.eval_id} already failed (${metrics.holdout_reason ?? "no reason recorded"}); it is not scored again.`,
+    error: `The holdout run for eval ${metrics.eval_id} already failed (${record.reason ?? "no reason recorded"}); it is not scored again.`,
   };
 }
 
@@ -211,7 +259,13 @@ export async function scoreHoldout(
     };
   }
 
-  const recorded = recordedResult(metrics, contract);
+  const stateDir = await holdoutStateDir(projectDir, env);
+  const recordFile = join(stateDir, `${evalId}.json`);
+  const recorded = recordedResult(
+    await readRecord(recordFile),
+    metrics,
+    contract,
+  );
   if (recorded) return recorded;
 
   if (
@@ -225,11 +279,18 @@ export async function scoreHoldout(
   }
 
   const holdout = await readHoldoutPath(projectDir, env);
-  if (!holdout.ok) return { ok: false, error: holdout.error };
+  if (!holdout.ok) {
+    return {
+      ok: false,
+      error: holdout.error,
+      ...(holdout.notConfigured ? { notConfigured: true } : {}),
+    };
+  }
 
   // Claim the one run before starting it; a crash mid-run still counts
-  const claimFile = join(projectDir, EVALS_DIR, evalId, CLAIM_FILE);
+  const claimFile = join(stateDir, `${evalId}.claim`);
   try {
+    await mkdir(stateDir, { recursive: true });
     const claim = await open(claimFile, "wx");
     await claim.writeFile(`${new Date().toISOString()}\n`);
     await claim.close();
@@ -255,13 +316,17 @@ export async function scoreHoldout(
   });
 
   const scoredAt = new Date().toISOString();
+  const saveRecord = async (record: HoldoutRecord) => {
+    const tmp = `${recordFile}.tmp`;
+    await Bun.write(tmp, `${JSON.stringify(record, null, 2)}\n`);
+    await rename(tmp, recordFile);
+  };
   if (!run.ok) {
     const reason = run.reason;
-    await writeMetrics(projectDir, {
-      ...metrics,
-      holdout_status: "failed",
-      holdout_reason: reason,
-      holdout_scored_at: scoredAt,
+    await saveRecord({
+      status: "failed",
+      reason,
+      scored_at: scoredAt,
     });
     return {
       ok: false,
@@ -272,12 +337,11 @@ export async function scoreHoldout(
   const holdoutScore =
     run.scores.reduce((sum, s) => sum + s.score, 0) / run.scores.length;
   const gap = holdoutGap(contract.direction, metrics.mean, holdoutScore);
-  await writeMetrics(projectDir, {
-    ...metrics,
-    holdout_status: "ok",
-    holdout_score: holdoutScore,
-    holdout_gap: gap,
-    holdout_scored_at: scoredAt,
+  await saveRecord({
+    status: "ok",
+    score: holdoutScore,
+    gap,
+    scored_at: scoredAt,
   });
 
   const blocked = gap > contract.holdout_gap_threshold;
@@ -285,9 +349,6 @@ export async function scoreHoldout(
     const event: Omit<OverfittingEvent, "ts"> = {
       type: "overfitting",
       eval_id: evalId,
-      search_score: metrics.mean,
-      holdout_score: holdoutScore,
-      holdout_gap: gap,
       threshold: contract.holdout_gap_threshold,
     };
     await appendLogLine(projectDir, event);

@@ -200,10 +200,41 @@ export const LOG_EVENT_SCHEMAS: Record<string, LogEventSchema> = {
     runnerOnly: true,
     fields: {
       eval_id: str,
+      threshold: num,
+    },
+  },
+  run_complete: {
+    runnerOnly: true,
+    fields: {
+      eval_id: str,
       search_score: num,
       holdout_score: num,
-      holdout_gap: num,
-      threshold: num,
+      verifier_verdict: oneOf("approve"),
+      verifier_id: str,
+    },
+  },
+  completion_rejected: {
+    runnerOnly: true,
+    fields: {
+      eval_id: str,
+      reason: oneOf("verifier_rejected", "holdout_failed", "overfitting_gap"),
+      detail: str,
+      verifier_id: optional(str),
+    },
+  },
+  completion_blocked: {
+    runnerOnly: true,
+    fields: {
+      eval_id: str,
+      reason: oneOf(
+        "holdout_not_configured",
+        "holdout_unavailable",
+        "holdout_already_scored",
+        "verifier_error",
+        "holdout_error",
+        "completion_error",
+      ),
+      error: str,
     },
   },
   holdout_access: {

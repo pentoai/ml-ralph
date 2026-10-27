@@ -3,11 +3,13 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   mkdir,
   mkdtemp,
   readdir,
   readFile,
+  realpath,
   rm,
   symlink,
 } from "node:fs/promises";
@@ -111,6 +113,19 @@ const jsonl = async (name: string) => {
     .split("\n")
     .map((l) => JSON.parse(l) as Record<string, unknown>);
 };
+/** The runner-only record, outside the project */
+async function holdoutRecordFile(evalId: string): Promise<string> {
+  const id = createHash("sha256")
+    .update(await realpath(dir))
+    .digest("hex")
+    .slice(0, 16);
+  return join(configHome, "ml-ralph", "holdout", id, `${evalId}.json`);
+}
+const holdoutRecord = async (evalId: string) =>
+  (await Bun.file(await holdoutRecordFile(evalId)).json()) as Record<
+    string,
+    unknown
+  >;
 const calls = () => jsonl(".ml-ralph/eval/calls.jsonl");
 const logEvents = () => jsonl(".ml-ralph/log.jsonl");
 const holdoutCalls = async () =>
@@ -262,14 +277,17 @@ describe("scoreHoldout", () => {
       { split: "holdout", seed: 0, holdout_env: true },
       { split: "holdout", seed: 1, holdout_env: true },
     ]);
-    const metrics = await readEvalMetrics(dir, evalId);
-    expect(metrics).toMatchObject({
+    expect(await readEvalMetrics(dir, evalId)).toMatchObject({
       status: "ok",
       mean: 0.9,
-      holdout_status: "ok",
-      holdout_score: 0.89,
     });
-    expect((metrics as { holdout_gap: number }).holdout_gap).toBeCloseTo(0.01);
+    const rawMetrics = await Bun.file(
+      join(dir, EVALS_DIR, evalId, "metrics.json"),
+    ).text();
+    expect(rawMetrics).not.toContain("holdout");
+    const record = await holdoutRecord(evalId);
+    expect(record).toMatchObject({ status: "ok", score: 0.89 });
+    expect(record.gap as number).toBeCloseTo(0.01);
     expect((await logEvents()).map((e) => e.type)).not.toContain("overfitting");
   });
 
@@ -296,13 +314,15 @@ describe("scoreHoldout", () => {
     });
     const events = (await logEvents()).filter((e) => e.type === "overfitting");
     expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({
-      eval_id: evalId,
-      search_score: 0.9,
-      holdout_score: 0.7,
-      threshold: 0.02,
-    });
-    expect(events[0]?.holdout_gap as number).toBeCloseTo(0.2);
+    // No scores: the agent reads log.jsonl
+    expect(Object.keys(events[0] ?? {}).sort()).toEqual([
+      "eval_id",
+      "threshold",
+      "ts",
+      "type",
+    ]);
+    expect(events[0]).toMatchObject({ eval_id: evalId, threshold: 0.02 });
+    expect(await holdoutRecord(evalId)).toMatchObject({ score: 0.7 });
   });
 
   test("uses the contract direction when lower is better", async () => {
@@ -390,11 +410,8 @@ describe("scoreHoldout", () => {
 
     expect(first.ok).toBe(false);
     expect(!first.ok && first.error).not.toContain(holdoutFile);
-    const metrics = await readEvalMetrics(dir, evalId);
-    expect(metrics).toMatchObject({ status: "ok", holdout_status: "failed" });
-    const raw = await Bun.file(
-      join(dir, EVALS_DIR, evalId, "metrics.json"),
-    ).text();
+    expect(await holdoutRecord(evalId)).toMatchObject({ status: "failed" });
+    const raw = await Bun.file(await holdoutRecordFile(evalId)).text();
     expect(raw).toContain("<holdout>.missing");
     expect(raw).not.toContain(holdoutFile);
 
@@ -410,9 +427,7 @@ describe("scoreHoldout", () => {
     const result = await scoreHoldout(evalId, { projectPath: dir, env });
 
     expect(result.ok).toBe(false);
-    const raw = await Bun.file(
-      join(dir, EVALS_DIR, evalId, "metrics.json"),
-    ).text();
+    const raw = await Bun.file(await holdoutRecordFile(evalId)).text();
     expect(raw).toContain("<holdout>yyy");
     // The 300-char cut would have started inside the path; no tail of it may remain
     for (const tail of [
@@ -505,9 +520,16 @@ describe("the holdout path stays out of the project and the prompts", () => {
           expect(`${file}: ${text.includes(secret)}`).toBe(`${file}: false`);
         }
       }
-      expect(
-        (await readEvalMetrics(dir, evalId)) as { holdout_score?: number },
-      ).toMatchObject({ holdout_score: holdoutScore });
+      expect(await holdoutRecord(evalId)).toMatchObject({
+        score: holdoutScore,
+      });
+      // No holdout score or gap in anything the agent reads
+      for (const file of files) {
+        const text = await readFile(file, "utf8");
+        expect(`${file}: ${/holdout_(score|gap)\b/.test(text)}`).toBe(
+          `${file}: false`,
+        );
+      }
     });
   }
 });

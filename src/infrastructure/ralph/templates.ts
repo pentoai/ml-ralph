@@ -1378,13 +1378,43 @@ export interface PromotionEvent extends BaseEvent {
 export interface OverfittingEvent extends BaseEvent {
   type: "overfitting";
   eval_id: string;
-  /** Mean from the eval's metrics.json */
-  search_score: number;
-  holdout_score: number;
-  /** Search score minus holdout score, in the contract's direction */
-  holdout_gap: number;
-  /** holdout_gap_threshold from the locked contract */
+  /** holdout_gap_threshold from the locked contract. No scores: the agent reads this log */
   threshold: number;
+}
+
+/** Written by the runner (never the agent) when a promoted candidate passes the verifier and the sealed holdout; the run ends */
+export interface RunCompleteEvent extends BaseEvent {
+  type: "run_complete";
+  eval_id: string;
+  search_score: number;
+  /** The only place a holdout score is written into the project: the run is over when this is logged */
+  holdout_score: number;
+  verifier_verdict: "approve";
+  verifier_id: string;
+}
+
+/** Written by the runner (never the agent) when the completion check fails; the run continues */
+export interface CompletionRejectedEvent extends BaseEvent {
+  type: "completion_rejected";
+  eval_id: string;
+  reason: "verifier_rejected" | "holdout_failed" | "overfitting_gap";
+  /** One line, without scores */
+  detail: string;
+  verifier_id?: string;
+}
+
+/** Written by the runner (never the agent) when the completion check could not run; the run continues */
+export interface CompletionBlockedEvent extends BaseEvent {
+  type: "completion_blocked";
+  eval_id: string;
+  reason:
+    | "holdout_not_configured"
+    | "holdout_unavailable"
+    | "holdout_already_scored"
+    | "verifier_error"
+    | "holdout_error"
+    | "completion_error";
+  error: string;
 }
 
 /** Written by the runner (never the agent) when a tool call named the sealed holdout path; the run ends with reason holdout_access */
@@ -1486,6 +1516,9 @@ export type RalphEvent =
   | VerifierVerdictEvent
   | PromotionEvent
   | OverfittingEvent
+  | RunCompleteEvent
+  | CompletionRejectedEvent
+  | CompletionBlockedEvent
   | HoldoutAccessEvent
   | ContractRelockedEvent
   | StrategicRetreatEvent
