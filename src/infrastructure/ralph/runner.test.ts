@@ -3,7 +3,14 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { appendFile, mkdir, mkdtemp, rm } from "node:fs/promises";
+import {
+  appendFile,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { lockEvalContract, readEvalLock } from "./eval-lock.ts";
@@ -753,6 +760,40 @@ describe("RalphRunner completion gate", () => {
     const [event] = await logEvents("completion_rejected");
     expect(event).toMatchObject({ reason: "overfitting_gap" });
     expect(runner.prompts[1]).toContain("rejected (overfitting_gap)");
+  });
+
+  test("a rejected completion leaves no holdout score or gap in any project file", async () => {
+    // A distinctive score and gap that no other project file would contain
+    holdoutAnswer = async (id) => ({
+      ...holdoutOk(id, 0.80123, true),
+      holdoutGap: 0.10987,
+    });
+    const { runner } = await run([0.91]);
+    expect(await logEvents("completion_rejected")).toHaveLength(1);
+
+    const entries = await readdir(dir, {
+      recursive: true,
+      withFileTypes: true,
+    });
+    const files = entries
+      .filter((e) => e.isFile())
+      .map((e) => join(e.parentPath, e.name));
+    expect(files.length).toBeGreaterThan(3);
+    for (const file of files) {
+      const text = await readFile(file, "utf8");
+      for (const secret of [
+        "0.80123",
+        "0.10987",
+        "holdout_score",
+        'holdout_gap"',
+      ]) {
+        expect(`${file}: ${text.includes(secret)}`).toBe(`${file}: false`);
+      }
+    }
+    for (const prompt of runner.prompts) {
+      expect(prompt).not.toContain("0.80123");
+      expect(prompt).not.toContain("0.10987");
+    }
   });
 
   test("scoreHoldout throwing or failing blocks completion and the run continues", async () => {

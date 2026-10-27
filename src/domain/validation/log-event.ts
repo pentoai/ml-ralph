@@ -200,9 +200,6 @@ export const LOG_EVENT_SCHEMAS: Record<string, LogEventSchema> = {
     runnerOnly: true,
     fields: {
       eval_id: str,
-      search_score: num,
-      holdout_score: num,
-      holdout_gap: num,
       threshold: num,
     },
   },
@@ -212,7 +209,6 @@ export const LOG_EVENT_SCHEMAS: Record<string, LogEventSchema> = {
       eval_id: str,
       search_score: num,
       holdout_score: num,
-      holdout_gap: num,
       verifier_verdict: oneOf("approve"),
       verifier_id: str,
     },

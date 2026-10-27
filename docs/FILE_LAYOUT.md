@@ -26,7 +26,7 @@ your-ml-project/
 │   ├── incumbent.json            # Runner-written pointer to the current best candidate
 │   ├── baseline.json             # Runner-written commit the run started from
 │   ├── evals/
-│   │   └── <eval_id>/metrics.json    # Runner-written scores from `ml-ralph eval`, plus the holdout score once scored (see DATA_MODELS.md)
+│   │   └── <eval_id>/metrics.json    # Runner-written scores from `ml-ralph eval`
 │   ├── eval/
 │   │   ├── evaluate.py           # Eval script (drafted in SETUP, locked on PRD approval)
 │   │   ├── contract.json         # Eval contract (see DATA_MODELS.md)

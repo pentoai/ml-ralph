@@ -441,7 +441,6 @@ Only the runner decides whether a candidate is promoted, and only the runner end
         eval_id: evalId,
         search_score: holdout.searchScore,
         holdout_score: holdout.holdoutScore,
-        holdout_gap: holdout.holdoutGap,
         verifier_verdict: "approve",
         verifier_id: verdict.id,
       });
