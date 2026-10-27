@@ -1387,6 +1387,35 @@ export interface OverfittingEvent extends BaseEvent {
   threshold: number;
 }
 
+/** Written by the runner (never the agent) when a promoted candidate passes the verifier and the sealed holdout; the run ends */
+export interface RunCompleteEvent extends BaseEvent {
+  type: "run_complete";
+  eval_id: string;
+  search_score: number;
+  holdout_score: number;
+  holdout_gap: number;
+  verifier_verdict: "approve";
+  verifier_id: string;
+}
+
+/** Written by the runner (never the agent) when the completion check fails; the run continues */
+export interface CompletionRejectedEvent extends BaseEvent {
+  type: "completion_rejected";
+  eval_id: string;
+  reason: "verifier_rejected" | "holdout_failed" | "overfitting_gap";
+  /** One line, without scores */
+  detail: string;
+  verifier_id?: string;
+}
+
+/** Written by the runner (never the agent) when the completion check could not run; the run continues */
+export interface CompletionBlockedEvent extends BaseEvent {
+  type: "completion_blocked";
+  eval_id: string;
+  reason: "holdout_not_configured" | "verifier_error" | "holdout_error";
+  error: string;
+}
+
 /** Written by the runner (never the agent) when a tool call named the sealed holdout path; the run ends with reason holdout_access */
 export interface HoldoutAccessEvent extends BaseEvent {
   type: "holdout_access";
@@ -1486,6 +1515,9 @@ export type RalphEvent =
   | VerifierVerdictEvent
   | PromotionEvent
   | OverfittingEvent
+  | RunCompleteEvent
+  | CompletionRejectedEvent
+  | CompletionBlockedEvent
   | HoldoutAccessEvent
   | ContractRelockedEvent
   | StrategicRetreatEvent

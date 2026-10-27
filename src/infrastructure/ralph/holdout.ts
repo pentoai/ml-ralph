@@ -45,7 +45,13 @@ export type HoldoutResult =
       /** This eval was already scored; nothing ran and the recorded result is returned */
       alreadyScored: boolean;
     }
-  | { ok: false; error: string; alreadyScored?: boolean };
+  | {
+      ok: false;
+      error: string;
+      alreadyScored?: boolean;
+      /** No holdout_path is set for this project (as opposed to one that cannot be used) */
+      notConfigured?: boolean;
+    };
 
 /** The user-level config file: $XDG_CONFIG_HOME/ml-ralph/config.json, else ~/.config/ml-ralph/config.json */
 export function holdoutConfigFile(
@@ -74,7 +80,8 @@ export async function readHoldoutPath(
   projectPath: string,
   env: Record<string, string | undefined> = process.env,
 ): Promise<
-  { ok: true; path: string; realPath: string } | { ok: false; error: string }
+  | { ok: true; path: string; realPath: string }
+  | { ok: false; error: string; notConfigured?: boolean }
 > {
   const file = holdoutConfigFile(env);
   const keys = [resolve(projectPath)];
@@ -95,6 +102,7 @@ export async function readHoldoutPath(
       error: missing
         ? `${file} does not exist; add ${keyName(keys[0] as string)}.holdout_path`
         : `${file} is not valid JSON (${error instanceof Error ? error.message : String(error)})`,
+      ...(missing ? { notConfigured: true } : {}),
     };
   }
 
@@ -110,6 +118,7 @@ export async function readHoldoutPath(
     return {
       ok: false,
       error: `${file} has no ${keyName(keys[0] as string)}.holdout_path`,
+      notConfigured: true,
     };
   }
 
@@ -225,7 +234,13 @@ export async function scoreHoldout(
   }
 
   const holdout = await readHoldoutPath(projectDir, env);
-  if (!holdout.ok) return { ok: false, error: holdout.error };
+  if (!holdout.ok) {
+    return {
+      ok: false,
+      error: holdout.error,
+      ...(holdout.notConfigured ? { notConfigured: true } : {}),
+    };
+  }
 
   // Claim the one run before starting it; a crash mid-run still counts
   const claimFile = join(projectDir, EVALS_DIR, evalId, CLAIM_FILE);

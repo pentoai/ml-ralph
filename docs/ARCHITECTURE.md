@@ -183,7 +183,14 @@ The scores and the eval id come only from the runner's own `eval` event and `met
 
 **What the agent sees.** Its next prompt gets one line, `Runner decision on "<eval_id>": promoted|rejected - <reason>`. For a verifier rejection the reason is the verifier's own `Verifier verdict: reject - <first line>`; the per-check results are not in the prompt.
 
-**Limits.** The agent runs with full permissions in the project, so it can still write `incumbent.json`, `baseline.json`, `log.jsonl` (including forged `eval` events) and `.ml-ralph/evals/`, and read `.ml-ralph/verifier/` and the `checks` in `verifier_verdict` events. Closing that needs these files stored outside the project (R3, R14), as with the eval lock. Completion is not a runner decision yet: no holdout score (see Sealed holdout) or budget ends a run, so it runs to `maxIterations`.
+**Limits.** The agent runs with full permissions in the project, so it can still write `incumbent.json`, `baseline.json`, `log.jsonl` (including forged `eval` events) and `.ml-ralph/evals/`, and read `.ml-ralph/verifier/` and the `checks` in `verifier_verdict` events. Closing that needs these files stored outside the project (R3, R14), as with the eval lock. A budget does not end a run yet; completion is described under Completion gate.
+
+### Completion gate (`RalphRunner.checkCompletion`)
+
+After `judgeCandidate` promotes a candidate whose search mean (from `metrics.json`) meets the contract's `success_threshold` in its direction, the runner runs, in order: the holdout lookup (`readHoldoutPath`, so a path added mid-run is used at the next promotion, and no verifier session is spent without one), the verifier on `git diff <baseline ref> <HEAD>`, then `scoreHoldout`, at most once per `eval_id` in a run. The run ends (`onComplete("completed")`, a `run_complete` event with `eval_id`, `search_score`, `holdout_score`, `holdout_gap`, `verifier_verdict`, `verifier_id`) only when the verifier approves, the holdout score meets `success_threshold` and the gap is within `holdout_gap_threshold`.
+
+- **Rejected** (`completion_rejected`, reasons `verifier_rejected`, `holdout_failed`, `overfitting_gap`): the run continues and only the next prompt carries `Runner completion check on "<eval_id>": rejected (<reason>) - <one line>`. The line has no scores, so the agent cannot tune to the holdout. The check runs again only on a later promotion.
+- **Blocked** (`completion_blocked`, reasons `holdout_not_configured`, `verifier_error`, `holdout_error`, with `error`): the verifier errored or timed out, `scoreHoldout` threw or failed, or no holdout is configured. The run continues, the agent is not told, and the TUI gets a text line. Nothing here throws.
 
 ### Sealed holdout (`infrastructure/ralph/holdout.ts`)
 

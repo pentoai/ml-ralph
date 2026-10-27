@@ -13,21 +13,30 @@ import {
   readEvalLock,
   relockEvalContract,
 } from "./eval-lock.ts";
-import { type HoldoutResult, scoreHoldout } from "./holdout.ts";
+import {
+  type HoldoutResult,
+  readHoldoutPath,
+  scoreHoldout,
+} from "./holdout.ts";
 import {
   findHoldoutToolUse,
   type HoldoutNeedles,
   loadHoldoutNeedles,
 } from "./holdout-guard.ts";
+import { appendLogLine } from "./log-command.ts";
 import {
+  defaultGitHead,
   judgeCandidate,
+  type PromotedCandidate,
   type PromotionDeps,
   parseCandidateComplete,
   recordBaselineRef,
 } from "./promotion.ts";
+import { verifyCandidate } from "./verifier.ts";
 
 /** Why a run ended. Only the runner ends a run: the agent's output never does */
 export type RunCompleteReason =
+  | "completed"
   | "max_iterations"
   | "contract_changed"
   | "holdout_access";
@@ -48,6 +57,33 @@ export interface RunnerConfig {
   onError?: (error: Error) => void;
   /** Replaces the verifier and git lookups of the promotion gate (tests) */
   promotionDeps?: Partial<PromotionDeps>;
+  /** Replaces the holdout lookup and scoring of the completion gate (tests); its verifier is promotionDeps.verify */
+  completionDeps?: Partial<CompletionDeps>;
+}
+
+export interface CompletionDeps {
+  scoreHoldout: (evalId: string) => Promise<HoldoutResult>;
+  readHoldoutPath: (projectPath: string) => ReturnType<typeof readHoldoutPath>;
+}
+
+const MAX_ERROR_CHARS = 300;
+const oneLine = (text: string) => {
+  const line = (text.split("\n").find((l) => l.trim()) ?? "").trim();
+  return line.length > MAX_ERROR_CHARS
+    ? `${line.slice(0, MAX_ERROR_CHARS - 3)}...`
+    : line;
+};
+const errorText = (error: unknown) =>
+  oneLine(error instanceof Error ? error.message : String(error));
+
+/** The contract's success criterion, in its direction: at or past success_threshold */
+export function meetsSuccess(
+  contract: { direction: "max" | "min"; success_threshold: number },
+  score: number,
+): boolean {
+  return contract.direction === "max"
+    ? score >= contract.success_threshold
+    : score <= contract.success_threshold;
 }
 
 export interface StreamEvent {
@@ -73,6 +109,8 @@ export class RalphRunner {
   private currentIteration = 0;
   private pendingHints: string[] = [];
   private pendingFeedback: string[] = [];
+  /** eval_ids the completion gate has asked scoreHoldout about in this run */
+  private holdoutScored = new Set<string>();
   private lastToolCall: ToolCallRef | null = null;
   private holdoutNeedles: HoldoutNeedles = [];
   private holdoutAccess: { toolName: string } | null = null;
@@ -111,6 +149,7 @@ export class RalphRunner {
     this.currentIteration = 0;
     this.pinnedHashes = null;
     this.pendingFeedback = [];
+    this.holdoutScored = new Set();
     this.holdoutAccess = null;
     let baselineRecorded = false;
 
@@ -169,7 +208,10 @@ Only the runner decides whether a candidate is promoted, and only the runner end
 
         this.config.onIterationEnd?.(i, result);
 
-        await this.judgeIteration(result, iterationStartedAt);
+        if (await this.judgeIteration(result, iterationStartedAt)) {
+          this.config.onComplete?.("completed");
+          return;
+        }
       }
 
       if (this.running && this.currentIteration >= this.config.maxIterations!) {
@@ -228,12 +270,14 @@ Only the runner decides whether a candidate is promoted, and only the runner end
   /**
    * Act on the agent's output: a <candidate_complete> goes to the promotion
    * gate and its decision is queued for the next prompt. <project_complete> is
-   * ignored; the agent cannot end a run.
+   * ignored; the agent cannot end a run. Returns true when a promotion passed
+   * the completion gate and the run is over.
    */
   private async judgeIteration(
     result: string,
     iterationStartedAt: string,
-  ): Promise<void> {
+  ): Promise<boolean> {
+    let completed = false;
     const candidate = parseCandidateComplete(result);
     if (candidate && this.pinnedHashes) {
       const decision = await judgeCandidate(
@@ -246,11 +290,171 @@ Only the runner decides whether a candidate is promoted, and only the runner end
         this.config.promotionDeps,
       );
       this.pendingFeedback.push(decision.feedback);
+      if (
+        decision.promoted &&
+        meetsSuccess(decision.promoted.contract, decision.promoted.searchScore)
+      ) {
+        completed = await this.checkCompletion(decision.promoted);
+      }
     }
-    if (result.includes("<project_complete>")) {
+    if (!completed && result.includes("<project_complete>")) {
       this.pendingFeedback.push(
         'The runner ignores <project_complete>: only the runner ends a run. Hand in a candidate with <candidate_complete eval_id="..."> instead.',
       );
+    }
+    return completed;
+  }
+
+  /**
+   * The completion gate, run after a promotion that meets the success criteria
+   * on the search split: the independent verifier first, then the sealed
+   * holdout, scored at most once per eval_id. The run ends only when the
+   * verifier approves, the holdout meets the success criteria and the
+   * search-holdout gap is within the contract threshold. A failed check is
+   * logged and queued as a verdict plus one line (no scores) for the next
+   * prompt; a check that could not run is only logged and shown. Never throws.
+   */
+  private async checkCompletion(p: PromotedCandidate): Promise<boolean> {
+    const evalId = p.evalId;
+    const blocked = async (
+      reason: "holdout_not_configured" | "verifier_error" | "holdout_error",
+      error: string,
+    ) => {
+      await this.logCompletion({
+        type: "completion_blocked",
+        eval_id: evalId,
+        reason,
+        error,
+      });
+      this.config.onOutput?.({
+        type: "text",
+        content: `Completion blocked for ${evalId}: ${reason} (${error})`,
+      });
+      return false;
+    };
+    const rejected = async (
+      reason: "verifier_rejected" | "holdout_failed" | "overfitting_gap",
+      detail: string,
+      verifierId?: string,
+    ) => {
+      await this.logCompletion({
+        type: "completion_rejected",
+        eval_id: evalId,
+        reason,
+        detail,
+        ...(verifierId ? { verifier_id: verifierId } : {}),
+      });
+      this.pendingFeedback.push(
+        `Runner completion check on ${JSON.stringify(evalId)}: rejected (${reason}) - ${detail}`,
+      );
+      this.config.onOutput?.({
+        type: "text",
+        content: `Completion rejected for ${evalId}: ${reason}`,
+      });
+      return false;
+    };
+
+    try {
+      if (this.holdoutScored.has(evalId)) {
+        return await blocked(
+          "holdout_error",
+          "the holdout was already scored for this eval_id",
+        );
+      }
+
+      // Cheapest check first: no verifier session when there is no holdout to score
+      const readPath =
+        this.config.completionDeps?.readHoldoutPath ?? readHoldoutPath;
+      const holdoutPath = await readPath(this.config.projectPath);
+      if (!holdoutPath.ok) {
+        return await blocked(
+          holdoutPath.notConfigured
+            ? "holdout_not_configured"
+            : "holdout_error",
+          oneLine(holdoutPath.error),
+        );
+      }
+
+      const gitHead = this.config.promotionDeps?.gitHead ?? defaultGitHead;
+      const head = await gitHead(this.config.projectPath, true);
+      if (!head.ok) return await blocked("verifier_error", oneLine(head.error));
+      const verify = this.config.promotionDeps?.verify ?? verifyCandidate;
+      let verdict: Awaited<ReturnType<typeof verifyCandidate>>;
+      try {
+        verdict = await verify({
+          projectPath: this.config.projectPath,
+          hypothesis: p.hypothesis,
+          candidateRef: head.ref,
+          baselineRef: p.baselineRef,
+        });
+      } catch (error) {
+        return await blocked("verifier_error", errorText(error));
+      }
+      if (verdict.reason === "verifier_error") {
+        return await blocked(
+          "verifier_error",
+          oneLine(verdict.error ?? "the verifier failed"),
+        );
+      }
+      if (verdict.verdict !== "approve") {
+        return await rejected(
+          "verifier_rejected",
+          oneLine(verdict.reason),
+          verdict.id,
+        );
+      }
+
+      this.holdoutScored.add(evalId);
+      let holdout: HoldoutResult;
+      try {
+        holdout = await (
+          this.config.completionDeps?.scoreHoldout ??
+          ((id: string) => this.scoreHoldout(id))
+        )(evalId);
+      } catch (error) {
+        return await blocked("holdout_error", errorText(error));
+      }
+      if (!holdout.ok) {
+        return await blocked(
+          holdout.notConfigured ? "holdout_not_configured" : "holdout_error",
+          oneLine(holdout.error),
+        );
+      }
+      if (!meetsSuccess(p.contract, holdout.holdoutScore)) {
+        return await rejected(
+          "holdout_failed",
+          "the candidate does not meet the success criteria on the sealed holdout",
+          verdict.id,
+        );
+      }
+      if (holdout.blocked) {
+        return await rejected(
+          "overfitting_gap",
+          "the gap between the search and holdout scores exceeds the contract threshold",
+          verdict.id,
+        );
+      }
+
+      await this.logCompletion({
+        type: "run_complete",
+        eval_id: evalId,
+        search_score: holdout.searchScore,
+        holdout_score: holdout.holdoutScore,
+        holdout_gap: holdout.holdoutGap,
+        verifier_verdict: "approve",
+        verifier_id: verdict.id,
+      });
+      return true;
+    } catch (error) {
+      return await blocked("holdout_error", errorText(error));
+    }
+  }
+
+  private async logCompletion(event: Record<string, unknown>): Promise<void> {
+    try {
+      await appendLogLine(this.config.projectPath, event);
+    } catch {
+      // The decision stands even if the log line could not be written
     }
   }
 

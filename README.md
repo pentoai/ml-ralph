@@ -49,6 +49,18 @@ UNDERSTAND → STRATEGIZE → EXECUTE → REFLECT
 
 Strategic retreat — going back to understand when stuck — is a first-class concept, not a failure. Understanding is progress.
 
+## When a run completes
+
+Only the runner ends a run; the agent's `<project_complete>` is ignored. After a promotion whose search score (from the runner's own eval and `metrics.json`) meets the contract's `success_threshold` in the contract's direction, the runner:
+
+1. checks that a `holdout_path` is configured for the project in `~/.config/ml-ralph/config.json` (it is read again at every promotion, so one added mid-run is used next time);
+2. runs the independent verifier on the whole diff since the baseline commit;
+3. scores the sealed holdout once for that `eval_id`.
+
+The run ends with a `run_complete` event (eval id, search score, holdout score, verifier verdict) only if the verifier approves, the holdout score meets `success_threshold` and the search-holdout gap is within `holdout_gap_threshold`.
+
+Otherwise the run continues. A failed check logs `completion_rejected` with reason `verifier_rejected`, `holdout_failed` or `overfitting_gap`; the agent's next prompt gets the verdict and one line of reason, with no scores. A check that could not run (verifier error or timeout, unreadable holdout, no `holdout_path`) logs `completion_blocked` with the error or reason `holdout_not_configured`, and the TUI shows it. The check runs again only on a later promotion.
+
 ## License
 
 MIT

@@ -5,6 +5,8 @@
 import type { RunCompleteReason } from "../infrastructure/ralph/index.ts";
 
 const NOTICES: Record<RunCompleteReason, string> = {
+  completed:
+    "Run complete: the verifier approved and the sealed holdout met the success criteria (see the run_complete event in log.jsonl)",
   contract_changed:
     "Run stopped: reason contract_changed (a locked eval file was changed and you chose to stop)",
   holdout_access:
