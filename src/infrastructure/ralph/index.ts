@@ -96,11 +96,11 @@ export type {
 } from "./runner.ts";
 export { createRunner, RalphRunner } from "./runner.ts";
 export type {
-  CompletionBlockedEvent,
-  CompletionRejectedEvent,
   BudgetExhaustedEvent,
   BudgetStatusEvent,
   BudgetWarningEvent,
+  CompletionBlockedEvent,
+  CompletionRejectedEvent,
   ContractRelockedEvent,
   DecisionEvent,
   EvalEvent,
