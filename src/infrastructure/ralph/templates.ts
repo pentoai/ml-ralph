@@ -1374,6 +1374,14 @@ export interface PromotionEvent extends BaseEvent {
   reference_mean?: number;
 }
 
+/** Written by the runner (never the agent) when a `<candidate_complete>` arrives before the eval contract is locked; no eval can exist yet, so no candidate is judged */
+export interface CandidateRejectedEvent extends BaseEvent {
+  type: "candidate_rejected";
+  reason: "eval_not_locked";
+  /** The eval_id the agent named in its tag, if any */
+  eval_id?: string;
+}
+
 /** Written by the runner (never the agent) when a candidate's holdout gap exceeds holdout_gap_threshold */
 export interface OverfittingEvent extends BaseEvent {
   type: "overfitting";
@@ -1515,6 +1523,7 @@ export type RalphEvent =
   | DecisionEvent
   | VerifierVerdictEvent
   | PromotionEvent
+  | CandidateRejectedEvent
   | OverfittingEvent
   | RunCompleteEvent
   | CompletionRejectedEvent

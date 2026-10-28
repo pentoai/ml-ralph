@@ -196,6 +196,13 @@ export const LOG_EVENT_SCHEMAS: Record<string, LogEventSchema> = {
       reference_mean: optional(num),
     },
   },
+  candidate_rejected: {
+    runnerOnly: true,
+    fields: {
+      reason: oneOf("eval_not_locked"),
+      eval_id: optional(str),
+    },
+  },
   overfitting: {
     runnerOnly: true,
     fields: {

@@ -1,14 +1,14 @@
 /**
- * Tests for log-parser: aggregateEvents, readLogFile, appendEvent
+ * Tests for log-parser: aggregateEvents, readLogFile
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { appendLogLine } from "./log-command.ts";
 import {
   aggregateEvents,
-  appendEvent,
   readKanbanFile,
   readLogFile,
   readPrdFile,
@@ -370,95 +370,8 @@ describe("log file I/O", () => {
     expect(await readLogFile(dir)).toHaveLength(2);
   });
 
-  test("appendEvent creates the log file and returns true", async () => {
-    const ok = await appendEvent(dir, {
-      type: "learning",
-      insight: "first",
-    } as Omit<RalphEvent, "ts">);
-    expect(ok).toBe(true);
-    const events = await readLogFile(dir);
-    expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({ type: "learning", insight: "first" });
-  });
-
-  test("appendEvent adds an ISO timestamp", async () => {
-    const before = Date.now();
-    await appendEvent(dir, {
-      type: "status",
-      status: "running",
-    } as Omit<RalphEvent, "ts">);
-    const [event] = await readLogFile(dir);
-    const ts = Date.parse(event?.ts ?? "");
-    expect(Number.isNaN(ts)).toBe(false);
-    expect(ts).toBeGreaterThanOrEqual(before);
-    expect(event?.ts).toBe(new Date(ts).toISOString());
-  });
-
-  test("appendEvent writes one JSON object per line and keeps order", async () => {
-    for (const insight of ["a", "b", "c"]) {
-      await appendEvent(dir, { type: "learning", insight } as Omit<
-        RalphEvent,
-        "ts"
-      >);
-    }
-    const text = await Bun.file(logPath()).text();
-    expect(text.endsWith("\n")).toBe(true);
-    expect(text.trim().split("\n")).toHaveLength(3);
-    const events = await readLogFile(dir);
-    expect(events.map((e) => (e as { insight: string }).insight)).toEqual([
-      "a",
-      "b",
-      "c",
-    ]);
-  });
-
-  test("appendEvent preserves nested data (round trip)", async () => {
-    await appendEvent(dir, {
-      type: "experiment",
-      name: "lgbm-baseline",
-      hypothesis_id: "H1",
-      config: { lr: 0.1, layers: [64, 32], nested: { a: null } },
-      metrics: { auc: 0.91 },
-      observations: 'quotes " and\nnewlines are escaped',
-    } as Omit<RalphEvent, "ts">);
-    const [event] = await readLogFile(dir);
-    expect(event).toMatchObject({
-      type: "experiment",
-      name: "lgbm-baseline",
-      config: { lr: 0.1, layers: [64, 32], nested: { a: null } },
-      metrics: { auc: 0.91 },
-      observations: 'quotes " and\nnewlines are escaped',
-    });
-  });
-
-  test("appendEvent appends after existing malformed content", async () => {
-    await Bun.write(logPath(), "garbage line\n");
-    await appendEvent(dir, {
-      type: "learning",
-      insight: "after garbage",
-    } as Omit<RalphEvent, "ts">);
-    const events = await readLogFile(dir);
-    expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({ insight: "after garbage" });
-  });
-
-  test("appendEvent returns false when the log cannot be written", async () => {
-    const blocked = await mkdtemp(join(tmpdir(), "ml-ralph-blocked-"));
-    try {
-      await Bun.write(join(blocked, ".ml-ralph"), "i am a file, not a dir");
-      const ok = await appendEvent(blocked, {
-        type: "learning",
-        insight: "x",
-      } as Omit<RalphEvent, "ts">);
-      expect(ok).toBe(false);
-    } finally {
-      await rm(blocked, { recursive: true, force: true });
-    }
-  });
-
   test("appended events aggregate end to end", async () => {
-    const append = (e: Record<string, unknown>) =>
-      appendEvent(dir, e as unknown as Omit<RalphEvent, "ts">);
+    const append = (e: Record<string, unknown>) => appendLogLine(dir, e);
     await append({ type: "hypothesis", id: "H1", hypothesis: "h" });
     await append({
       type: "experiment",

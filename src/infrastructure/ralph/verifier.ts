@@ -8,7 +8,11 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { JsonFileStore } from "../file-store/index.ts";
 import { HOLDOUT_PATH_ENV } from "./eval-command.ts";
-import { appendEvent, readLogFile } from "./log-parser.ts";
+import {
+  appendValidatedEvent,
+  type InvalidRunnerEvent,
+} from "./log-command.ts";
+import { readLogFile } from "./log-parser.ts";
 import type { VerifierVerdictEvent } from "./templates.ts";
 
 export const DEFAULT_RECENT_EVENTS = 50;
@@ -46,6 +50,8 @@ export interface VerifyCandidateOptions {
   timeoutMs?: number;
   /** Time between SIGTERM and SIGKILL after a timeout (default 5s) */
   killGraceMs?: number;
+  /** Called when the runner's verifier_verdict event fails its schema and is not logged */
+  onInvalidEvent?: (invalid: InvalidRunnerEvent) => void;
 }
 
 export interface VerifyCandidateResult extends VerifierVerdict {
@@ -429,7 +435,7 @@ export async function verifyCandidate(
     ...(model ? { model } : {}),
     output_path: outputPath,
   };
-  await appendEvent(projectPath, event);
+  await appendValidatedEvent(projectPath, event, options.onInvalidEvent);
 
   return result;
 }

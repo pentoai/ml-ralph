@@ -18,7 +18,10 @@ import {
   type EvalMetricsOk,
   readEvalMetrics,
 } from "./eval-metrics.ts";
-import { appendLogLine } from "./log-command.ts";
+import {
+  appendValidatedEvent,
+  type InvalidRunnerEvent,
+} from "./log-command.ts";
 import type { OverfittingEvent } from "./templates.ts";
 
 const HOLDOUT_SPLIT = "holdout";
@@ -68,6 +71,8 @@ export interface HoldoutOptions {
   env?: Record<string, string | undefined>;
   /** Python executable (default: python, or python3 when there is no python) */
   python?: string;
+  /** Called when the runner's own overfitting event fails its schema and is not logged */
+  onInvalidEvent?: (invalid: InvalidRunnerEvent) => void;
 }
 
 export type HoldoutResult =
@@ -351,7 +356,7 @@ export async function scoreHoldout(
       eval_id: evalId,
       threshold: contract.holdout_gap_threshold,
     };
-    await appendLogLine(projectDir, event);
+    await appendValidatedEvent(projectDir, event, options.onInvalidEvent);
   }
   return {
     ok: true,

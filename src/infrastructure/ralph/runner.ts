@@ -23,7 +23,7 @@ import {
   type HoldoutNeedles,
   loadHoldoutNeedles,
 } from "./holdout-guard.ts";
-import { appendLogLine } from "./log-command.ts";
+import { appendValidatedEvent } from "./log-command.ts";
 import {
   judgeCandidate,
   type PromotedCandidate,
@@ -252,7 +252,10 @@ Only the runner decides whether a candidate is promoted, and only the runner end
    * evaluator subprocess; it is never part of a prompt.
    */
   scoreHoldout(evalId: string): Promise<HoldoutResult> {
-    return scoreHoldout(evalId, { projectPath: this.config.projectPath });
+    return scoreHoldout(evalId, {
+      projectPath: this.config.projectPath,
+      onInvalidEvent: this.reportInvalidEvent,
+    });
   }
 
   /** The tool call that named the holdout in this run, if any (a method so TS does not narrow the field across awaits) */
@@ -293,6 +296,7 @@ Only the runner decides whether a candidate is promoted, and only the runner end
           claimedEvalId: candidate.evalId,
           iterationStartedAt,
           lockedFiles: this.pinnedHashes,
+          onInvalidEvent: this.reportInvalidEvent,
         },
         this.config.promotionDeps,
       );
@@ -303,6 +307,18 @@ Only the runner decides whether a candidate is promoted, and only the runner end
       ) {
         completed = await this.checkCompletion(decision.promoted);
       }
+    }
+    if (candidate && !this.pinnedHashes) {
+      await this.appendLogEvent({
+        type: "candidate_rejected",
+        reason: "eval_not_locked",
+        ...(candidate.evalId
+          ? { eval_id: candidate.evalId.slice(0, 100) }
+          : {}),
+      });
+      this.pendingFeedback.push(
+        "Runner decision on your candidate: rejected - eval_not_locked: the eval contract is not locked yet, so no eval can score a candidate. Get the contract locked, then run `ml-ralph eval` and hand the candidate in again.",
+      );
     }
     if (!completed && result.includes("<project_complete>")) {
       this.pendingFeedback.push(
@@ -387,6 +403,7 @@ Only the runner decides whether a candidate is promoted, and only the runner end
           hypothesis: p.hypothesis,
           candidateRef: p.candidateRef,
           baselineRef: p.baselineRef,
+          onInvalidEvent: this.reportInvalidEvent,
         });
       } catch (error) {
         return await blocked("verifier_error", errorText(error));
@@ -452,7 +469,7 @@ Only the runner decides whether a candidate is promoted, and only the runner end
 
   private async logCompletion(event: Record<string, unknown>): Promise<void> {
     try {
-      await appendLogLine(this.config.projectPath, event);
+      await this.appendLogEvent(event);
     } catch {
       // The decision stands even if the log line could not be written
     }
@@ -593,12 +610,22 @@ Only the runner decides whether a candidate is promoted, and only the runner end
    * Append a log event to .ml-ralph/log.jsonl
    */
   private async appendLogEvent(event: Record<string, unknown>): Promise<void> {
-    const logPath = `${this.config.projectPath}/.ml-ralph/log.jsonl`;
-    const line = `${JSON.stringify({ ts: new Date().toISOString(), ...event })}\n`;
-    const file = Bun.file(logPath);
-    const existing = (await file.exists()) ? await file.text() : "";
-    await Bun.write(logPath, existing + line);
+    await appendValidatedEvent(
+      this.config.projectPath,
+      event,
+      this.reportInvalidEvent,
+    );
   }
+
+  /** Show an invalid runner event as an error line in the TUI (it is already on stderr) */
+  private reportInvalidEvent = (invalid: { message: string }): void => {
+    process.stderr.write(`${invalid.message}\n`);
+    this.config.onOutput?.({
+      type: "error",
+      content: invalid.message,
+      isError: true,
+    });
+  };
 
   /**
    * Run a single iteration

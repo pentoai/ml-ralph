@@ -22,7 +22,7 @@ import {
   type EvalMetrics,
   type EvalSeedScore,
 } from "./eval-metrics.ts";
-import { appendLogLine, findProjectDir } from "./log-command.ts";
+import { appendValidatedEvent, findProjectDir } from "./log-command.ts";
 import type { EvalEvent } from "./templates.ts";
 
 /** Per-seed timeout when the contract does not set eval_timeout_seconds */
@@ -406,7 +406,7 @@ export async function runEvalCommand(
       ? { mean: metrics.mean, std: metrics.std }
       : { reason: metrics.reason }),
   };
-  await appendLogLine(projectDir, event);
+  await appendValidatedEvent(projectDir, event);
 
   const where = `${EVALS_DIR}/${metrics.eval_id}/metrics.json`;
   if (metrics.status === "failed") {

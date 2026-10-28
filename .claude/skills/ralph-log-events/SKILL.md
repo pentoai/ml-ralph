@@ -62,18 +62,6 @@ The examples below show stored lines; pass everything except `ts` as the JSON ar
 ### Status
 ```jsonl
 {"ts":"...","type":"status","status":"paused","reason":"Need user input on constraint change"}
-{"ts":"...","type":"status","status":"blocked","reason":"Hit apparent ceiling after 3 approaches","approaches_tried":["Autoencoder","IsolationForest","OCSVM"],"user_decision_needed":"Continue exploring or accept 0.90 AUC?"}
-{"ts":"...","type":"status","status":"complete","reason":"All criteria met","evidence":{"auc":0.92,"threshold":0.90}}
-```
-
-### Devil's Advocate
-```jsonl
-{"ts":"...","type":"devils_advocate","conclusion":"AUC ceiling at 0.90 is fundamental","attacks":[{"question":"What would prove me wrong?","answer":"...","addressed":false}],"survived":false,"next_action":"continue_working"}
-```
-
-### Limitation Claims
-```jsonl
-{"ts":"...","type":"limitation_claim","claim":"73% of attacks are structurally indistinguishable","devils_advocate_id":"DA-003","validation_attempts":[{"method":"...","result":"..."}],"confidence":"high","user_approved":false}
 ```
 
 ### Runner-only events
@@ -89,7 +77,12 @@ An independent read-only verifier judges each promotion candidate; this event re
 You hand in a candidate by printing `<candidate_complete eval_id="eval-...">`; you never decide that it is the new best. The runner writes this event for every one. It promotes only when that eval (from this iteration, `status: ok`) beats the incumbent's mean in the contract's direction by more than the larger of the two seed stds (the first candidate is compared with `baseline_score`), and the verifier approves the committed diff. `verifier_id` names the `verifier_verdict` it used. `.ml-ralph/incumbent.json` points at the current best. Scores come from the runner's `eval` event and `metrics.json`, never from your `experiment` event. You see the verdict and one line of reason in your next prompt. Never write `.ml-ralph/incumbent.json` or `.ml-ralph/baseline.json`.
 
 ```jsonl
-{"ts":"...","type":"overfitting","eval_id":"eval-lq3k2m-9f3a1c","search_score":0.91,"holdout_score":0.84,"holdout_gap":0.07,"threshold":0.02}
+{"ts":"...","type":"candidate_rejected","reason":"eval_not_locked","eval_id":"eval-lq3k2m-9f3a1c"}
+```
+If you print `<candidate_complete>` before the eval contract is locked, the runner judges nothing, writes this event and says so in your next prompt. Never write it yourself.
+
+```jsonl
+{"ts":"...","type":"overfitting","eval_id":"eval-lq3k2m-9f3a1c","threshold":0.02}
 ```
 The runner scores a candidate once on a sealed holdout you never see and writes this event when the search score beats the holdout score by more than the contract's `holdout_gap_threshold`. It blocks that candidate. Never look for the holdout data, and never write this event.
 
@@ -128,11 +121,10 @@ See RALPH.md for when and how to use these events.
 | `strategic_retreat` | trigger, action, focus |
 | `prd_updated` | field, change, reason |
 | `kanban_updated` | changes, reason |
-| `status` | status, reason (+ evidence if complete, + approaches_tried if blocked) |
-| `devils_advocate` | conclusion, attacks, survived, next_action |
-| `limitation_claim` | claim, devils_advocate_id, validation_attempts, confidence, user_approved |
+| `status` | status (`running` or `paused`), reason |
 | `eval` (runner-only) | eval_id, status, candidate (+ mean, std or reason) |
-| `overfitting` (runner-only) | eval_id, search_score, holdout_score, holdout_gap, threshold |
+| `overfitting` (runner-only) | eval_id, threshold |
+| `candidate_rejected` (runner-only) | reason (`eval_not_locked`) (+ eval_id) |
 | `holdout_access` (runner-only) | tool, iteration |
 | `promotion` (runner-only) | verdict, reason (+ candidate_eval_id, incumbent_eval_id, verifier_id, candidate_mean, reference_mean) |
 | `verifier_verdict` (runner-only) | id, verdict, checks, reason, output_path (+ model) |

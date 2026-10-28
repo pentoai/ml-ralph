@@ -2,7 +2,7 @@
  * Tests for runner stream-json parsing (pure functions, never spawns claude)
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import {
   appendFile,
   mkdir,
@@ -686,6 +686,31 @@ describe("RalphRunner completion gate", () => {
 
   afterEach(async () => {
     await rm(dir, { recursive: true, force: true });
+  });
+
+  test("promotion and completion verifier calls report an invalid verdict event as a TUI error line", async () => {
+    const stderr = spyOn(process.stderr, "write").mockImplementation(
+      () => true,
+    );
+    try {
+      const { output } = await run([0.91]);
+      expect(verifierCalls).toHaveLength(2);
+      for (const call of verifierCalls) {
+        expect(call.onInvalidEvent).toBeFunction();
+      }
+      verifierCalls[1]?.onInvalidEvent?.({
+        type: "verifier_verdict",
+        message: "Invalid runner verifier_verdict event, not logged: id",
+      });
+      const errors = output.filter((e) => e.type === "error");
+      expect(errors).toHaveLength(1);
+      expect(errors[0]?.content).toContain("verifier_verdict");
+      expect(stderr.mock.calls.map((c) => String(c[0])).join("")).toContain(
+        "verifier_verdict",
+      );
+    } finally {
+      stderr.mockRestore();
+    }
   });
 
   test("approve: the verifier runs, then the holdout once, and the run ends with run_complete", async () => {
