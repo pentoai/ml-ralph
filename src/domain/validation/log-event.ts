@@ -132,6 +132,25 @@ export const LOG_EVENT_SCHEMAS: Record<string, LogEventSchema> = {
     },
   },
   learning: { fields: { insight: str, source: str } },
+  conclusions_changed: {
+    fields: {
+      reason: oneOf(
+        "contradiction",
+        "new_category",
+        "flipped_recommendation",
+        "refinement",
+      ),
+      summary: str,
+    },
+  },
+  conclusions_rejected: {
+    runnerOnly: true,
+    fields: {
+      reason: oneOf("too_long", "no_justification"),
+      detail: str,
+      words: num,
+    },
+  },
   decision: {
     fields: {
       hypothesis_id: str,
