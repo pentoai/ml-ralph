@@ -12,6 +12,7 @@ export type ReportEndReason =
   | "budget_exhausted"
   | "max_iterations"
   | "user_quit"
+  | "error"
   | "contract_changed"
   | "holdout_access";
 

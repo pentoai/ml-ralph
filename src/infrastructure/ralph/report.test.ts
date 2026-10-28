@@ -215,4 +215,41 @@ describe("report.md at the end of a run", () => {
     const failed = events.find((e) => e.type === "report_failed");
     expect(failed?.run_id).toBe("run-1");
   });
+
+  test("an error that ends the run still leaves a report", async () => {
+    class Boom extends RalphRunner {
+      protected override async runIteration(): Promise<string> {
+        throw new Error("claude exploded");
+      }
+    }
+    const runner = new Boom({ projectPath: dir, onError: () => {} });
+    await expect(runner.start()).rejects.toThrow("claude exploded");
+    expect(await Bun.file(reportPath("run-1")).text()).toContain(
+      "End reason: error",
+    );
+    expect(runner.isRunning()).toBe(false);
+  });
+
+  test("isRunning stays true until stop() has the report on disk", async () => {
+    let release = () => {};
+    class Hang extends RalphRunner {
+      protected override async runIteration(): Promise<string> {
+        await new Promise<void>((r) => {
+          release = r;
+        });
+        return "<iteration_complete>";
+      }
+    }
+    const runner = new Hang({ projectPath: dir });
+    const started = runner.start();
+    await Bun.sleep(50);
+    const stopped = runner.stop();
+    release();
+    await stopped;
+    expect(runner.isRunning()).toBe(false);
+    expect(await Bun.file(reportPath("run-1")).text()).toContain(
+      "End reason: user_quit",
+    );
+    await started;
+  });
 });

@@ -258,7 +258,8 @@ export function App({ projectPath, enableTeams }: AppProps) {
   // Perform actual quit - kill tmux session too
   const doQuit = async () => {
     if (orchestratorRef.current?.isRunning()) {
-      orchestratorRef.current.stop();
+      // Wait for the run's report to be written before the process exits
+      await orchestratorRef.current.stop();
     }
     // Kill the entire tmux session
     const sessionName = `ml-ralph-${projectPath.split("/").pop() || "default"}`;

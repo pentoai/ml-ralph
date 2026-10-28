@@ -156,6 +156,8 @@ export class RalphRunner {
   private budgetStop: BudgetExhaustion | null = null;
   private userStopped = false;
   private reported = false;
+  /** Pending from start() until the run has ended and its report is on disk */
+  private settled: Promise<void> | null = null;
   private contractDecision: ((d: ContractDecision | null) => void) | null =
     null;
 
@@ -178,7 +180,7 @@ export class RalphRunner {
    * Start the autonomous loop
    */
   async start(): Promise<void> {
-    if (this.running) return;
+    if (this.isRunning()) return;
 
     const initialized = await this.isInitialized();
     if (!initialized) {
@@ -193,6 +195,10 @@ export class RalphRunner {
     }
 
     this.running = true;
+    let settle = () => {};
+    this.settled = new Promise<void>((resolve) => {
+      settle = resolve;
+    });
     this.currentIteration = 0;
     this.budgetStop = null;
     this.userStopped = false;
@@ -302,17 +308,23 @@ Only the runner decides whether a candidate is promoted, and only the runner end
       this.config.onError?.(err);
       throw err;
     } finally {
-      this.running = false;
       this.currentProcess = null;
-      if (this.userStopped && !this.reported)
-        await this.writeRunReport("user_quit");
+      // Any other way out (user quit, an error) still leaves a report; isRunning() stays true until it is written
+      if (!this.reported) {
+        await this.writeRunReport(this.userStopped ? "user_quit" : "error");
+      }
+      this.running = false;
+      this.settled = null;
+      settle();
     }
   }
 
   /**
-   * Stop the running loop
+   * Stop the running loop. The promise settles once the run has ended and
+   * its report is written, so a caller about to exit can wait for it.
    */
-  stop(): void {
+  stop(): Promise<void> {
+    const done = this.settled ?? Promise.resolve();
     if (this.running) this.userStopped = true;
     this.running = false;
     this.settleContractDecision(null);
@@ -320,6 +332,7 @@ Only the runner decides whether a candidate is promoted, and only the runner end
       killTree(this.currentProcess, "SIGTERM");
       this.currentProcess = null;
     }
+    return done;
   }
 
   /**
@@ -741,7 +754,7 @@ Only the runner decides whether a candidate is promoted, and only the runner end
    * Check if the runner is currently running
    */
   isRunning(): boolean {
-    return this.running;
+    return this.running || this.settled !== null;
   }
 
   /**
