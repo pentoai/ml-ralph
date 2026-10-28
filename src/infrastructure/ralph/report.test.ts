@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { auditClaims, buildClaims, parseLog, writeReport } from "./report.ts";
@@ -168,6 +169,40 @@ describe("report.md at the end of a run", () => {
     expect(await Bun.file(reportPath("run-1")).text()).toContain(
       "Holdout score: not scored",
     );
+  });
+
+  test("a run that scored the holdout but ended on a budget reports that score", async () => {
+    await incumbent();
+    const xdg = await mkdtemp(join(tmpdir(), "ml-ralph-xdg-"));
+    const saved = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = xdg;
+    try {
+      const key = createHash("sha256")
+        .update(await realpath(dir))
+        .digest("hex")
+        .slice(0, 16);
+      await Bun.write(
+        join(xdg, "ml-ralph/holdout", key, "e1.json"),
+        JSON.stringify({
+          status: "ok",
+          score: 0.77,
+          gap: 0.08,
+          scored_at: "now",
+        }),
+      );
+      await writeReport({
+        projectPath: dir,
+        runId: "run-1",
+        endReason: "budget_exhausted",
+      });
+      expect(await Bun.file(reportPath("run-1")).text()).toContain(
+        "Holdout score: 0.77",
+      );
+    } finally {
+      if (saved === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = saved;
+      await rm(xdg, { recursive: true, force: true });
+    }
   });
 
   test("refuses a run id that is not a safe directory name", async () => {

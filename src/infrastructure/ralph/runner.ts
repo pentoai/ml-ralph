@@ -203,6 +203,7 @@ export class RalphRunner {
     this.budgetStop = null;
     this.userStopped = false;
     this.reported = false;
+    this.budgetRunId = "";
     this.pinnedHashes = null;
     this.pendingFeedback = [];
     this.holdoutScored = new Set();

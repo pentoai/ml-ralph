@@ -24,7 +24,10 @@ test("quitting through the orchestrator waits for the user_quit report", async (
       return "<iteration_complete>";
     }
   }
-  const orchestrator = new DefaultOrchestrator({ projectPath: dir });
+  const orchestrator = new DefaultOrchestrator({
+    projectPath: dir,
+    autoAdvance: false,
+  });
   (orchestrator as unknown as { runner: RalphRunner }).runner = new Hang({
     projectPath: dir,
   });

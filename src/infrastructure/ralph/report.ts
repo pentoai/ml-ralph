@@ -4,6 +4,7 @@
  */
 
 import { readEvalMetrics } from "./eval-metrics.ts";
+import { readHoldoutScore } from "./holdout.ts";
 import { readIncumbent } from "./promotion.ts";
 
 /** Why a run ended, as the report states it */
@@ -143,12 +144,14 @@ async function incumbentLines(
   const metrics = await readEvalMetrics(projectPath, incumbent.eval_id);
   const search =
     metrics?.status === "ok" ? String(metrics.mean) : "not available";
+  // A completed run logged its holdout score; any other run that scored the holdout left the runner's own record
   const done = events.findLast(
     (e) => e.type === "run_complete" && e.eval_id === incumbent.eval_id,
   );
-  const holdout = isNumber(done?.holdout_score)
-    ? String(done.holdout_score)
-    : NOT_SCORED;
+  const scored = isNumber(done?.holdout_score)
+    ? done.holdout_score
+    : await readHoldoutScore(projectPath, incumbent.eval_id).catch(() => null);
+  const holdout = scored === null ? NOT_SCORED : String(scored);
   return [
     `- Incumbent eval: ${incumbent.eval_id}`,
     `- Search score: ${search}`,
