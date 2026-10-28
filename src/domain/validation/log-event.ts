@@ -273,6 +273,10 @@ export const LOG_EVENT_SCHEMAS: Record<string, LogEventSchema> = {
       max_experiments_per_iteration: optional(num),
     },
   },
+  report_failed: {
+    runnerOnly: true,
+    fields: { run_id: str, reason: str },
+  },
   holdout_access: {
     runnerOnly: true,
     fields: { tool: str, iteration: num },

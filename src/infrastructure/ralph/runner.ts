@@ -47,6 +47,7 @@ import {
   parseCandidateComplete,
   recordBaselineRef,
 } from "./promotion.ts";
+import { type ReportEndReason, writeReport } from "./report.ts";
 import { verifyCandidate } from "./verifier.ts";
 
 /** Why a run ended. Only the runner ends a run: the agent's output never does */
@@ -153,6 +154,8 @@ export class RalphRunner {
   private budgetUsd = 0;
   private iterationCost: number | null = null;
   private budgetStop: BudgetExhaustion | null = null;
+  private userStopped = false;
+  private reported = false;
   private contractDecision: ((d: ContractDecision | null) => void) | null =
     null;
 
@@ -192,6 +195,8 @@ export class RalphRunner {
     this.running = true;
     this.currentIteration = 0;
     this.budgetStop = null;
+    this.userStopped = false;
+    this.reported = false;
     this.pinnedHashes = null;
     this.pendingFeedback = [];
     this.holdoutScored = new Set();
@@ -276,7 +281,7 @@ Only the runner decides whether a candidate is promoted, and only the runner end
         this.config.onIterationEnd?.(i, result);
 
         if (await this.judgeIteration(result, iterationStartedAt)) {
-          this.config.onComplete?.("completed");
+          await this.endRun("completed");
           return;
         }
 
@@ -289,8 +294,8 @@ Only the runner decides whether a candidate is promoted, and only the runner end
       }
 
       if (this.running && this.currentIteration >= this.config.maxIterations!) {
+        await this.endRun("max_iterations");
         await clearRunId(this.config.projectPath);
-        this.config.onComplete?.("max_iterations");
       }
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
@@ -299,6 +304,8 @@ Only the runner decides whether a candidate is promoted, and only the runner end
     } finally {
       this.running = false;
       this.currentProcess = null;
+      if (this.userStopped && !this.reported)
+        await this.writeRunReport("user_quit");
     }
   }
 
@@ -306,6 +313,7 @@ Only the runner decides whether a candidate is promoted, and only the runner end
    * Stop the running loop
    */
   stop(): void {
+    if (this.running) this.userStopped = true;
     this.running = false;
     this.settleContractDecision(null);
     if (this.currentProcess) {
@@ -324,6 +332,30 @@ Only the runner decides whether a candidate is promoted, and only the runner end
       projectPath: this.config.projectPath,
       onInvalidEvent: this.reportInvalidEvent,
     });
+  }
+
+  /** The run is over for a reason the TUI hears about: write the report first, then announce it */
+  private async endRun(reason: RunCompleteReason): Promise<void> {
+    await this.writeRunReport(reason === "completed" ? "run_complete" : reason);
+    this.config.onComplete?.(reason);
+  }
+
+  /** Write report.md; a failure is logged as report_failed and never stops the run from ending */
+  private async writeRunReport(endReason: ReportEndReason): Promise<void> {
+    this.reported = true;
+    try {
+      await writeReport({
+        projectPath: this.config.projectPath,
+        runId: this.budgetRunId,
+        endReason,
+      });
+    } catch (error) {
+      await this.logCompletion({
+        type: "report_failed",
+        run_id: this.budgetRunId.slice(0, 100),
+        reason: errorText(error),
+      });
+    }
   }
 
   /** Load the caps and the spend this run already recorded, and start its clock */
@@ -398,7 +430,7 @@ Only the runner decides whether a candidate is promoted, and only the runner end
       cap,
       ...this.budgetNow(),
     });
-    this.config.onComplete?.("budget_exhausted");
+    await this.endRun("budget_exhausted");
   }
 
   /** Stop the claude process because a cap was reached; the iteration is not judged */
@@ -424,7 +456,7 @@ Only the runner decides whether a candidate is promoted, and only the runner end
       tool: toolName,
       iteration: this.currentIteration,
     });
-    this.config.onComplete?.("holdout_access");
+    await this.endRun("holdout_access");
   }
 
   /**
@@ -669,7 +701,7 @@ Only the runner decides whether a candidate is promoted, and only the runner end
       });
       if (decision === null) return false;
       if (decision === "stop") {
-        this.config.onComplete?.("contract_changed");
+        await this.endRun("contract_changed");
         return false;
       }
 
