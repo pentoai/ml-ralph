@@ -62,6 +62,8 @@ export interface VerifyCandidateResult extends VerifierVerdict {
   feedback: string;
   /** Why the run failed, when reason is "verifier_error". Never shown to the agent */
   error?: string;
+  /** total_cost_usd the verifier session reported; absent when it reported none */
+  costUsd?: number;
 }
 
 const ERROR_CHECKS: VerifierVerdict["checks"] = {
@@ -344,6 +346,7 @@ export async function verifyCandidate(
       : DEFAULT_RECENT_EVENTS;
 
   let verdict: VerifierVerdict | null = null;
+  let costUsd: number | undefined;
   let error: string | undefined;
   let raw: SessionOutput | undefined;
   let sandboxDir: string | undefined;
@@ -383,6 +386,7 @@ export async function verifyCandidate(
     } else if (raw.exitCode !== 0) {
       error = `exit code ${raw.exitCode}: ${raw.stderr.trim().slice(-300)}`;
     } else {
+      costUsd = extractCost(raw.stdout);
       verdict = parseVerdict(extractResultText(raw.stdout));
       if (!verdict) error = "unparseable output";
     }
@@ -404,6 +408,7 @@ export async function verifyCandidate(
     outputPath,
     feedback: formatVerdictForAgent(final.verdict, final.reason),
     ...(error ? { error } : {}),
+    ...(costUsd !== undefined ? { costUsd } : {}),
   };
 
   await mkdir(`${projectPath}/.ml-ralph/verifier`, { recursive: true });
@@ -433,6 +438,7 @@ export async function verifyCandidate(
     checks: final.checks,
     reason: final.reason,
     ...(model ? { model } : {}),
+    ...(costUsd !== undefined ? { cost_usd: costUsd } : {}),
     output_path: outputPath,
   };
   await appendValidatedEvent(projectPath, event, options.onInvalidEvent);
@@ -444,6 +450,19 @@ async function readContract(projectPath: string): Promise<string> {
   const file = Bun.file(`${projectPath}/.ml-ralph/eval/contract.json`);
   if (!(await file.exists())) throw new Error("contract.json not found");
   return file.text();
+}
+
+/** The envelope's total_cost_usd when it is a finite non-negative number */
+function extractCost(stdout: string): number | undefined {
+  try {
+    const cost = (JSON.parse(stdout) as { total_cost_usd?: unknown } | null)
+      ?.total_cost_usd;
+    return typeof cost === "number" && Number.isFinite(cost) && cost >= 0
+      ? cost
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** `claude --output-format json` wraps the reply in {type:"result", result, is_error} */

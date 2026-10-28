@@ -70,7 +70,7 @@ type JudgeState = Partial<
     PromotionEvent,
     "incumbent_eval_id" | "verifier_id" | "candidate_mean" | "reference_mean"
   >
-> & { promoted?: PromotedCandidate };
+> & { promoted?: PromotedCandidate; verifier_cost?: number };
 
 /** What the completion gate needs about a candidate that was just promoted */
 export interface PromotedCandidate {
@@ -92,6 +92,8 @@ export interface PromotionDecision {
   feedback: string;
   /** Set only when verdict is "promoted" */
   promoted?: PromotedCandidate;
+  /** total_cost_usd of the verifier session, when one ran and reported it */
+  costUsd?: number;
 }
 
 /**
@@ -304,6 +306,9 @@ export async function judgeCandidate(
     return {
       verdict,
       reason: text,
+      ...(state.verifier_cost !== undefined
+        ? { costUsd: state.verifier_cost }
+        : {}),
       feedback: `Runner decision on ${claimedEvalId ? JSON.stringify(claimedEvalId.slice(0, MAX_ID_CHARS)) : "your candidate"}: ${verdict} - ${text}`,
       ...(verdict === "promoted" && state.promoted
         ? { promoted: state.promoted }
@@ -461,6 +466,7 @@ async function judge(
   };
   const verdict = await verify(verifierOptions);
   state.verifier_id = verdict.id;
+  if (verdict.costUsd !== undefined) state.verifier_cost = verdict.costUsd;
   if (verdict.verdict !== "approve") return reject(verdict.feedback);
 
   const promoted: Incumbent = {

@@ -3,6 +3,17 @@
  */
 
 export type {
+  BudgetCaps,
+  BudgetExhaustion,
+  BudgetStatus,
+} from "./budget.ts";
+export {
+  formatBudget,
+  headerBudget,
+  readBudgetCaps,
+  readRecordedBudget,
+} from "./budget.ts";
+export type {
   EvalCommandOptions,
   EvalCommandResult,
 } from "./eval-command.ts";
@@ -85,6 +96,9 @@ export type {
 } from "./runner.ts";
 export { createRunner, RalphRunner } from "./runner.ts";
 export type {
+  BudgetExhaustedEvent,
+  BudgetStatusEvent,
+  BudgetWarningEvent,
   CompletionBlockedEvent,
   CompletionRejectedEvent,
   ContractRelockedEvent,

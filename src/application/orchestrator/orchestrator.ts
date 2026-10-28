@@ -4,6 +4,7 @@
 
 import type { Story } from "../../domain/types/index.ts";
 import {
+  type BudgetStatus,
   describeEvalChanges,
   type EvalChange,
   RalphRunner,
@@ -20,6 +21,7 @@ type StoryCompleteCallback = (story: Story, result: StoryResult) => void;
 type OutputCallback = (event: StreamEvent) => void;
 type IterationCallback = (iteration: number) => void;
 type CompleteCallback = (reason: RunCompleteReason) => void;
+type BudgetCallback = (status: BudgetStatus) => void;
 type ContractChangeCallback = (
   changes: EvalChange[],
   relockError?: string,
@@ -32,6 +34,7 @@ export class DefaultOrchestrator implements AgentOrchestrator {
   private iterationCallbacks: Set<IterationCallback> = new Set();
   private completeCallbacks: Set<CompleteCallback> = new Set();
   private contractChangeCallbacks: Set<ContractChangeCallback> = new Set();
+  private budgetCallbacks: Set<BudgetCallback> = new Set();
 
   constructor(config: OrchestratorConfig) {
     this.runner = new RalphRunner({
@@ -41,6 +44,9 @@ export class DefaultOrchestrator implements AgentOrchestrator {
       onOutput: (event) => this.emitOutput(event),
       onIterationStart: (iteration) => this.emitIterationChange(iteration),
       onComplete: (reason) => this.emitComplete(reason),
+      onBudget: (status) => {
+        for (const callback of this.budgetCallbacks) callback(status);
+      },
       onContractChanged: (changes, relockError) => {
         this.emitOutput({
           type: "error",
@@ -116,6 +122,11 @@ export class DefaultOrchestrator implements AgentOrchestrator {
   onIterationChange(callback: IterationCallback): () => void {
     this.iterationCallbacks.add(callback);
     return () => this.iterationCallbacks.delete(callback);
+  }
+
+  onBudget(callback: BudgetCallback): () => void {
+    this.budgetCallbacks.add(callback);
+    return () => this.budgetCallbacks.delete(callback);
   }
 
   onComplete(callback: CompleteCallback): () => void {

@@ -7,10 +7,14 @@ import type { AgentOrchestrator } from "../application/orchestrator/index.ts";
 import { createOrchestrator } from "../application/orchestrator/index.ts";
 import { useAppStore } from "../application/state/index.ts";
 import {
+  type BudgetStatus,
   describeEvalChanges,
   type EvalChange,
   ensureInitialized,
+  formatBudget,
+  headerBudget,
   type RunCompleteReason,
+  readRecordedBudget,
 } from "../infrastructure/ralph/index.ts";
 import { useTmuxLayout } from "./hooks/index.ts";
 import {
@@ -66,6 +70,11 @@ export function App({ projectPath, enableTeams }: AppProps) {
     changes: EvalChange[];
     relockError?: string;
   } | null>(null);
+  // Spend and elapsed time against the budget caps (zero until a run reports)
+  const [budget, setBudget] = useState<BudgetStatus>({
+    usd_spent: 0,
+    elapsed_minutes: 0,
+  });
   // Why the last run ended, when the user needs to see it (e.g. contract_changed)
   const [runNotice, setRunNotice] = useState<string | null>(null);
   // Initialization state
@@ -173,6 +182,27 @@ export function App({ projectPath, enableTeams }: AppProps) {
     [setAgentStatus],
   );
 
+  // Before a run reports: recorded spend and time, and the validated caps from config.json
+  useEffect(() => {
+    if (!config) return;
+    let cancelled = false;
+    readRecordedBudget(projectPath).then((recorded) => {
+      if (cancelled) return;
+      const shown = headerBudget(config, recorded);
+      setBudget(shown.status);
+      if (shown.error) {
+        appendAgentOutput({
+          type: "error",
+          content: shown.error,
+          isError: true,
+        });
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [config, projectPath, appendAgentOutput]);
+
   // Create orchestrator when config is loaded
   useEffect(() => {
     if (config && !orchestratorRef.current) {
@@ -184,6 +214,7 @@ export function App({ projectPath, enableTeams }: AppProps) {
       // Subscribe to events
       orchestratorRef.current.onIterationChange(handleIterationChange);
       orchestratorRef.current.onComplete(handleComplete);
+      orchestratorRef.current.onBudget(setBudget);
       orchestratorRef.current.onContractChange((changes, relockError) =>
         setContractChange({ changes, relockError }),
       );
@@ -611,6 +642,14 @@ export function App({ projectPath, enableTeams }: AppProps) {
           agentStatus={agentStatus}
           pendingHintsCount={pendingHints.length}
         />
+      </Box>
+
+      {/* Budget: spend and elapsed time against the caps */}
+      <Box paddingX={1}>
+        <Text color={colors.textMuted}>
+          Spend (est.): {formatBudget(budget).usd} | Elapsed:{" "}
+          {formatBudget(budget).time}
+        </Text>
       </Box>
 
       {/* Tmux warning */}

@@ -1353,6 +1353,8 @@ export interface VerifierVerdictEvent extends BaseEvent {
   >;
   reason: string;
   model?: string;
+  /** total_cost_usd the verifier session reported; counted against max_usd */
+  cost_usd?: number;
   output_path: string;
 }
 
@@ -1423,6 +1425,40 @@ export interface CompletionBlockedEvent extends BaseEvent {
     | "holdout_error"
     | "completion_error";
   error: string;
+}
+
+/** Written by the runner (never the agent) after each iteration: running totals for the run and every cap that is set */
+export interface BudgetStatusEvent extends BaseEvent {
+  type: "budget_status";
+  run_id: string;
+  iteration: number;
+  /** Summed total_cost_usd of the claude result events, including earlier starts of the same run */
+  usd_spent: number;
+  elapsed_minutes: number;
+  max_usd?: number;
+  max_wall_clock_minutes?: number;
+  max_experiments_per_iteration?: number;
+}
+
+/** Written by the runner (never the agent) when an iteration reported no total_cost_usd; it counted as $0 */
+export interface BudgetWarningEvent extends BaseEvent {
+  type: "budget_warning";
+  run_id: string;
+  iteration: number;
+  reason: string;
+}
+
+/** Written by the runner (never the agent) when max_usd or max_wall_clock_minutes is reached; the run ends with reason budget_exhausted */
+export interface BudgetExhaustedEvent extends BaseEvent {
+  type: "budget_exhausted";
+  run_id: string;
+  iteration: number;
+  cap: "usd" | "wall_clock";
+  usd_spent: number;
+  elapsed_minutes: number;
+  max_usd?: number;
+  max_wall_clock_minutes?: number;
+  max_experiments_per_iteration?: number;
 }
 
 /** Written by the runner (never the agent) when a tool call named the sealed holdout path; the run ends with reason holdout_access */
@@ -1528,6 +1564,9 @@ export type RalphEvent =
   | RunCompleteEvent
   | CompletionRejectedEvent
   | CompletionBlockedEvent
+  | BudgetStatusEvent
+  | BudgetWarningEvent
+  | BudgetExhaustedEvent
   | HoldoutAccessEvent
   | ContractRelockedEvent
   | StrategicRetreatEvent

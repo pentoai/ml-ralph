@@ -39,6 +39,11 @@ export interface ProjectConfig {
   // Independent verifier (read-only claude -p session)
   verifier?: VerifierConfig;
 
+  // Run budget caps; each is optional and an unset cap is not enforced
+  max_wall_clock_minutes?: number; // Minutes of wall-clock time for a run
+  max_usd?: number; // Summed total_cost_usd of the claude result events
+  max_experiments_per_iteration?: number; // `ml-ralph eval` calls per iteration
+
   // Tooling
   runtime: RuntimeConfig;
 }
