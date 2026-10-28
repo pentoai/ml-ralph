@@ -1461,6 +1461,13 @@ export interface BudgetExhaustedEvent extends BaseEvent {
   max_experiments_per_iteration?: number;
 }
 
+/** Written by the runner (never the agent) when report.md could not be written; the run still ends */
+export interface ReportFailedEvent extends BaseEvent {
+  type: "report_failed";
+  run_id: string;
+  reason: string;
+}
+
 /** Written by the runner (never the agent) when a tool call named the sealed holdout path; the run ends with reason holdout_access */
 export interface HoldoutAccessEvent extends BaseEvent {
   type: "holdout_access";
@@ -1567,6 +1574,7 @@ export type RalphEvent =
   | BudgetStatusEvent
   | BudgetWarningEvent
   | BudgetExhaustedEvent
+  | ReportFailedEvent
   | HoldoutAccessEvent
   | ContractRelockedEvent
   | StrategicRetreatEvent

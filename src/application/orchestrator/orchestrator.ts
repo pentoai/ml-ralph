@@ -73,7 +73,7 @@ export class DefaultOrchestrator implements AgentOrchestrator {
   }
 
   async stop(): Promise<void> {
-    this.runner.stop();
+    await this.runner.stop();
   }
 
   isRunning(): boolean {

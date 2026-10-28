@@ -81,6 +81,16 @@ When `max_wall_clock_minutes` or `max_usd` is reached the run ends with reason `
 
 A restarted run keeps its `run_id` (in `.ml-ralph/budget/run.json`) and starts from the spend and elapsed time in its earlier `budget_status` events, so a restart does not reset the budget; the id is dropped only when the run ends with `max_iterations`. After `budget_exhausted`, a user stop, `contract_changed` or `holdout_access` it persists, so a restart inherits the spend and time already recorded. To continue after `budget_exhausted`, raise a cap in `config.json`; to start a fresh budget, delete `.ml-ralph/budget/run.json`. `usd_spent` includes the independent verifier's `total_cost_usd` (also recorded as `cost_usd` on its `verifier_verdict` event). A negative, zero or non-numeric cap stops the run at start with an error naming the key. GPU-hours are not capped yet.
 
+## The run report
+
+When a run ends (`run_complete`, `budget_exhausted`, `max_iterations`, `contract_changed`, `holdout_access`, a user quit including `q`, or an error that stops the run) the runner writes `.ml-ralph/reports/<run id>/report.md` from its own records. It has:
+
+- **Problem**: `problem` from `prd.json`.
+- **Result**: the end reason; the incumbent's eval id, search score (from the runner's `metrics.json`), holdout score (`not scored` unless the completion gate scored it) and commit SHA. With no promotion it says `no candidate was promoted`.
+- **Claims**: one line per finding from `log.jsonl`, each ending in `[eval:<eval_id>]`. Every number comes from the runner's own `eval` events; an agent's `experiment` event is mentioned only as having been logged against a real eval, without its observations. `auditClaims` in `src/infrastructure/ralph/report.ts` (used by its tests) flags a claim whose eval id is not in the log or that carries a number other than that eval's recorded mean or std.
+
+If the report cannot be written, the runner logs `report_failed` and the run still ends. Ablations against the baseline are not part of the report yet.
+
 ## License
 
 MIT

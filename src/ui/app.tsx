@@ -43,6 +43,8 @@ export function App({ projectPath, enableTeams }: AppProps) {
   const { stdout } = useStdout();
   const { disableFocus } = useFocusManager();
   const orchestratorRef = useRef<AgentOrchestrator | null>(null);
+  // A stop the user confirmed with s then y: a later quit waits for its report
+  const pendingStopRef = useRef<Promise<void> | null>(null);
 
   // Disable built-in Tab focus cycling — we handle Tab manually
   useEffect(() => {
@@ -257,8 +259,10 @@ export function App({ projectPath, enableTeams }: AppProps) {
 
   // Perform actual quit - kill tmux session too
   const doQuit = async () => {
+    await pendingStopRef.current;
     if (orchestratorRef.current?.isRunning()) {
-      orchestratorRef.current.stop();
+      // Wait for the run's report to be written before the process exits
+      await orchestratorRef.current.stop();
     }
     // Kill the entire tmux session
     const sessionName = `ml-ralph-${projectPath.split("/").pop() || "default"}`;
@@ -359,7 +363,7 @@ export function App({ projectPath, enableTeams }: AppProps) {
     // Handle stop confirmation dialog
     if (showStopConfirm) {
       if (input === "y" || input === "Y") {
-        orchestratorRef.current?.stop();
+        pendingStopRef.current = orchestratorRef.current?.stop() ?? null;
         setAgentStatus("idle");
         setPendingHints([]);
         setShowStopConfirm(false);

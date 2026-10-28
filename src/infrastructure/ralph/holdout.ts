@@ -65,6 +65,20 @@ async function readRecord(file: string): Promise<HoldoutRecord | null> {
   }
 }
 
+/** The holdout score the runner recorded for an eval, or null when it was never scored (or the scoring failed) */
+export async function readHoldoutScore(
+  projectDir: string,
+  evalId: string,
+  env: Record<string, string | undefined> = process.env,
+): Promise<number | null> {
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(evalId)) return null;
+  const dir = await holdoutStateDir(projectDir, env);
+  const record = await readRecord(join(dir, `${evalId}.json`));
+  return record?.status === "ok" && Number.isFinite(record.score)
+    ? (record.score as number)
+    : null;
+}
+
 export interface HoldoutOptions {
   projectPath: string;
   /** Environment to find XDG_CONFIG_HOME in (default: process.env) */
