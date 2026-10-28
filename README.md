@@ -49,6 +49,12 @@ UNDERSTAND → STRATEGIZE → EXECUTE → REFLECT
 
 Strategic retreat — going back to understand when stuck — is a first-class concept, not a failure. Understanding is progress.
 
+## Conclusions
+
+`.ml-ralph/conclusions.md` keeps what the agent has learned as at most 300 words of scoped, revisable claims. `ml-ralph init` creates it (empty), and the runner creates it at start if an older project lacks one. Each iteration's prompt inlines it plus the last N log events (`recent_events` in `config.json`, default 30) instead of the whole `log.jsonl`, so the prompt stays flat as a run grows.
+
+The agent may change the file only with a `conclusions_changed` event whose reason is `contradiction`, `new_category`, `flipped_recommendation` or `refinement`. If an iteration leaves it over 300 whitespace-separated words, or changed without such an event, the runner restores the previous version, logs `conclusions_rejected` with the reason and says why in the next prompt.
+
 ## When a run completes
 
 Only the runner ends a run; the agent's `<project_complete>` is ignored. After a promotion whose search score (from the runner's own eval and `metrics.json`) meets the contract's `success_threshold` in the contract's direction, the runner:

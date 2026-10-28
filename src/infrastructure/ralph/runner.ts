@@ -19,6 +19,13 @@ import {
   resetExperimentCount,
   writeRunId,
 } from "./budget.ts";
+import {
+  buildContextPrompt,
+  countLogLines,
+  enforceConclusions,
+  ensureConclusions,
+  readConclusions,
+} from "./conclusions.ts";
 import { HOLDOUT_PATH_ENV, killTree } from "./eval-command.ts";
 import {
   checkEvalGate,
@@ -134,6 +141,16 @@ export interface StreamEvent {
 
 export type ContractDecision = "relock" | "stop";
 
+const BASE_PROMPT = `Read .ml-ralph/RALPH.md for instructions.
+
+The prompt below inlines .ml-ralph/conclusions.md and the last log events. Do not read the whole log.jsonl.
+
+Execute one iteration of the cognitive loop. Update state files as needed.
+When done, output exactly: <iteration_complete>
+
+If you have a candidate you believe is a new best, follow "Completing a Candidate" in RALPH.md and also output: <candidate_complete eval_id="...">
+Only the runner decides whether a candidate is promoted, and only the runner ends the run.`;
+
 export class RalphRunner {
   private config: RunnerConfig;
   private running = false;
@@ -188,6 +205,8 @@ export class RalphRunner {
       return;
     }
 
+    await ensureConclusions(this.config.projectPath);
+
     const caps = await readBudgetCaps(this.config.projectPath);
     if (!caps.ok) {
       this.config.onError?.(new Error(caps.error));
@@ -209,14 +228,6 @@ export class RalphRunner {
     this.holdoutScored = new Set();
     this.holdoutAccess = null;
     let baselineRecorded = false;
-
-    const basePrompt = `Read .ml-ralph/RALPH.md for instructions.
-
-Execute one iteration of the cognitive loop. Update state files as needed.
-When done, output exactly: <iteration_complete>
-
-If you have a candidate you believe is a new best, follow "Completing a Candidate" in RALPH.md and also output: <candidate_complete eval_id="...">
-Only the runner decides whether a candidate is promoted, and only the runner ends the run.`;
 
     try {
       await this.startBudget(caps.caps);
@@ -251,11 +262,11 @@ Only the runner decides whether a candidate is promoted, and only the runner end
         this.config.onIterationStart?.(i);
 
         // Build prompt with the runner's last decision and any pending hints
-        const prompt =
-          basePrompt +
-          budgetPrompt(this.budgetNow()) +
-          this.consumeFeedback() +
-          (this.consumeHints() ?? "");
+        const prompt = await this.buildPrompt();
+        const conclusionsBefore = await readConclusions(
+          this.config.projectPath,
+        );
+        const logLinesBefore = await countLogLines(this.config.projectPath);
         const iterationStartedAt = new Date().toISOString();
 
         // Emit iteration marker
@@ -270,9 +281,11 @@ Only the runner decides whether a candidate is promoted, and only the runner end
           result = await this.runIteration(prompt);
         } catch (error) {
           await this.recordBudget();
+          await this.enforceConclusions(conclusionsBefore, logLinesBefore);
           throw error;
         }
         await this.recordBudget();
+        await this.enforceConclusions(conclusionsBefore, logLinesBefore);
 
         const access = this.holdoutAccessed();
         if (access) {
@@ -671,6 +684,43 @@ Only the runner decides whether a candidate is promoted, and only the runner end
     } catch {
       // The decision stands even if the log line could not be written
     }
+  }
+
+  /**
+   * The prompt for the next iteration: instructions, the distilled
+   * conclusions plus the last N log events (flat in log length), the budget
+   * left, and the runner's pending feedback and hints.
+   */
+  async buildPrompt(): Promise<string> {
+    return (
+      BASE_PROMPT +
+      (await buildContextPrompt(this.config.projectPath)) +
+      budgetPrompt(this.budgetNow()) +
+      this.consumeFeedback() +
+      (this.consumeHints() ?? "")
+    );
+  }
+
+  /** Restore conclusions.md and tell the next prompt why when the iteration's edit broke the rules */
+  private async enforceConclusions(
+    before: string,
+    logLinesBefore: number,
+  ): Promise<void> {
+    const rejection = await enforceConclusions(
+      this.config.projectPath,
+      before,
+      logLinesBefore,
+    );
+    if (!rejection) return;
+    await this.appendLogEvent({
+      type: "conclusions_rejected",
+      reason: rejection.reason,
+      detail: rejection.detail,
+      words: rejection.words,
+    });
+    this.pendingFeedback.push(
+      `Your last change to conclusions.md was rejected and the previous version restored: ${rejection.detail}. Edit it again only with a conclusions_changed event.`,
+    );
   }
 
   private consumeFeedback(): string {

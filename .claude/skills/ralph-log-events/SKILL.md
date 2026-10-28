@@ -45,6 +45,7 @@ The examples below show stored lines; pass everything except `ts` as the JSON ar
 ### Learnings & Decisions
 ```jsonl
 {"ts":"...","type":"learning","insight":"Distribution shifted in 2020 - models need explicit handling","source":"H-001 analysis"}
+{"ts":"...","type":"conclusions_changed","reason":"contradiction","summary":"H-004 contradicts the claim that temporal features dominate"}
 {"ts":"...","type":"decision","hypothesis_id":"H-001","action":"iterate","reason":"Partial success - need time-aware normalization","next_step":"Research distribution shift handling"}
 ```
 
@@ -117,6 +118,8 @@ See RALPH.md for when and how to use these events.
 | `hypothesis` | id, claim (string), expected_delta (number), rubrics (non-empty array), kill_criterion (string) |
 | `experiment` | hypothesis_id, metrics, observations (+ eval_id from `ml-ralph eval`) |
 | `learning` | insight, source |
+| `conclusions_changed` | reason (`contradiction`, `new_category`, `flipped_recommendation`, `refinement`), summary. Required with every edit to `conclusions.md` (max 300 words) |
+| `conclusions_rejected` (runner-only) | reason (`too_long`, `no_justification`), detail, words |
 | `decision` | hypothesis_id, action, reason |
 | `strategic_retreat` | trigger, action, focus |
 | `prd_updated` | field, change, reason |

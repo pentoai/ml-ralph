@@ -15,6 +15,7 @@ const BASE_FILES = [
   ".claude/skills/ml-ralph/SKILL.md",
   ".codex/skills/ml-ralph/SKILL.md",
   ".ml-ralph/RALPH.md",
+  ".ml-ralph/conclusions.md",
   ".ml-ralph/config.json",
   ".ml-ralph/kanban.json",
   ".ml-ralph/log.jsonl",
@@ -72,6 +73,7 @@ describe("initRalph", () => {
     await initRalph({ projectPath: dir, name: "demo" });
     const edited = [
       ".ml-ralph/RALPH.md",
+      ".ml-ralph/conclusions.md",
       ".ml-ralph/config.json",
       ".ml-ralph/prd.json",
       "CLAUDE.md",

@@ -102,7 +102,8 @@ Most failures come from poor understanding or unverified assumptions, not from p
 .ml-ralph/
   prd.json      # The PRD - the destination (what we're solving)
   kanban.json   # The Kanban - the journey (how we're getting there)
-  log.jsonl     # Event log - append-only, your memory
+  log.jsonl     # Event log - append-only, full history
+  conclusions.md # Distilled claims (max 300 words) - the runner inlines it in your prompt
   eval/
     evaluate.py   # Eval script - drafted in SETUP, locked once the PRD is approved
     contract.json # Eval contract - metric, direction, split, seeds, thresholds, baseline
@@ -301,7 +302,9 @@ Every single iteration MUST follow this structure:
    - What's the plan in up_next?
    - Does the plan still make sense given what I know?
 
-3. READ recent log.jsonl entries
+3. READ the "Conclusions" and "Last log events" sections of your prompt
+   (the runner inlines conclusions.md and the last N events; do NOT read the
+   whole log.jsonl - query it with jq only for a specific lookup)
    - What did I learn last iteration?
    - Any surprises that should change my plan?
 \`\`\`
@@ -707,6 +710,7 @@ Log events with \`${LOG_COMMAND} <type> '<json>'\`. Each example below is the JS
 | \`hypothesis\` | id, claim, expected_delta, rubrics, kill_criterion | Falsifiable prediction (see below) |
 | \`experiment\` | hypothesis_id, metrics, observations (+ eval_id from \`ml-ralph eval\`) | Experiment results; without a runner \`eval_id\` the metrics show as unverified |
 | \`learning\` | insight, source | Key insight gained |
+| \`conclusions_changed\` | reason (\`contradiction\`, \`new_category\`, \`flipped_recommendation\`, \`refinement\`), summary | **Required whenever you edit \`conclusions.md\`** (see below) |
 | \`decision\` | hypothesis_id, action (\`keep\`, \`reject\`, \`iterate\`, \`pivot\`), reason | Decision on hypothesis |
 | \`strategic_retreat\` | trigger, action, focus | Returning to understand |
 | \`prd_updated\` | field, change, reason | PRD modification |
@@ -878,6 +882,10 @@ The TUI reads experiment data from:
 
 ---
 
+## Conclusions (conclusions.md)
+
+\`.ml-ralph/conclusions.md\` holds what you have distilled from the log: scoped, revisable claims, **at most 300 words** (whitespace-separated). It is inlined in your prompt each iteration, so keep it current and short. Edit it only when a result contradicts a claim, opens a new category, flips a recommendation, or refines a claim by name, and log \`conclusions_changed\` with that reason in the same iteration. The runner restores the previous version and logs \`conclusions_rejected\` if the file is over 300 words or changed without that event.
+
 ## Querying the Log (jq examples)
 
 \`\`\`bash
@@ -1018,7 +1026,8 @@ Ralph thinks deeply before acting, researches what others have learned, and main
 |------|---------|
 | \`.ml-ralph/prd.json\` | PRD - the destination (what we're solving) |
 | \`.ml-ralph/kanban.json\` | Kanban - the journey (how we're getting there) |
-| \`.ml-ralph/log.jsonl\` | Event log - agent memory (append-only; write it only with \`${LOG_COMMAND} <type> '<json>'\`) |
+| \`.ml-ralph/conclusions.md\` | Distilled claims, max 300 words; edit only with a \`conclusions_changed\` event |
+| \`.ml-ralph/log.jsonl\` | Event log - full history (append-only; write it only with \`${LOG_COMMAND} <type> '<json>'\`) |
 | \`.ml-ralph/eval/\` | Eval contract (\`evaluate.py\`, \`contract.json\`), locked by the runner on approval |
 | \`.ml-ralph/evals/\` | Runner-written scores (\`metrics.json\` per \`${EVAL_COMMAND}\` run). Read-only for you |
 | \`.ml-ralph/RALPH.md\` | Full agent instructions |
@@ -1085,6 +1094,7 @@ UNDERSTAND → STRATEGIZE → EXECUTE → REFLECT
 - \`hypothesis\` - Testable prediction
 - \`experiment\` - Results
 - \`learning\` - Insight gained
+- \`conclusions_changed\` - conclusions.md edited (reason, summary)
 - \`decision\` - Keep/reject/iterate
 - \`strategic_retreat\` - Returning to understand
 - \`kanban_updated\` - Plan evolution
@@ -1494,6 +1504,24 @@ export interface LearningEvent extends BaseEvent {
   source?: string;
 }
 
+export interface ConclusionsChangedEvent extends BaseEvent {
+  type: "conclusions_changed";
+  reason:
+    | "contradiction"
+    | "new_category"
+    | "flipped_recommendation"
+    | "refinement";
+  summary: string;
+}
+
+/** Written by the runner (never the agent) when it restored conclusions.md after a rule-breaking edit */
+export interface ConclusionsRejectedEvent extends BaseEvent {
+  type: "conclusions_rejected";
+  reason: "too_long" | "no_justification";
+  detail: string;
+  words: number;
+}
+
 export interface DecisionEvent extends BaseEvent {
   type: "decision";
   hypothesis_id: string;
@@ -1563,6 +1591,8 @@ export type RalphEvent =
   | ExperimentEvent
   | EvalEvent
   | LearningEvent
+  | ConclusionsChangedEvent
+  | ConclusionsRejectedEvent
   | DecisionEvent
   | VerifierVerdictEvent
   | PromotionEvent

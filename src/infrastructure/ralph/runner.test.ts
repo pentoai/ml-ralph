@@ -748,7 +748,7 @@ describe("RalphRunner completion gate", () => {
     expect(event).toMatchObject({ reason: "verifier_rejected" });
     expect(runner.prompts[1]).toContain("rejected (verifier_rejected)");
     expect(runner.prompts[1]).toContain("test labels used in training");
-    expect(runner.prompts[2]).not.toContain("verifier_rejected");
+    expect(runner.prompts[2]).not.toContain("rejected (verifier_rejected)");
     expect(await logEvents("run_complete")).toEqual([]);
   });
 

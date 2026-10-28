@@ -83,6 +83,7 @@ export async function initRalph(options: InitOptions): Promise<InitResult> {
     }
 
     await writeFile(`${mlRalphDir}/log.jsonl`, "", false);
+    await writeFile(`${mlRalphDir}/conclusions.md`, "", false);
     await writeFile(
       `${mlRalphDir}/prd.json`,
       JSON.stringify({ ...DEFAULT_PRD, project: name }, null, 2),
