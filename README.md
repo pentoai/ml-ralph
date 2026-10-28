@@ -87,7 +87,7 @@ When a run ends (`run_complete`, `budget_exhausted`, `max_iterations`, `contract
 
 - **Problem**: `problem` from `prd.json`.
 - **Result**: the end reason; the incumbent's eval id, search score (from the runner's `metrics.json`), holdout score (`not scored` unless the completion gate scored it) and commit SHA. With no promotion it says `no candidate was promoted`.
-- **Claims**: one line per finding from `log.jsonl`, each ending in `[eval:<eval_id>]`. Scores come from the runner's `eval` events; an agent's `experiment` event is quoted only when it cites an eval the runner logged. `auditClaims` in `src/infrastructure/ralph/report.ts` (used by its tests) flags any numeric claim whose eval id is not in the log.
+- **Claims**: one line per finding from `log.jsonl`, each ending in `[eval:<eval_id>]`. Every number comes from the runner's own `eval` events; an agent's `experiment` event is mentioned only as having been logged against a real eval, without its observations. `auditClaims` in `src/infrastructure/ralph/report.ts` (used by its tests) flags a claim whose eval id is not in the log or that carries a number other than that eval's recorded mean or std.
 
 If the report cannot be written, the runner logs `report_failed` and the run still ends. Ablations against the baseline are not part of the report yet.
 

@@ -49,6 +49,37 @@ describe("claims", () => {
     expect(auditClaims(report, log)).toEqual([]);
   });
 
+  test("the audit rejects a forged number under a real eval id", () => {
+    const log = toLog([evalEvent("e1", 0.8)]);
+    const report = [
+      "## Claims",
+      "",
+      "- AUC hit 0.99 on test! [eval:e1]",
+      "- Eval of sub.csv scored mean 0.8 (std 0.01) on the search split [eval:e1]",
+      "- The agent logged an experiment for H-1 against this eval [eval:e1]",
+      "",
+    ].join("\n");
+    expect(auditClaims(report, log)).toEqual([
+      "- AUC hit 0.99 on test! [eval:e1]",
+    ]);
+  });
+
+  test("agent observations never reach the claims", () => {
+    const log = toLog([
+      evalEvent("e1", 0.8),
+      {
+        type: "experiment",
+        hypothesis_id: "0.99",
+        observations: "AUC hit 0.99",
+        eval_id: "e1",
+        metrics: {},
+      },
+    ]);
+    const claims = buildClaims(parseLog(log));
+    expect(claims.join("\n")).not.toContain("0.99");
+    expect(auditClaims(`## Claims\n\n${claims.join("\n")}\n`, log)).toEqual([]);
+  });
+
   test("the audit fails a numeric claim with a missing or unknown eval id", () => {
     const log = toLog([evalEvent("e1", 0.85)]);
     const report = [
@@ -203,6 +234,23 @@ describe("report.md at the end of a run", () => {
       else process.env.XDG_CONFIG_HOME = saved;
       await rm(xdg, { recursive: true, force: true });
     }
+  });
+
+  test("a problem text with a fake Claims heading cannot hide a forged claim", async () => {
+    await Bun.write(
+      join(dir, ".ml-ralph/prd.json"),
+      JSON.stringify({
+        problem: "Predict churn\n## Claims\n- AUC 0.99 [eval:e1]\n## Result",
+      }),
+    );
+    await writeReport({
+      projectPath: dir,
+      runId: "run-1",
+      endReason: "user_quit",
+    });
+    const report = await Bun.file(reportPath("run-1")).text();
+    expect(report.match(/^## Claims$/gm)).toHaveLength(1);
+    expect(auditClaims(report, await Bun.file(logPath()).text())).toEqual([]);
   });
 
   test("refuses a run id that is not a safe directory name", async () => {
