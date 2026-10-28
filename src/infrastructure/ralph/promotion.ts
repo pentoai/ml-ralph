@@ -13,6 +13,7 @@ import {
   type EvalMetricsOk,
   readEvalMetrics,
 } from "./eval-metrics.ts";
+import { runGit, trackedChanges } from "./git.ts";
 import {
   appendValidatedEvent,
   type InvalidRunnerEvent,
@@ -51,6 +52,8 @@ export interface PromotionDeps {
    * verifier only sees committed refs.
    */
   gitHead: (projectPath: string, requireClean: boolean) => Promise<GitHead>;
+  /** Force-move the ralph/best tag to a promoted commit; an error string on failure */
+  tagBest: (projectPath: string, sha: string) => Promise<string | null>;
 }
 
 export interface JudgeCandidateOptions {
@@ -156,28 +159,6 @@ export async function readIncumbent(
   }
 }
 
-async function runGit(
-  projectPath: string,
-  args: string[],
-): Promise<{ code: number; out: string; err: string }> {
-  try {
-    const proc = Bun.spawn(["git", ...args], {
-      cwd: projectPath,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [out, err, code] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-    return { code, out, err };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return { code: 1, out: "", err: message };
-  }
-}
-
 export const defaultGitHead: PromotionDeps["gitHead"] = async (
   projectPath,
   requireClean,
@@ -190,14 +171,7 @@ export const defaultGitHead: PromotionDeps["gitHead"] = async (
     };
   }
   if (requireClean) {
-    const status = await runGit(projectPath, [
-      "status",
-      "--porcelain",
-      "--untracked-files=no",
-      "--",
-      ".",
-      ":(exclude).ml-ralph",
-    ]);
+    const status = await trackedChanges(projectPath);
     if (status.code !== 0 || status.out.trim()) {
       return {
         ok: false,
@@ -207,6 +181,19 @@ export const defaultGitHead: PromotionDeps["gitHead"] = async (
     }
   }
   return { ok: true, ref: head.out.trim() };
+};
+
+/** Tag that always points at the commit of the current incumbent */
+export const BEST_TAG = "ralph/best";
+
+export const defaultTagBest: PromotionDeps["tagBest"] = async (
+  projectPath,
+  sha,
+) => {
+  const tag = await runGit(projectPath, ["tag", "-f", BEST_TAG, sha]);
+  return tag.code === 0
+    ? null
+    : tag.err.trim() || `git tag exited with code ${tag.code}`;
 };
 
 /**
@@ -441,6 +428,11 @@ async function judge(
   // Only a candidate that already wins on score is worth a verifier session
   const head = await gitHead(projectPath, true);
   if (!head.ok) return reject(head.error);
+  if (metrics.sha && metrics.sha !== head.ref) {
+    return reject(
+      `the eval scored commit ${metrics.sha.slice(0, 7)} but HEAD is ${head.ref.slice(0, 7)}; run ml-ralph eval again on the committed candidate`,
+    );
+  }
   const baselineRef = await readBaselineRef(projectPath);
   const referenceRef = incumbent?.ref ?? baselineRef;
   if (!referenceRef) {
@@ -479,6 +471,28 @@ async function judge(
   const tmp = `${projectPath}/${INCUMBENT_PATH}.tmp`;
   await Bun.write(tmp, `${JSON.stringify(promoted, null, 2)}\n`);
   await rename(tmp, `${projectPath}/${INCUMBENT_PATH}`);
+  // The promotion stands even when the tag cannot be moved
+  const tagError = await (deps.tagBest ?? defaultTagBest)(
+    projectPath,
+    head.ref,
+  );
+  if (tagError !== null) {
+    try {
+      await appendValidatedEvent(
+        projectPath,
+        {
+          type: "tag_failed",
+          tag: BEST_TAG,
+          sha: head.ref,
+          eval_id: metrics.eval_id,
+          error: oneLine(tagError),
+        },
+        options.onInvalidEvent,
+      );
+    } catch {
+      // Best effort, like the promotion event itself
+    }
+  }
   state.promoted = {
     evalId: metrics.eval_id,
     searchScore: metrics.mean,

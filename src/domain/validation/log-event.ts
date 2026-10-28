@@ -198,6 +198,7 @@ export const LOG_EVENT_SCHEMAS: Record<string, LogEventSchema> = {
       eval_id: str,
       status: oneOf("ok", "failed"),
       candidate: str,
+      sha: optional(str),
       mean: optional(num),
       std: optional(num),
       reason: optional(str),
@@ -214,6 +215,10 @@ export const LOG_EVENT_SCHEMAS: Record<string, LogEventSchema> = {
       candidate_mean: optional(num),
       reference_mean: optional(num),
     },
+  },
+  tag_failed: {
+    runnerOnly: true,
+    fields: { tag: str, sha: str, eval_id: str, error: str },
   },
   candidate_rejected: {
     runnerOnly: true,

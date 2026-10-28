@@ -28,6 +28,8 @@ interface EvalMetricsBase {
   candidate: string;
   split: string;
   created_at: string;
+  /** HEAD commit the candidate was scored at; null outside a git repository */
+  sha: string | null;
 }
 
 export interface EvalMetricsOk extends EvalMetricsBase {
@@ -92,6 +94,8 @@ export interface EvalSummary {
   mean: number;
   std: number;
   seeds: number;
+  /** Commit the eval scored; null when none was recorded */
+  sha: string | null;
 }
 
 /** eval_id -> summary, for the evals that finished with status ok */
@@ -147,6 +151,7 @@ export async function readVerifiedEvals(
         mean: metrics.mean,
         std: metrics.std,
         seeds: metrics.scores.length,
+        sha: metrics.sha ?? null,
       });
     } else if (metrics?.status === "failed") {
       cache.failed.add(name);

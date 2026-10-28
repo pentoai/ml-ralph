@@ -9,8 +9,8 @@ import {
 } from "./experiment-verification.ts";
 
 const evals: VerifiedEvals = new Map([
-  ["eval-a", { mean: 0.8, std: 0.01, seeds: 3 }],
-  ["eval-b", { mean: 0.9, std: 0.02, seeds: 3 }],
+  ["eval-a", { mean: 0.8, std: 0.01, seeds: 3, sha: null }],
+  ["eval-b", { mean: 0.9, std: 0.02, seeds: 3, sha: null }],
 ]);
 const max: EvalScoring = { primaryMetric: "auc", direction: "max" };
 const min: EvalScoring = { primaryMetric: "rmse", direction: "min" };
