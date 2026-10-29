@@ -80,6 +80,36 @@ describe("claims", () => {
     expect(auditClaims(`## Claims\n\n${claims.join("\n")}\n`, log)).toEqual([]);
   });
 
+  test("the audit accepts a candidate path with digits", () => {
+    const log = toLog([
+      { ...evalEvent("e1", 0.85), candidate: "runs/2026/sub v3.csv" },
+      { type: "eval", eval_id: "e3", status: "failed", candidate: "r2026.csv" },
+    ]);
+    const claims = buildClaims(parseLog(log));
+    expect(claims[0]).toContain("runs/2026/sub v3.csv");
+    expect(auditClaims(`## Claims\n\n${claims.join("\n")}\n`, log)).toEqual([]);
+  });
+
+  test("the audit accepts a mean or std in exponent form", () => {
+    const log = toLog([{ ...evalEvent("e1", 1e21), std: 1e-7 }]);
+    const claims = buildClaims(parseLog(log));
+    expect(claims[0]).toContain("1e+21");
+    expect(auditClaims(`## Claims\n\n${claims.join("\n")}\n`, log)).toEqual([]);
+  });
+
+  test("the audit rejects a number injected into the candidate slot", () => {
+    const log = toLog([evalEvent("e1", 0.8)]);
+    const report = [
+      "## Claims",
+      "",
+      "- Eval of sub.csv reaching AUC 0.99 scored mean 0.8 (std 0.01) on the search split [eval:e1]",
+      "- Eval of other 2026.csv scored mean 0.8 (std 0.01) on the search split [eval:e1]",
+      "- Eval of sub.csv scored mean 0.8 (std 0.01) on the search split [eval:e1]",
+      "",
+    ].join("\n");
+    expect(auditClaims(report, log)).toHaveLength(2);
+  });
+
   test("the audit fails a numeric claim with a missing or unknown eval id", () => {
     const log = toLog([evalEvent("e1", 0.85)]);
     const report = [
