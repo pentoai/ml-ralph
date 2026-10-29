@@ -14,7 +14,10 @@ describe("TmuxLayoutManager", () => {
   afterEach(async () => {
     // Clean up
     if (manager) {
-      await manager.enterMonitorMode();
+      const paneId = manager.getTerminalPaneId();
+      if (paneId) {
+        Bun.spawnSync(["tmux", "kill-pane", "-t", paneId]);
+      }
       manager = null;
     }
   });
@@ -61,7 +64,7 @@ describe("TmuxLayoutManager", () => {
   );
 
   test.if(insideTmux)(
-    "enterMonitorMode closes split pane",
+    "enterMonitorMode minimizes split pane but keeps it",
     async () => {
       manager = new TmuxLayoutManager({
         sessionName: "ml-ralph-test",
@@ -74,7 +77,20 @@ describe("TmuxLayoutManager", () => {
 
       const success = await manager.enterMonitorMode();
       expect(success).toBe(true);
-      expect(manager.hasTerminalPane()).toBe(false);
+      // The pane is shrunk to one column, not closed, so the session survives
+      expect(manager.hasTerminalPane()).toBe(true);
+      const paneId = manager.getTerminalPaneId() as string;
+      const width = Bun.spawnSync([
+        "tmux",
+        "display-message",
+        "-p",
+        "-t",
+        paneId,
+        "#{pane_width}",
+      ])
+        .stdout.toString()
+        .trim();
+      expect(width).toBe("1");
     },
     TEST_TIMEOUT,
   );
