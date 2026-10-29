@@ -3,6 +3,7 @@
  */
 
 import type { Subprocess } from "bun";
+import type { TrainingJob } from "../../domain/types/index.ts";
 import {
   type BudgetCaps,
   type BudgetExhaustion,
@@ -46,6 +47,7 @@ import {
   type HoldoutNeedles,
   loadHoldoutNeedles,
 } from "./holdout-guard.ts";
+import { pruneStaleJobs, type StopJobResult, stopJob } from "./jobs.ts";
 import { appendValidatedEvent } from "./log-command.ts";
 import {
   judgeCandidate,
@@ -158,6 +160,8 @@ export class RalphRunner {
   private currentIteration = 0;
   private pendingHints: string[] = [];
   private pendingFeedback: string[] = [];
+  /** Jobs the user stopped; kept across start() so a stop while idle still reaches the next prompt */
+  private pendingJobNotes: string[] = [];
   /** eval_ids the completion gate has asked scoreHoldout about in this run */
   private holdoutScored = new Set<string>();
   private lastToolCall: ToolCallRef | null = null;
@@ -206,6 +210,7 @@ export class RalphRunner {
     }
 
     await ensureConclusions(this.config.projectPath);
+    await pruneStaleJobs(this.config.projectPath).catch(() => []);
 
     const caps = await readBudgetCaps(this.config.projectPath);
     if (!caps.ok) {
@@ -723,9 +728,32 @@ export class RalphRunner {
     );
   }
 
+  /**
+   * Stop a training job on the user's behalf: signal it, drop its entry,
+   * log `job_stopped` and tell the agent's next prompt.
+   */
+  async stopJob(job: TrainingJob): Promise<StopJobResult> {
+    const result = await stopJob(this.config.projectPath, job);
+    await this.appendLogEvent({
+      type: "job_stopped",
+      job_id: job.id,
+      pid: job.pid,
+      command: job.command,
+      outcome: result.outcome,
+      message: result.message,
+    });
+    this.pendingJobNotes.push(
+      result.outcome === "stopped"
+        ? `The user stopped training job ${job.id} (\`${job.command}\`). Do not restart it unless the plan changes.`
+        : `The user tried to stop training job ${job.id} (\`${job.command}\`): ${result.message}. It is no longer tracked.`,
+    );
+    return result;
+  }
+
   private consumeFeedback(): string {
-    const feedback = this.pendingFeedback;
+    const feedback = [...this.pendingFeedback, ...this.pendingJobNotes];
     this.pendingFeedback = [];
+    this.pendingJobNotes = [];
     return feedback.map((line) => `\n\n${line}`).join("");
   }
 

@@ -14,7 +14,10 @@ import {
   formatBudget,
   headerBudget,
   type RunCompleteReason,
+  readActiveJobs,
   readRecordedBudget,
+  stopJob,
+  tailJobLog,
 } from "../infrastructure/ralph/index.ts";
 import { useTmuxLayout } from "./hooks/index.ts";
 import {
@@ -30,6 +33,7 @@ import { MonitorScreen } from "./screens/monitor.tsx";
 import { OutputScreen } from "./screens/output.tsx";
 import { PlanningScreen } from "./screens/planning.tsx";
 import { colors } from "./theme/colors.ts";
+import { JobsPanel } from "./widgets/jobs-panel.tsx";
 // import { Logo } from "./widgets/logo.tsx";
 import { ModeTabs } from "./widgets/tabs.tsx";
 
@@ -43,6 +47,12 @@ export function App({ projectPath, enableTeams }: AppProps) {
   const { stdout } = useStdout();
   const { disableFocus } = useFocusManager();
   const orchestratorRef = useRef<AgentOrchestrator | null>(null);
+  const [selectedJobIndex, setSelectedJobIndex] = useState(0);
+  const [jobNotice, setJobNotice] = useState<string | null>(null);
+  const [jobLog, setJobLog] = useState<{
+    jobId: string;
+    lines: string[];
+  } | null>(null);
   // A stop the user confirmed with s then y: a later quit waits for its report
   const pendingStopRef = useRef<Promise<void> | null>(null);
 
@@ -112,7 +122,6 @@ export function App({ projectPath, enableTeams }: AppProps) {
     setAgentStatus,
     config,
     activeJobs,
-    stopTrainingJob,
     inputMode,
     setInputMode,
     scrollUp,
@@ -204,6 +213,18 @@ export function App({ projectPath, enableTeams }: AppProps) {
       cancelled = true;
     };
   }, [config, projectPath, appendAgentOutput]);
+
+  // Poll runs/active.json, which `ml-ralph job start` writes
+  const refreshJobs = useCallback(async () => {
+    const jobs = await readActiveJobs(projectPath);
+    useAppStore.setState({ activeJobs: jobs });
+    setSelectedJobIndex((i) => Math.min(i, Math.max(jobs.length - 1, 0)));
+  }, [projectPath]);
+  useEffect(() => {
+    refreshJobs();
+    const timer = setInterval(refreshJobs, 2000);
+    return () => clearInterval(timer);
+  }, [refreshJobs]);
 
   // Create orchestrator when config is loaded
   useEffect(() => {
@@ -565,6 +586,18 @@ export function App({ projectPath, enableTeams }: AppProps) {
       }
     }
 
+    // Select an active training job (arrow keys, Monitor mode)
+    if (mode === "monitor" && activeJobs.length > 0) {
+      if (key.downArrow) {
+        setSelectedJobIndex((i) => Math.min(i + 1, activeJobs.length - 1));
+        return;
+      }
+      if (key.upArrow) {
+        setSelectedJobIndex((i) => Math.max(i - 1, 0));
+        return;
+      }
+    }
+
     // Scroll knowledge panel (j/k or arrow keys) - for other tabs
     if (input === "j" || key.downArrow) {
       scrollDown();
@@ -601,28 +634,41 @@ export function App({ projectPath, enableTeams }: AppProps) {
       return;
     }
 
-    // Stop training jobs
-    if (input === "t" && mode === "monitor") {
-      const runningJob = activeJobs.find((j) => j.status === "running");
-      if (runningJob) {
-        stopTrainingJob(runningJob.id).catch((err: Error) => {
-          setError(`Failed to stop training: ${err.message}`);
-        });
+    // Training jobs (Monitor mode): t stops, w tails the log of the selected job
+    if (mode === "monitor" && (input === "t" || input === "w")) {
+      const job = activeJobs[selectedJobIndex] ?? activeJobs[0];
+      if (!job) {
+        setJobNotice("no active job");
+        setJobLog(null);
+        return;
       }
-      return;
-    }
-
-    // Open W&B
-    if (input === "w" && mode === "monitor") {
-      const runningJobs = activeJobs.filter((j) => j.status === "running");
-      const jobWithWandB =
-        runningJobs.find((j) => j.wandbUrl) ??
-        activeJobs.find((j) => j.wandbUrl);
-      if (jobWithWandB?.wandbUrl) {
-        import("bun").then(({ spawn }) => {
-          spawn(["open", jobWithWandB.wandbUrl!]);
+      if (input === "w") {
+        tailJobLog(job.logPath).then((lines) => {
+          if (lines === null) {
+            setJobLog(null);
+            setJobNotice("log not found");
+          } else {
+            setJobNotice(null);
+            setJobLog({ jobId: job.id, lines });
+          }
         });
+        return;
       }
+      const stop =
+        orchestratorRef.current?.stopJob(job) ?? stopJob(projectPath, job);
+      stop
+        .then((result) => {
+          setJobNotice(
+            result.outcome === "stopped"
+              ? `stopping ${job.id} (SIGKILL in 10s if it ignores SIGTERM)`
+              : result.message,
+          );
+          setJobLog(null);
+          return refreshJobs();
+        })
+        .catch((err: Error) =>
+          setJobNotice(`Failed to stop job: ${err.message}`),
+        );
       return;
     }
   });
@@ -655,6 +701,15 @@ export function App({ projectPath, enableTeams }: AppProps) {
           {formatBudget(budget).time}
         </Text>
       </Box>
+
+      {mode === "monitor" && (
+        <JobsPanel
+          jobs={activeJobs}
+          selectedIndex={selectedJobIndex}
+          notice={jobNotice}
+          log={jobLog}
+        />
+      )}
 
       {/* Tmux warning */}
       {showTmuxWarning && (
@@ -859,6 +914,9 @@ function HelpBar({
       <Shortcut keys="1-5" label="Tabs" />
       <Shortcut keys="j/k" label="Scroll" />
       <Shortcut keys="[/]" label="Log" />
+      <Shortcut keys="↑/↓" label="Job" />
+      <Shortcut keys="t" label="Stop job" />
+      <Shortcut keys="w" label="Job log" />
       <Shortcut keys="s" label={agentStatus === "running" ? "Stop" : "Start"} />
       {agentStatus === "running" && (
         <Shortcut keys="h" label="Hint" badge={pendingHintsCount} />

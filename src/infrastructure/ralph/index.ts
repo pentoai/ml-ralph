@@ -59,6 +59,17 @@ export {
   initRalph,
   isInitialized,
 } from "./init.ts";
+export type { JobCommandResult, StopJobResult } from "./jobs.ts";
+export {
+  isPidAlive,
+  LOG_TAIL_LINES,
+  pruneStaleJobs,
+  readActiveJobs,
+  removeActiveJob,
+  runJobCommand,
+  stopJob,
+  tailJobLog,
+} from "./jobs.ts";
 export type { LogCommandOptions, LogCommandResult } from "./log-command.ts";
 export { runLogCommand } from "./log-command.ts";
 export type {
@@ -107,6 +118,7 @@ export type {
   ExperimentEvent,
   HoldoutAccessEvent,
   HypothesisEvent,
+  JobStoppedEvent,
   LearningEvent,
   OverfittingEvent,
   ParallelResultEvent,

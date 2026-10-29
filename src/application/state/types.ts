@@ -114,7 +114,6 @@ export interface AppActions {
   addResearch: (item: ResearchItem) => void;
   setActiveJobs: (jobs: TrainingJob[]) => void;
   updateJob: (job: TrainingJob) => void;
-  stopTrainingJob: (jobId: string) => Promise<boolean>;
 
   // Error
   setError: (error: string | null) => void;

@@ -25,6 +25,15 @@ if (process.argv[2] === "eval") {
   process.exit(result.code);
 }
 
+// `job start <cmd>` runs a training job and records it in runs/active.json
+if (process.argv[2] === "job") {
+  const { runJobCommand } = await import("./infrastructure/ralph/index.ts");
+  const result = await runJobCommand(process.argv.slice(3));
+  process.stdout.write(result.stdout);
+  process.stderr.write(result.stderr);
+  process.exit(result.code);
+}
+
 // Get project path from command line or use current directory
 // Skip flags like --teams, --help when determining project path
 const projectPath =
@@ -40,6 +49,7 @@ Usage:
   ml-ralph init [name] [path]  Initialize a new ml-ralph project (keeps existing files)
   ml-ralph log <type> '<json>'  Validate an event and append it to .ml-ralph/log.jsonl
   ml-ralph eval <path>       Score a candidate with the locked evaluate.py; writes .ml-ralph/evals/<eval_id>/metrics.json
+  ml-ralph job start <cmd>   Run a training job recorded in .ml-ralph/runs/active.json (stoppable from the TUI)
   ml-ralph --help            Show this help message
 
 Options:
@@ -52,8 +62,9 @@ Keyboard shortcuts (in TUI):
   f           Focus terminal pane (Planning mode)
   Esc         Exit / Dismiss errors
   s           Start/Stop the agent
-  t           Stop active training job (Monitor mode)
-  w           Open W&B dashboard (Monitor mode)
+  Up/Down     Select an active training job (Monitor mode)
+  t           Stop the selected training job (Monitor mode)
+  w           Show the last 50 log lines of the selected job (Monitor mode)
   q           Quit
 
 For more information, visit: https://github.com/pentoai/ml-ralph

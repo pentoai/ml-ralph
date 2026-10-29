@@ -97,6 +97,25 @@ When a run ends (`run_complete`, `budget_exhausted`, `max_iterations`, `contract
 
 If the report cannot be written, the runner logs `report_failed` and the run still ends. Ablations against the baseline are not part of the report yet.
 
+## Training jobs
+
+The agent starts training with `ml-ralph job start <cmd>` (RALPH.md tells it to). The command runs in its own process group; its pid, command, start time and log path (`.ml-ralph/runs/logs/<job id>.log`) go to `.ml-ralph/runs/active.json`, and the entry is removed when the job exits. When a run starts, entries whose pid is no longer alive are removed. A single argument runs through the shell; several arguments run the program directly.
+
+## Keyboard shortcuts
+
+| Key | Action |
+|-----|--------|
+| `Tab` | Switch between Planning, Monitor and Output |
+| `s` | Start or stop the agent |
+| `h` | Add a hint (while running) |
+| `j`/`k` | Scroll |
+| `↑`/`↓` | Monitor: select an active training job |
+| `t` | Monitor: stop the selected job (SIGTERM, then SIGKILL after 10 seconds); logs `job_stopped` and tells the agent's next prompt. Shows `job not running` (or the error) and drops the entry if the pid is gone or the kill fails |
+| `w` | Monitor: show the last 50 lines of the selected job's log, or `log not found` |
+| `q` | Quit |
+
+`t` and `w` show `no active job` when nothing is running.
+
 ## License
 
 MIT

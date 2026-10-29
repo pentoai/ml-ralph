@@ -151,6 +151,16 @@ export const LOG_EVENT_SCHEMAS: Record<string, LogEventSchema> = {
       words: num,
     },
   },
+  job_stopped: {
+    runnerOnly: true,
+    fields: {
+      job_id: str,
+      pid: num,
+      command: str,
+      outcome: oneOf("stopped", "not_running", "error"),
+      message: str,
+    },
+  },
   decision: {
     fields: {
       hypothesis_id: str,

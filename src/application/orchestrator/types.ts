@@ -7,11 +7,13 @@ import type {
   ProgressEntry,
   ResearchItem,
   Story,
+  TrainingJob,
 } from "../../domain/types/index.ts";
 import type {
   BudgetStatus,
   EvalChange,
   RunCompleteReason,
+  StopJobResult,
   StreamEvent,
 } from "../../infrastructure/ralph/index.ts";
 
@@ -35,6 +37,8 @@ export interface AgentOrchestrator {
   onContractChange(
     callback: (changes: EvalChange[], relockError?: string) => void,
   ): () => void;
+  /** Stop a training job: SIGTERM, SIGKILL after 10s, log `job_stopped`, tell the agent's next prompt */
+  stopJob(job: TrainingJob): Promise<StopJobResult>;
   /** Re-lock the eval files as they are now and resume the paused run */
   relockContract(): boolean;
   /** End the paused run with reason `contract_changed` */

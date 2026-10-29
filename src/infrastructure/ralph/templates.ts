@@ -8,6 +8,8 @@ import pkg from "../../../package.json" with { type: "json" };
 export const LOG_COMMAND = `bunx @pentoai/ml-ralph@${pkg.version} log`;
 
 /** How the agent submits a candidate for scoring by the runner */
+export const JOB_COMMAND = `bunx @pentoai/ml-ralph@${pkg.version} job start`;
+
 export const EVAL_COMMAND = `bunx @pentoai/ml-ralph@${pkg.version} eval`;
 
 export const RALPH_MD = `# Ralph - Autonomous ML Agent
@@ -730,6 +732,10 @@ A \`hypothesis\` event is rejected unless all of these are present:
 Other types have more required fields than \`type\`: the table above lists them. \`phase\` takes \`UNDERSTAND\`, \`STRATEGIZE\`, \`EXECUTE\` or \`REFLECT\`; \`status\` takes \`running\`, \`paused\` or \`complete\`; \`metrics\` maps names to numbers.
 
 ---
+
+## Training Jobs (MANDATORY)
+
+Start every training run or other long-running job (anything over a minute) with \`${JOB_COMMAND} <cmd>\`, for example \`${JOB_COMMAND} "python train.py --epochs 20"\`. It runs the command, records its pid, command, start time and log path in \`.ml-ralph/runs/active.json\`, and removes the entry when the job exits, so the user can list, stop and tail it from the TUI. Do not start training with a bare \`python\`, \`nohup\` or \`&\`. If the user stops a job, your next prompt says so: do not restart it unless the plan changes.
 
 ## Experiment Tracking with wandb (MANDATORY)
 
@@ -1522,6 +1528,16 @@ export interface ConclusionsRejectedEvent extends BaseEvent {
   words: number;
 }
 
+/** Written by the runner (never the agent) when the user stops a training job from the TUI */
+export interface JobStoppedEvent extends BaseEvent {
+  type: "job_stopped";
+  job_id: string;
+  pid: number;
+  command: string;
+  outcome: "stopped" | "not_running" | "error";
+  message: string;
+}
+
 export interface DecisionEvent extends BaseEvent {
   type: "decision";
   hypothesis_id: string;
@@ -1607,6 +1623,7 @@ export type RalphEvent =
   | ReportFailedEvent
   | HoldoutAccessEvent
   | ContractRelockedEvent
+  | JobStoppedEvent
   | StrategicRetreatEvent
   | PrdUpdatedEvent
   | StatusEvent
