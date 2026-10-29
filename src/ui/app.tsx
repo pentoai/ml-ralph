@@ -27,13 +27,13 @@ import {
   useInput,
   useStdout,
 } from "./ink.tsx";
-import { stopSelectedJob } from "./job-controls.ts";
+import { followJobLog, stopSelectedJob } from "./job-controls.ts";
 import { runStopNotice } from "./run-notice.ts";
 import { MonitorScreen } from "./screens/monitor.tsx";
 import { OutputScreen } from "./screens/output.tsx";
 import { PlanningScreen } from "./screens/planning.tsx";
 import { colors } from "./theme/colors.ts";
-import { JobsPanel } from "./widgets/jobs-panel.tsx";
+import { JobsPanel, __testing as jobsPanel } from "./widgets/jobs-panel.tsx";
 // import { Logo } from "./widgets/logo.tsx";
 import { ModeTabs } from "./widgets/tabs.tsx";
 
@@ -53,6 +53,7 @@ export function App({ projectPath, enableTeams }: AppProps) {
     jobId: string;
     lines: string[];
   } | null>(null);
+  const [jobLogScroll, setJobLogScroll] = useState(0);
   // A stop the user confirmed with s then y: a later quit waits for its report
   const pendingStopRef = useRef<Promise<void> | null>(null);
 
@@ -63,6 +64,8 @@ export function App({ projectPath, enableTeams }: AppProps) {
 
   // Track terminal dimensions
   const [terminalHeight, setTerminalHeight] = useState(stdout?.rows ?? 24);
+  // The Jobs panel takes at most a third of the screen, keeping Activity and PRD usable
+  const jobsMaxRows = Math.max(4, Math.floor(terminalHeight / 3));
   // Quit confirmation state
   const [showQuitConfirm, setShowQuitConfirm] = useState(false);
   // Start confirmation state
@@ -225,6 +228,25 @@ export function App({ projectPath, enableTeams }: AppProps) {
     const timer = setInterval(refreshJobs, 2000);
     return () => clearInterval(timer);
   }, [refreshJobs]);
+
+  // An open log tail follows its job: reload it while the job is listed
+  const tailJobId = jobLog?.jobId;
+  const tailLogPath = activeJobs.find((j) => j.id === tailJobId)?.logPath;
+  // Scrolled up means paused: reloading would slide the view under the reader
+  const logScrolledRef = useRef(false);
+  logScrolledRef.current = jobLogScroll > 0;
+  useEffect(() => {
+    if (!tailLogPath || !tailJobId) return;
+    return followJobLog({
+      logPath: tailLogPath,
+      tail: tailJobLog,
+      isPaused: () => logScrolledRef.current,
+      onLines: (lines) =>
+        setJobLog((cur) =>
+          cur && cur.jobId === tailJobId ? { jobId: tailJobId, lines } : cur,
+        ),
+    });
+  }, [tailJobId, tailLogPath]);
 
   // Create orchestrator when config is loaded
   useEffect(() => {
@@ -589,11 +611,37 @@ export function App({ projectPath, enableTeams }: AppProps) {
       }
     }
 
+    // Scroll the open log tail (Monitor mode); the offset is lines up from the newest
+    if (mode === "monitor" && jobLog) {
+      const rows = jobsPanel.computeLogRows(
+        jobsMaxRows,
+        activeJobs.length,
+        !!jobNotice,
+      );
+      const step =
+        input === "j"
+          ? -1
+          : input === "k"
+            ? 1
+            : key.pageDown
+              ? -rows
+              : key.pageUp
+                ? rows
+                : 0;
+      if (step !== 0) {
+        setJobLogScroll((s) =>
+          jobsPanel.clampLogScroll(s + step, jobLog.lines.length, rows),
+        );
+        return;
+      }
+    }
+
     // Select an active training job (arrow keys, Monitor mode)
     if (mode === "monitor" && activeJobs.length > 0) {
       if (key.downArrow || key.upArrow) {
         // The open log tail belongs to the previous selection
         setJobLog(null);
+        setJobLogScroll(0);
         setSelectedJobIndex((i) =>
           key.downArrow
             ? Math.min(i + 1, activeJobs.length - 1)
@@ -654,6 +702,7 @@ export function App({ projectPath, enableTeams }: AppProps) {
             setJobNotice("log not found");
           } else {
             setJobNotice(null);
+            setJobLogScroll(0);
             setJobLog({ jobId: job.id, lines });
           }
         });
@@ -709,7 +758,8 @@ export function App({ projectPath, enableTeams }: AppProps) {
           selectedIndex={selectedJobIndex}
           notice={jobNotice}
           log={jobLog}
-          maxRows={Math.max(4, Math.floor(terminalHeight / 3))}
+          logScroll={jobLogScroll}
+          maxRows={jobsMaxRows}
         />
       )}
 

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { TrainingJob } from "../domain/types/index.ts";
 import type { StopJobResult } from "../infrastructure/ralph/index.ts";
-import { stopSelectedJob } from "./job-controls.ts";
+import { followJobLog, stopSelectedJob } from "./job-controls.ts";
 import { JobsPanel } from "./widgets/jobs-panel.tsx";
 
 const job = {
@@ -56,7 +56,7 @@ describe("stop-job notices", () => {
 });
 
 describe("JobsPanel", () => {
-  const props = { selectedIndex: 0, log: null, maxRows: 10 };
+  const props = { selectedIndex: 0, log: null, logScroll: 0, maxRows: 10 };
   test("still renders a notice when the job list is empty", () => {
     expect(
       JobsPanel({ ...props, jobs: [], notice: "job not running" }),
@@ -64,5 +64,38 @@ describe("JobsPanel", () => {
   });
   test("renders nothing with no jobs and no notice", () => {
     expect(JobsPanel({ ...props, jobs: [], notice: null })).toBeNull();
+  });
+});
+
+describe("followJobLog", () => {
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  test("shows new lines while the job writes, pauses when scrolled, reloads once on stop", async () => {
+    let n = 1;
+    let paused = false;
+    const seen: string[][] = [];
+    const stop = followJobLog({
+      logPath: "/x",
+      tail: async () => Array.from({ length: n }, (_, i) => `l${i}`),
+      onLines: (l) => seen.push(l),
+      isPaused: () => paused,
+      intervalMs: 10,
+    });
+    await wait(35);
+    n = 3;
+    await wait(25);
+    expect(seen.at(-1)).toEqual(["l0", "l1", "l2"]);
+    paused = true;
+    await wait(15);
+    const count = seen.length;
+    n = 4;
+    await wait(40);
+    expect(seen.length).toBe(count);
+    stop();
+    await wait(10);
+    expect(seen.at(-1)).toHaveLength(4);
+    const after = seen.length;
+    await wait(40);
+    expect(seen.length).toBe(after);
   });
 });
