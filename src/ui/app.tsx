@@ -27,6 +27,7 @@ import {
   useInput,
   useStdout,
 } from "./ink.tsx";
+import { stopSelectedJob } from "./job-controls.ts";
 import { runStopNotice } from "./run-notice.ts";
 import { MonitorScreen } from "./screens/monitor.tsx";
 import { OutputScreen } from "./screens/output.tsx";
@@ -224,12 +225,6 @@ export function App({ projectPath, enableTeams }: AppProps) {
     const timer = setInterval(refreshJobs, 2000);
     return () => clearInterval(timer);
   }, [refreshJobs]);
-
-  // A notice such as "no active job" goes stale once the job list changes
-  const jobCount = activeJobs.length;
-  useEffect(() => {
-    if (jobCount >= 0) setJobNotice(null);
-  }, [jobCount]);
 
   // Create orchestrator when config is loaded
   useEffect(() => {
@@ -596,12 +591,14 @@ export function App({ projectPath, enableTeams }: AppProps) {
 
     // Select an active training job (arrow keys, Monitor mode)
     if (mode === "monitor" && activeJobs.length > 0) {
-      if (key.downArrow) {
-        setSelectedJobIndex((i) => Math.min(i + 1, activeJobs.length - 1));
-        return;
-      }
-      if (key.upArrow) {
-        setSelectedJobIndex((i) => Math.max(i - 1, 0));
+      if (key.downArrow || key.upArrow) {
+        // The open log tail belongs to the previous selection
+        setJobLog(null);
+        setSelectedJobIndex((i) =>
+          key.downArrow
+            ? Math.min(i + 1, activeJobs.length - 1)
+            : Math.max(i - 1, 0),
+        );
         return;
       }
     }
@@ -667,20 +664,12 @@ export function App({ projectPath, enableTeams }: AppProps) {
         setJobNotice("agent not ready yet; try again");
         return;
       }
-      const stop = orchestrator.stopJob(job);
-      stop
-        .then((result) => {
-          setJobNotice(
-            result.outcome === "stopped"
-              ? `stopping ${job.id} (SIGKILL in 10s if it ignores SIGTERM)`
-              : result.message,
-          );
-          setJobLog(null);
-          return refreshJobs();
-        })
-        .catch((err: Error) =>
-          setJobNotice(`Failed to stop job: ${err.message}`),
-        );
+      stopSelectedJob(job, {
+        stop: (j) => orchestrator.stopJob(j),
+        refresh: refreshJobs,
+        setNotice: setJobNotice,
+        closeLog: () => setJobLog(null),
+      });
       return;
     }
   });

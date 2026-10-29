@@ -4,6 +4,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { constants as osConstants } from "node:os";
@@ -191,7 +192,7 @@ export async function runJobCommand(
   if (!projectDir)
     return fail("No .ml-ralph/ directory found; run init first.");
 
-  const id = `job_${Date.now()}`;
+  const id = `job_${Date.now()}_${process.pid}_${randomBytes(2).toString("hex")}`;
   const logPath = join(projectDir, ".ml-ralph", "runs", "logs", `${id}.log`);
   await mkdir(dirname(logPath), { recursive: true });
   const log = createWriteStream(logPath, { flags: "a" });
