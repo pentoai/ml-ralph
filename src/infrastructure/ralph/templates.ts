@@ -270,6 +270,8 @@ The runner scores your work, you do not. Submit a candidate with:
 ${EVAL_COMMAND} <path>
 \`\`\`
 
+**Commit before every eval.** \`ml-ralph eval\` refuses to run while tracked files (outside \`.ml-ralph/\`) have uncommitted changes (\`commit your changes before eval\`) and scores nothing. Commit the candidate first; the eval records that commit's SHA in \`metrics.json\`, and the runner tags the incumbent \`ralph/best\`. Do not commit again between an eval and handing in its candidate, because the runner rejects a candidate whose eval scored an older commit.
+
 \`<path>\` is whatever your \`evaluate.py\` takes as \`--candidate\` (a predictions file, a model, a script). The runner runs the locked \`evaluate.py\` once per contract seed on the search split, from a private copy of the exact bytes it hashed (so \`__file__\` is not in the project: find files next to \`evaluate.py\` through the \`ML_RALPH_EVAL_DIR\` environment variable, and the project directory is the working directory), then prints an \`eval_id\`, the per-seed scores, their mean and their std, and writes \`.ml-ralph/evals/<eval_id>/metrics.json\`. If an evaluation times out (\`eval_timeout_seconds\` per seed), crashes or prints no score, the command exits non-zero, the eval has no score, and you fix the candidate and submit again.
 
 - Never create, edit, copy or delete anything under \`.ml-ralph/evals/\`, and never write a metrics file anywhere yourself. Scores you compute in your own code are for debugging only: the runner ignores them and the TUI marks them **unverified**. The TUI shows the eval's own mean as the result of an experiment; a number you report that differs from it is flagged, and a made-up \`eval_id\` earns nothing.
@@ -994,7 +996,7 @@ You cannot end the run or declare success. When you believe a candidate is a new
 
 Only after a genuine verification attempt:
 1. Commit the candidate. The independent verifier reads the git diff between commits, and the runner rejects a candidate while tracked files have uncommitted changes.
-2. Score it with \`${EVAL_COMMAND} <path>\` in this iteration, and log the \`hypothesis\` it implements (with its rubrics) if you have not.
+2. Score the committed candidate with \`${EVAL_COMMAND} <path>\` in this iteration, and log the \`hypothesis\` it implements (with its rubrics) if you have not.
 3. Log: \`${LOG_COMMAND} success_verified '{"criteria_met":["..."],"verification_checks":["data integrity","no leakage","same distribution"],"attempts_to_break":["..."]}'\`
 4. Output: \`<candidate_complete eval_id="eval-...">\` with the \`eval_id\` of that \`ml-ralph eval\` run, in addition to \`<iteration_complete>\`.
 
@@ -1344,11 +1346,22 @@ export interface EvalEvent extends BaseEvent {
   eval_id: string;
   status: "ok" | "failed";
   candidate: string;
+  /** HEAD commit the candidate was scored at; absent outside a git repository */
+  sha?: string;
   /** Mean and std of the per-seed scores; only when status is "ok" */
   mean?: number;
   std?: number;
   /** Why the eval failed; only when status is "failed" */
   reason?: string;
+}
+
+/** Written by the runner (never the agent) when it could not move the ralph/best tag; the promotion stands */
+export interface TagFailedEvent extends BaseEvent {
+  type: "tag_failed";
+  tag: string;
+  sha: string;
+  eval_id: string;
+  error: string;
 }
 
 /** Written by the runner (never the agent) after each independent verifier run */
@@ -1596,6 +1609,7 @@ export type RalphEvent =
   | DecisionEvent
   | VerifierVerdictEvent
   | PromotionEvent
+  | TagFailedEvent
   | CandidateRejectedEvent
   | OverfittingEvent
   | RunCompleteEvent

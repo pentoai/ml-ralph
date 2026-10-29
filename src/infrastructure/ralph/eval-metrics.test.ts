@@ -111,7 +111,12 @@ describe("verified evals", () => {
     });
     const evals = await readVerifiedEvals(dir);
     expect([...evals.keys()]).toEqual(["eval-ok"]);
-    expect(evals.get("eval-ok")).toEqual({ mean: 0.8, std: 0, seeds: 1 });
+    expect(evals.get("eval-ok")).toEqual({
+      mean: 0.8,
+      std: 0,
+      seeds: 1,
+      sha: null,
+    });
   });
 
   test("an eval already read is not read again, and a half-written one is retried", async () => {

@@ -374,3 +374,82 @@ describe("refusal", () => {
     expect(await calls()).toEqual([]);
   });
 });
+
+describe("git commit", () => {
+  const git = async (...args: string[]) => {
+    const proc = Bun.spawn(
+      [
+        "git",
+        "-c",
+        "user.email=t@t",
+        "-c",
+        "user.name=t",
+        "-c",
+        "commit.gpgsign=false",
+        ...args,
+      ],
+      { cwd: dir, stdout: "pipe", stderr: "pipe" },
+    );
+    const out = await new Response(proc.stdout).text();
+    expect(await proc.exited).toBe(0);
+    return out.trim();
+  };
+
+  async function initRepo() {
+    await git("init", "-q");
+    await Bun.write(join(dir, "model.py"), "v1\n");
+    await git("add", "model.py");
+    await git("commit", "-q", "-m", "v1");
+  }
+
+  test("records the HEAD sha in metrics.json and the eval event", async () => {
+    await setup();
+    await initRepo();
+    const head = await git("rev-parse", "HEAD");
+
+    const result = await runEvalCommand([await candidate("ok")], { cwd: dir });
+
+    expect(result.code).toBe(0);
+    expect(result.metrics?.sha).toBe(head);
+    expect(result.stderr).toBe("");
+    const evalEvent = (await logEvents()).find((e) => e.type === "eval");
+    expect(evalEvent?.sha).toBe(head);
+  });
+
+  test("refuses uncommitted changes to tracked files and scores nothing", async () => {
+    await setup();
+    await initRepo();
+    await Bun.write(join(dir, "model.py"), "v2\n");
+
+    const result = await runEvalCommand([await candidate("ok")], { cwd: dir });
+
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain("commit your changes before eval");
+    expect(await calls()).toEqual([]);
+    expect(await evalDirs()).toEqual([]);
+    expect(await logEvents()).toEqual([]);
+  });
+
+  test("untracked files do not block an eval", async () => {
+    await setup();
+    await initRepo();
+    await candidate("ok");
+
+    const result = await runEvalCommand(["cand.txt"], { cwd: dir });
+
+    expect(result.code).toBe(0);
+    expect(result.metrics?.sha).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  test("outside a git repository it warns, records sha null and still scores", async () => {
+    await setup();
+
+    const result = await runEvalCommand([await candidate("ok")], { cwd: dir });
+
+    expect(result.code).toBe(0);
+    expect(result.metrics?.sha).toBeNull();
+    expect(result.stderr).toContain("not a git repository");
+    const evalEvent = (await logEvents()).find((e) => e.type === "eval");
+    expect(evalEvent?.sha).toBeUndefined();
+  });
+});

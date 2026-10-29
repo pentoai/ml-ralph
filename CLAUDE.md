@@ -28,6 +28,8 @@ Default to using Bun instead of Node.js.
 
 Use `bun test` to run tests.
 
+End-to-end check of eval/git behaviour with the real CLI: `bun test tests/eval-git.e2e.test.ts` (needs git and python). It runs `bun src/index.tsx eval` in temp projects and covers the recorded SHA, the dirty-tree refusal, the non-git warning, and `ralph/best` tagging / `tag_failed` through the promotion gate (verifier stubbed; git is real).
+
 ```ts#index.test.ts
 import { test, expect } from "bun:test";
 
