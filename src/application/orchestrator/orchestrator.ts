@@ -2,13 +2,14 @@
  * Agent orchestrator implementation - wraps RalphRunner
  */
 
-import type { Story } from "../../domain/types/index.ts";
+import type { Story, TrainingJob } from "../../domain/types/index.ts";
 import {
   type BudgetStatus,
   describeEvalChanges,
   type EvalChange,
   RalphRunner,
   type RunCompleteReason,
+  type StopJobResult,
   type StreamEvent,
 } from "../../infrastructure/ralph/index.ts";
 import type {
@@ -94,6 +95,10 @@ export class DefaultOrchestrator implements AgentOrchestrator {
 
   getPendingHintsCount(): number {
     return this.runner.getPendingHintsCount();
+  }
+
+  stopJob(job: TrainingJob): Promise<StopJobResult> {
+    return this.runner.stopJob(job);
   }
 
   relockContract(): boolean {

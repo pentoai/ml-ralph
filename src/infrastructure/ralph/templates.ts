@@ -7,6 +7,9 @@ import pkg from "../../../package.json" with { type: "json" };
 /** How the agent runs `ml-ralph log`, pinned to the version whose CLI has the command */
 export const LOG_COMMAND = `bunx @pentoai/ml-ralph@${pkg.version} log`;
 
+/** How the agent starts a training job the runner and TUI can track */
+export const JOB_COMMAND = `bunx @pentoai/ml-ralph@${pkg.version} job start`;
+
 /** How the agent submits a candidate for scoring by the runner */
 export const EVAL_COMMAND = `bunx @pentoai/ml-ralph@${pkg.version} eval`;
 
@@ -732,6 +735,12 @@ A \`hypothesis\` event is rejected unless all of these are present:
 Other types have more required fields than \`type\`: the table above lists them. \`phase\` takes \`UNDERSTAND\`, \`STRATEGIZE\`, \`EXECUTE\` or \`REFLECT\`; \`status\` takes \`running\`, \`paused\` or \`complete\`; \`metrics\` maps names to numbers.
 
 ---
+
+## Training Jobs (MANDATORY)
+
+Start every training run or other long-running job (anything over a minute) with \`${JOB_COMMAND} <cmd>\`, for example \`${JOB_COMMAND} "python train.py --epochs 20"\`. It runs the command, records its pid, command, start time and log path in \`.ml-ralph/runs/active.json\`, and removes the entry when the job exits, so the user can list, stop and tail it from the TUI.
+
+The wrapper stays in the foreground until the job exits, and your Bash tool times out after 2 minutes by default (10 at most); a timeout kills the wrapper and the job with it. So run the wrapper itself in the background with the Bash tool's \`run_in_background\` option (keep the wrapper: it is what records the job), then poll: read the job's \`logPath\` from \`.ml-ralph/runs/active.json\` and \`tail\` it, and check the background shell's output, until the entry is gone. Do not start training with a bare \`python\`, \`nohup\` or \`&\`. If the user stops a job, your next prompt says so: do not restart it unless the plan changes.
 
 ## Experiment Tracking with wandb (MANDATORY)
 
@@ -1535,6 +1544,16 @@ export interface ConclusionsRejectedEvent extends BaseEvent {
   words: number;
 }
 
+/** Written by the runner (never the agent) when the user stops a training job from the TUI */
+export interface JobStoppedEvent extends BaseEvent {
+  type: "job_stopped";
+  job_id: string;
+  pid: number;
+  command: string;
+  outcome: "stopped" | "not_running" | "error";
+  message: string;
+}
+
 export interface DecisionEvent extends BaseEvent {
   type: "decision";
   hypothesis_id: string;
@@ -1621,6 +1640,7 @@ export type RalphEvent =
   | ReportFailedEvent
   | HoldoutAccessEvent
   | ContractRelockedEvent
+  | JobStoppedEvent
   | StrategicRetreatEvent
   | PrdUpdatedEvent
   | StatusEvent

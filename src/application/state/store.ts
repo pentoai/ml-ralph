@@ -279,44 +279,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }));
   },
 
-  stopTrainingJob: async (jobId: string): Promise<boolean> => {
-    const { activeJobs, projectPath } = get();
-    const job = activeJobs.find((j) => j.id === jobId);
-
-    if (!job || job.status !== "running") {
-      return false;
-    }
-
-    try {
-      // Send SIGTERM to the process
-      process.kill(job.pid, "SIGTERM");
-
-      // Update job status
-      const updatedJob: TrainingJob = {
-        ...job,
-        status: "stopped",
-        completedAt: new Date().toISOString(),
-      };
-
-      set((state) => ({
-        activeJobs: state.activeJobs.map((j) =>
-          j.id === jobId ? updatedJob : j,
-        ),
-      }));
-
-      // Persist to file
-      if (projectPath) {
-        const store = new JsonFileStore(projectPath);
-        const updatedJobs = get().activeJobs;
-        await store.writeActiveJobs(updatedJobs);
-      }
-
-      return true;
-    } catch {
-      return false;
-    }
-  },
-
   // Error
   setError: (error) => set({ error }),
 
