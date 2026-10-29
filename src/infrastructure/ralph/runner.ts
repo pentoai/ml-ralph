@@ -177,6 +177,8 @@ export class RalphRunner {
   private budgetStop: BudgetExhaustion | null = null;
   private userStopped = false;
   private reported = false;
+  /** Why the loop returned early without its own report, when the cause is known */
+  private endCause: ReportEndReason | null = null;
   /** Pending from start() until the run has ended and its report is on disk */
   private settled: Promise<void> | null = null;
   private contractDecision: ((d: ContractDecision | null) => void) | null =
@@ -227,6 +229,7 @@ export class RalphRunner {
     this.budgetStop = null;
     this.userStopped = false;
     this.reported = false;
+    this.endCause = null;
     this.budgetRunId = "";
     this.pinnedHashes = null;
     this.pendingFeedback = [];
@@ -249,6 +252,7 @@ export class RalphRunner {
 
         const gate = await checkEvalGate(this.config.projectPath);
         if (!gate.ok) {
+          this.endCause = "eval_gate_failed";
           this.config.onError?.(new Error(gate.error));
           return;
         }
@@ -330,7 +334,9 @@ export class RalphRunner {
       this.currentProcess = null;
       // Any other way out (user quit, an error) still leaves a report; isRunning() stays true until it is written
       if (!this.reported) {
-        await this.writeRunReport(this.userStopped ? "user_quit" : "error");
+        await this.writeRunReport(
+          this.endCause ?? (this.userStopped ? "user_quit" : "error"),
+        );
       }
       this.running = false;
       this.settled = null;
@@ -779,6 +785,7 @@ export class RalphRunner {
 
       const onContractChanged = this.config.onContractChanged;
       if (!onContractChanged) {
+        this.endCause = "contract_changed";
         this.config.onError?.(
           new Error(
             `Locked eval file changed: ${describeEvalChanges(changes)}`,

@@ -688,6 +688,38 @@ describe("RalphRunner completion gate", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
+  const reportText = async () => {
+    const runId = (
+      await Bun.file(join(dir, ".ml-ralph/budget/run.json")).json()
+    ).run_id;
+    return Bun.file(join(dir, ".ml-ralph/reports", runId, "report.md")).text();
+  };
+  const runBlocked = async () => {
+    const errors: string[] = [];
+    const runner = new FakeRunner(
+      {
+        projectPath: dir,
+        maxIterations: 1,
+        onError: (e) => errors.push(e.message),
+      },
+      async () => "<iteration_complete>",
+    );
+    await runner.start();
+    return errors;
+  };
+
+  test("a failed eval gate ends the report with eval_gate_failed", async () => {
+    await rm(join(dir, ".ml-ralph/eval/lock.json"));
+    expect(await runBlocked()).toHaveLength(1);
+    expect(await reportText()).toContain("End reason: eval_gate_failed");
+  });
+
+  test("a changed contract with no handler ends the report with contract_changed", async () => {
+    await Bun.write(join(dir, ".ml-ralph/eval/evaluate.py"), "print('y')\n");
+    expect(await runBlocked()).toHaveLength(1);
+    expect(await reportText()).toContain("End reason: contract_changed");
+  });
+
   test("promotion and completion verifier calls report an invalid verdict event as a TUI error line", async () => {
     const stderr = spyOn(process.stderr, "write").mockImplementation(
       () => true,
