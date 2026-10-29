@@ -15,6 +15,7 @@ export type ReportEndReason =
   | "user_quit"
   | "error"
   | "contract_changed"
+  | "eval_gate_failed"
   | "holdout_access";
 
 export const REPORTS_DIR = ".ml-ralph/reports";
@@ -102,13 +103,15 @@ export function buildClaims(events: LogEvent[]): string[] {
  * Lines of a report's Claims section that fail the audit: a claim with a
  * number must end in `[eval:<id>]` where <id> is an `eval` event in the log,
  * and every standalone number in it must be that eval's recorded mean or std.
- * Digits inside identifiers (h001, H-1) are not numbers here.
+ * Digits inside identifiers (h001, H-1) and in the candidate path are not numbers here.
  */
 export function auditClaims(report: string, logText: string): string[] {
   const recorded = new Map<string, Set<number>>();
+  const candidates = new Map<string, string>();
   for (const e of parseLog(logText)) {
     if (e.type !== "eval" || typeof e.eval_id !== "string") continue;
     recorded.set(e.eval_id, new Set([e.mean, e.std].filter(isNumber)));
+    candidates.set(e.eval_id, oneLine(e.candidate));
   }
   const section = report.split(/^## Claims$/m)[1]?.split(/^## /m)[0] ?? "";
   return section
@@ -118,9 +121,14 @@ export function auditClaims(report: string, logText: string): string[] {
       const id = l.match(/\[eval:([^\]]+)\]$/)?.[1];
       const values = id === undefined ? undefined : recorded.get(id);
       if (!values) return true;
-      const body = l.slice(0, l.lastIndexOf("[eval:"));
+      // Only the exact recorded candidate is exempt; any other text there is audited
+      const candidate = `- Eval of ${candidates.get(id ?? "")} `;
+      const trimmed = l.slice(0, l.lastIndexOf("[eval:"));
+      const body = trimmed.startsWith(candidate)
+        ? `- Eval of ${trimmed.slice(candidate.length)}`
+        : trimmed;
       const numbers = body.match(
-        /(?<![\w.-])-?\d+(?:\.\d+)?(?:e-?\d+)?(?![\w])/g,
+        /(?<![\w.-])-?\d+(?:\.\d+)?(?:e[+-]?\d+)?(?![\w])/g,
       );
       return (numbers ?? []).some((n) => !values.has(Number(n)));
     });

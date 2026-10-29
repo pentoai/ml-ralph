@@ -27,7 +27,7 @@ import {
   useInput,
   useStdout,
 } from "./ink.tsx";
-import { stopSelectedJob } from "./job-controls.ts";
+import { followJobLog, stopSelectedJob } from "./job-controls.ts";
 import { runStopNotice } from "./run-notice.ts";
 import { MonitorScreen } from "./screens/monitor.tsx";
 import { OutputScreen } from "./screens/output.tsx";
@@ -232,21 +232,20 @@ export function App({ projectPath, enableTeams }: AppProps) {
   // An open log tail follows its job: reload it while the job is listed
   const tailJobId = jobLog?.jobId;
   const tailLogPath = activeJobs.find((j) => j.id === tailJobId)?.logPath;
+  // Scrolled up means paused: reloading would slide the view under the reader
+  const logScrolledRef = useRef(false);
+  logScrolledRef.current = jobLogScroll > 0;
   useEffect(() => {
     if (!tailLogPath || !tailJobId) return;
-    let stale = false;
-    const timer = setInterval(() => {
-      tailJobLog(tailLogPath).then((lines) => {
-        if (stale || lines === null) return;
+    return followJobLog({
+      logPath: tailLogPath,
+      tail: tailJobLog,
+      isPaused: () => logScrolledRef.current,
+      onLines: (lines) =>
         setJobLog((cur) =>
           cur && cur.jobId === tailJobId ? { jobId: tailJobId, lines } : cur,
-        );
-      });
-    }, 1000);
-    return () => {
-      stale = true;
-      clearInterval(timer);
-    };
+        ),
+    });
   }, [tailJobId, tailLogPath]);
 
   // Create orchestrator when config is loaded

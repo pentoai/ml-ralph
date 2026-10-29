@@ -37,3 +37,30 @@ export async function stopSelectedJob(
     deps.setNotice(`Failed to stop job: ${(error as Error).message}`);
   }
 }
+
+export interface FollowLogDeps {
+  logPath: string;
+  tail: (logPath: string) => Promise<string[] | null>;
+  onLines: (lines: string[]) => void;
+  /** True while the user has scrolled up: the view must not slide, so reloads pause */
+  isPaused: () => boolean;
+  intervalMs?: number;
+}
+
+/**
+ * Reload a job's log tail on an interval. Stopping does one last reload (even
+ * when paused) so the lines written just before the job exited still appear.
+ */
+export function followJobLog(deps: FollowLogDeps): () => void {
+  const reload = () =>
+    deps.tail(deps.logPath).then((lines) => {
+      if (lines !== null) deps.onLines(lines);
+    });
+  const timer = setInterval(() => {
+    if (!deps.isPaused()) void reload();
+  }, deps.intervalMs ?? 1000);
+  return () => {
+    clearInterval(timer);
+    void reload();
+  };
+}
