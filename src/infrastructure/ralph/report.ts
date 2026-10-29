@@ -107,9 +107,11 @@ export function buildClaims(events: LogEvent[]): string[] {
  */
 export function auditClaims(report: string, logText: string): string[] {
   const recorded = new Map<string, Set<number>>();
+  const candidates = new Map<string, string>();
   for (const e of parseLog(logText)) {
     if (e.type !== "eval" || typeof e.eval_id !== "string") continue;
     recorded.set(e.eval_id, new Set([e.mean, e.std].filter(isNumber)));
+    candidates.set(e.eval_id, oneLine(e.candidate));
   }
   const section = report.split(/^## Claims$/m)[1]?.split(/^## /m)[0] ?? "";
   return section
@@ -119,10 +121,12 @@ export function auditClaims(report: string, logText: string): string[] {
       const id = l.match(/\[eval:([^\]]+)\]$/)?.[1];
       const values = id === undefined ? undefined : recorded.get(id);
       if (!values) return true;
-      // The candidate is a path the agent named, not a recorded number
-      const body = l
-        .slice(0, l.lastIndexOf("[eval:"))
-        .replace(/^- Eval of .*?(?= scored mean | failed$)/, "- Eval of");
+      // Only the exact recorded candidate is exempt; any other text there is audited
+      const candidate = `- Eval of ${candidates.get(id ?? "")} `;
+      const trimmed = l.slice(0, l.lastIndexOf("[eval:"));
+      const body = trimmed.startsWith(candidate)
+        ? `- Eval of ${trimmed.slice(candidate.length)}`
+        : trimmed;
       const numbers = body.match(
         /(?<![\w.-])-?\d+(?:\.\d+)?(?:e[+-]?\d+)?(?![\w])/g,
       );

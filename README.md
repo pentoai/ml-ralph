@@ -95,7 +95,7 @@ A restarted run keeps its `run_id` (in `.ml-ralph/budget/run.json`) and starts f
 
 ## The run report
 
-When a run ends (`run_complete`, `budget_exhausted`, `max_iterations`, `contract_changed`, `holdout_access`, a user quit including `q`, or an error that stops the run) the runner writes `.ml-ralph/reports/<run id>/report.md` from its own records. It has:
+When a run ends (`run_complete`, `budget_exhausted`, `max_iterations`, `contract_changed`, `eval_gate_failed`, `holdout_access`, a user quit including `q`, or an error that stops the run) the runner writes `.ml-ralph/reports/<run id>/report.md` from its own records. It has:
 
 - **Problem**: `problem` from `prd.json`.
 - **Result**: the end reason; the incumbent's eval id, search score (from the runner's `metrics.json`), holdout score (`not scored` unless the completion gate scored it) and commit SHA. With no promotion it says `no candidate was promoted`.

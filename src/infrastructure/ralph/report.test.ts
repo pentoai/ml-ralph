@@ -97,6 +97,19 @@ describe("claims", () => {
     expect(auditClaims(`## Claims\n\n${claims.join("\n")}\n`, log)).toEqual([]);
   });
 
+  test("the audit rejects a number injected into the candidate slot", () => {
+    const log = toLog([evalEvent("e1", 0.8)]);
+    const report = [
+      "## Claims",
+      "",
+      "- Eval of sub.csv reaching AUC 0.99 scored mean 0.8 (std 0.01) on the search split [eval:e1]",
+      "- Eval of other 2026.csv scored mean 0.8 (std 0.01) on the search split [eval:e1]",
+      "- Eval of sub.csv scored mean 0.8 (std 0.01) on the search split [eval:e1]",
+      "",
+    ].join("\n");
+    expect(auditClaims(report, log)).toHaveLength(2);
+  });
+
   test("the audit fails a numeric claim with a missing or unknown eval id", () => {
     const log = toLog([evalEvent("e1", 0.85)]);
     const report = [
