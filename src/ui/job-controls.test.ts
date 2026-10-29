@@ -56,7 +56,7 @@ describe("stop-job notices", () => {
 });
 
 describe("JobsPanel", () => {
-  const props = { selectedIndex: 0, log: null, maxRows: 10 };
+  const props = { selectedIndex: 0, log: null, logScroll: 0, maxRows: 10 };
   test("still renders a notice when the job list is empty", () => {
     expect(
       JobsPanel({ ...props, jobs: [], notice: "job not running" }),
