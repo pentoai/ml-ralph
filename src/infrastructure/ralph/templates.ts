@@ -7,9 +7,10 @@ import pkg from "../../../package.json" with { type: "json" };
 /** How the agent runs `ml-ralph log`, pinned to the version whose CLI has the command */
 export const LOG_COMMAND = `bunx @pentoai/ml-ralph@${pkg.version} log`;
 
-/** How the agent submits a candidate for scoring by the runner */
+/** How the agent starts a training job the runner and TUI can track */
 export const JOB_COMMAND = `bunx @pentoai/ml-ralph@${pkg.version} job start`;
 
+/** How the agent submits a candidate for scoring by the runner */
 export const EVAL_COMMAND = `bunx @pentoai/ml-ralph@${pkg.version} eval`;
 
 export const RALPH_MD = `# Ralph - Autonomous ML Agent
@@ -271,6 +272,8 @@ The runner scores your work, you do not. Submit a candidate with:
 \`\`\`
 ${EVAL_COMMAND} <path>
 \`\`\`
+
+**Commit before every eval.** \`ml-ralph eval\` refuses to run while tracked files (outside \`.ml-ralph/\`) have uncommitted changes (\`commit your changes before eval\`) and scores nothing. Commit the candidate first; the eval records that commit's SHA in \`metrics.json\`, and the runner tags the incumbent \`ralph/best\`. Do not commit again between an eval and handing in its candidate, because the runner rejects a candidate whose eval scored an older commit.
 
 \`<path>\` is whatever your \`evaluate.py\` takes as \`--candidate\` (a predictions file, a model, a script). The runner runs the locked \`evaluate.py\` once per contract seed on the search split, from a private copy of the exact bytes it hashed (so \`__file__\` is not in the project: find files next to \`evaluate.py\` through the \`ML_RALPH_EVAL_DIR\` environment variable, and the project directory is the working directory), then prints an \`eval_id\`, the per-seed scores, their mean and their std, and writes \`.ml-ralph/evals/<eval_id>/metrics.json\`. If an evaluation times out (\`eval_timeout_seconds\` per seed), crashes or prints no score, the command exits non-zero, the eval has no score, and you fix the candidate and submit again.
 
@@ -735,7 +738,9 @@ Other types have more required fields than \`type\`: the table above lists them.
 
 ## Training Jobs (MANDATORY)
 
-Start every training run or other long-running job (anything over a minute) with \`${JOB_COMMAND} <cmd>\`, for example \`${JOB_COMMAND} "python train.py --epochs 20"\`. It runs the command, records its pid, command, start time and log path in \`.ml-ralph/runs/active.json\`, and removes the entry when the job exits, so the user can list, stop and tail it from the TUI. Do not start training with a bare \`python\`, \`nohup\` or \`&\`. If the user stops a job, your next prompt says so: do not restart it unless the plan changes.
+Start every training run or other long-running job (anything over a minute) with \`${JOB_COMMAND} <cmd>\`, for example \`${JOB_COMMAND} "python train.py --epochs 20"\`. It runs the command, records its pid, command, start time and log path in \`.ml-ralph/runs/active.json\`, and removes the entry when the job exits, so the user can list, stop and tail it from the TUI.
+
+The wrapper stays in the foreground until the job exits, and your Bash tool times out after 2 minutes by default (10 at most); a timeout kills the wrapper and the job with it. So run the wrapper itself in the background with the Bash tool's \`run_in_background\` option (keep the wrapper: it is what records the job), then poll: read the job's \`logPath\` from \`.ml-ralph/runs/active.json\` and \`tail\` it, and check the background shell's output, until the entry is gone. Do not start training with a bare \`python\`, \`nohup\` or \`&\`. If the user stops a job, your next prompt says so: do not restart it unless the plan changes.
 
 ## Experiment Tracking with wandb (MANDATORY)
 
@@ -1000,7 +1005,7 @@ You cannot end the run or declare success. When you believe a candidate is a new
 
 Only after a genuine verification attempt:
 1. Commit the candidate. The independent verifier reads the git diff between commits, and the runner rejects a candidate while tracked files have uncommitted changes.
-2. Score it with \`${EVAL_COMMAND} <path>\` in this iteration, and log the \`hypothesis\` it implements (with its rubrics) if you have not.
+2. Score the committed candidate with \`${EVAL_COMMAND} <path>\` in this iteration, and log the \`hypothesis\` it implements (with its rubrics) if you have not.
 3. Log: \`${LOG_COMMAND} success_verified '{"criteria_met":["..."],"verification_checks":["data integrity","no leakage","same distribution"],"attempts_to_break":["..."]}'\`
 4. Output: \`<candidate_complete eval_id="eval-...">\` with the \`eval_id\` of that \`ml-ralph eval\` run, in addition to \`<iteration_complete>\`.
 
@@ -1350,11 +1355,22 @@ export interface EvalEvent extends BaseEvent {
   eval_id: string;
   status: "ok" | "failed";
   candidate: string;
+  /** HEAD commit the candidate was scored at; absent outside a git repository */
+  sha?: string;
   /** Mean and std of the per-seed scores; only when status is "ok" */
   mean?: number;
   std?: number;
   /** Why the eval failed; only when status is "failed" */
   reason?: string;
+}
+
+/** Written by the runner (never the agent) when it could not move the ralph/best tag; the promotion stands */
+export interface TagFailedEvent extends BaseEvent {
+  type: "tag_failed";
+  tag: string;
+  sha: string;
+  eval_id: string;
+  error: string;
 }
 
 /** Written by the runner (never the agent) after each independent verifier run */
@@ -1612,6 +1628,7 @@ export type RalphEvent =
   | DecisionEvent
   | VerifierVerdictEvent
   | PromotionEvent
+  | TagFailedEvent
   | CandidateRejectedEvent
   | OverfittingEvent
   | RunCompleteEvent

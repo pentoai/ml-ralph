@@ -53,9 +53,15 @@ let head: Awaited<ReturnType<PromotionDeps["gitHead"]>>;
 let evalCounter = 0;
 let verifierCost: number | undefined;
 let verifierDelayMs = 0;
+let tagCalls: string[];
+let tagError: string | null;
 
 const deps = (): Partial<PromotionDeps> => ({
   gitHead: async () => head,
+  tagBest: async (_dir, sha) => {
+    tagCalls.push(sha);
+    return tagError;
+  },
   verify: async (options) => {
     verifierCalls.push(options);
     if (verifierDelayMs) await Bun.sleep(verifierDelayMs);
@@ -201,6 +207,8 @@ beforeEach(async () => {
   verifierAnswer = "approve";
   verifierCost = undefined;
   verifierDelayMs = 0;
+  tagCalls = [];
+  tagError = null;
   head = { ok: true, ref: HEAD_REF };
 });
 
@@ -292,6 +300,48 @@ describe("decideOnScore", () => {
 });
 
 describe("judgeCandidate", () => {
+  test("a failed ralph/best tag is logged as tag_failed and the promotion stands", async () => {
+    await logHypothesis();
+    tagError = "fatal: not allowed";
+    const id = await writeEval();
+
+    const decision = await judge(id);
+
+    expect(decision.verdict).toBe("promoted");
+    expect(await readIncumbent(dir)).toMatchObject({ state: "ok" });
+    const log = (await Bun.file(join(dir, ".ml-ralph/log.jsonl")).text())
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(log.find((e) => e.type === "tag_failed")).toMatchObject({
+      tag: "ralph/best",
+      sha: HEAD_REF,
+      eval_id: id,
+      error: "fatal: not allowed",
+    });
+  });
+
+  test("a rejected candidate does not move the tag", async () => {
+    await logHypothesis();
+    const id = await writeEval({ mean: 0.5 });
+    expect((await judge(id)).verdict).toBe("rejected");
+    expect(tagCalls).toEqual([]);
+  });
+
+  test("rejects a candidate whose eval scored a different commit than HEAD", async () => {
+    await logHypothesis();
+    const id = await writeEval();
+    const file = join(dir, ".ml-ralph/evals", id, "metrics.json");
+    const m = await Bun.file(file).json();
+    await Bun.write(file, JSON.stringify({ ...m, sha: "a".repeat(40) }));
+
+    const decision = await judge(id);
+
+    expect(decision.verdict).toBe("rejected");
+    expect(decision.reason).toContain("run ml-ralph eval again");
+    expect(tagCalls).toEqual([]);
+  });
+
   test("promotes the first candidate when it beats baseline_score by more than its std", async () => {
     await logHypothesis();
     const id = await writeEval({ mean: 0.85, std: 0.01 });
@@ -322,6 +372,7 @@ describe("judgeCandidate", () => {
       candidate_mean: 0.85,
       reference_mean: 0.8,
     });
+    expect(tagCalls).toEqual([HEAD_REF]);
     expect(events[0].incumbent_eval_id).toBeUndefined();
   });
 

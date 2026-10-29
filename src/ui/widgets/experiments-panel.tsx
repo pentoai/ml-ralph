@@ -441,6 +441,10 @@ function ExperimentRow({
             <Text color={colors.accentGreen} bold>
               eval {formatNumber(trust.eval.mean)}
             </Text>
+            <Text color={colors.textMuted}>
+              {" "}
+              {trust.eval.sha ? trust.eval.sha.slice(0, 7) : "—"}
+            </Text>
             {trust.mismatch && trust.reported !== null ? (
               <Text color={colors.accentYellow}>
                 {" ≠ "}
@@ -711,7 +715,8 @@ function ExperimentDetails({
             <Text color={colors.accentGreen}>
               {scoring?.primaryMetric ?? "score"} mean{" "}
               {formatNumber(trust.eval.mean)} ± {formatNumber(trust.eval.std)}{" "}
-              over {trust.eval.seeds} seed{trust.eval.seeds === 1 ? "" : "s"}
+              over {trust.eval.seeds} seed{trust.eval.seeds === 1 ? "" : "s"} at{" "}
+              {trust.eval.sha ? trust.eval.sha.slice(0, 7) : "—"}
               {evalTarget(scoring, trust.eval.mean, targets)}
             </Text>
             {trust.mismatch && trust.reported !== null && (

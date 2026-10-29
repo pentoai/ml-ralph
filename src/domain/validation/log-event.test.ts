@@ -154,6 +154,7 @@ describe("schema coverage", () => {
     "contract_relocked",
     "eval",
     "promotion",
+    "tag_failed",
     "overfitting",
     "holdout_access",
     "run_complete",

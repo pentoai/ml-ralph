@@ -16,7 +16,6 @@ import {
   type RunCompleteReason,
   readActiveJobs,
   readRecordedBudget,
-  stopJob,
   tailJobLog,
 } from "../infrastructure/ralph/index.ts";
 import { useTmuxLayout } from "./hooks/index.ts";
@@ -226,6 +225,12 @@ export function App({ projectPath, enableTeams }: AppProps) {
     return () => clearInterval(timer);
   }, [refreshJobs]);
 
+  // A notice such as "no active job" goes stale once the job list changes
+  const jobCount = activeJobs.length;
+  useEffect(() => {
+    if (jobCount >= 0) setJobNotice(null);
+  }, [jobCount]);
+
   // Create orchestrator when config is loaded
   useEffect(() => {
     if (config && !orchestratorRef.current) {
@@ -328,6 +333,9 @@ export function App({ projectPath, enableTeams }: AppProps) {
 
   // Handle keyboard input
   useInput((input, key) => {
+    // A job notice describes the last t/w press; any other key dismisses it
+    if (input !== "t" && input !== "w") setJobNotice(null);
+
     // Handle quit confirmation dialog
     if (showQuitConfirm) {
       if (input === "y" || input === "Y") {
@@ -654,8 +662,12 @@ export function App({ projectPath, enableTeams }: AppProps) {
         });
         return;
       }
-      const stop =
-        orchestratorRef.current?.stopJob(job) ?? stopJob(projectPath, job);
+      const orchestrator = orchestratorRef.current;
+      if (!orchestrator) {
+        setJobNotice("agent not ready yet; try again");
+        return;
+      }
+      const stop = orchestrator.stopJob(job);
       stop
         .then((result) => {
           setJobNotice(
@@ -708,6 +720,7 @@ export function App({ projectPath, enableTeams }: AppProps) {
           selectedIndex={selectedJobIndex}
           notice={jobNotice}
           log={jobLog}
+          maxRows={Math.max(4, Math.floor(terminalHeight / 3))}
         />
       )}
 

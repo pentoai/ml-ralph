@@ -6,11 +6,12 @@
 import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { constants as osConstants } from "node:os";
 import { dirname, join } from "node:path";
 import type { TrainingJob } from "../../domain/types/index.ts";
 import { findProjectDir } from "./log-command.ts";
 
-/** Seconds between SIGTERM and SIGKILL when stopping a job */
+/** Milliseconds between SIGTERM and SIGKILL when stopping a job */
 export const KILL_GRACE_MS = 10_000;
 export const LOG_TAIL_LINES = 50;
 
@@ -206,7 +207,7 @@ export async function runJobCommand(
       resolve(127);
     });
     child.on("close", (code, signal) =>
-      resolve(code ?? (signal ? 128 + 15 : 1)),
+      resolve(code ?? (signal ? 128 + (osConstants.signals[signal] ?? 15) : 1)),
     );
   });
   for (const [stream, sink] of [

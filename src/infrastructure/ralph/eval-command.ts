@@ -23,6 +23,7 @@ import {
   type EvalMetrics,
   type EvalSeedScore,
 } from "./eval-metrics.ts";
+import { evalCommit } from "./git.ts";
 import { appendValidatedEvent, findProjectDir } from "./log-command.ts";
 import type { EvalEvent } from "./templates.ts";
 
@@ -54,7 +55,8 @@ export interface EvalCommandOptions {
 const USAGE = `Usage: ml-ralph eval <path>
 
 Runs the locked .ml-ralph/eval/evaluate.py once per contract seed on the
-search split and writes .ml-ralph/evals/<eval_id>/metrics.json.`;
+search split and writes .ml-ralph/evals/<eval_id>/metrics.json, recording the HEAD commit.
+Commit your changes first: with uncommitted tracked changes it scores nothing.`;
 
 const fail = (stderr: string, code = 1): EvalCommandResult => ({
   code,
@@ -358,6 +360,13 @@ export async function runEvalCommand(
   if (!locked.ok) return fail(`${locked.error} Nothing was run.`);
   const { lock, evaluateBytes, contract } = locked;
 
+  // A score must be reproducible from a commit; refuse before claiming a slot or running anything
+  const commit = await evalCommit(projectDir);
+  if (commit.state === "dirty") {
+    return fail("commit your changes before eval. Nothing was scored.");
+  }
+  const sha = commit.state === "ok" ? commit.sha : null;
+
   // Under the runner, the iteration's eval calls are capped by config.json
   const budget = await readBudgetCaps(projectDir);
   const limit = experimentCapFor(
@@ -392,6 +401,7 @@ export async function runEvalCommand(
     candidate,
     split,
     created_at: new Date().toISOString(),
+    sha,
   };
 
   const run = await runEvaluatorSeeds({
@@ -419,26 +429,30 @@ export async function runEvalCommand(
     eval_id: metrics.eval_id,
     status: metrics.status,
     candidate,
+    ...(sha ? { sha } : {}),
     ...(metrics.status === "ok"
       ? { mean: metrics.mean, std: metrics.std }
       : { reason: metrics.reason }),
   };
   await appendValidatedEvent(projectDir, event);
 
+  const warning = sha
+    ? ""
+    : "warning: not a git repository, so this eval is not tied to a commit (sha: null)\n";
   const where = `${EVALS_DIR}/${metrics.eval_id}/metrics.json`;
   if (metrics.status === "failed") {
     return {
       code: 1,
       stdout: "",
-      stderr: `Eval ${metrics.eval_id} failed: ${metrics.reason}\nRecorded in ${where}; it has no score.\n`,
+      stderr: `${warning}Eval ${metrics.eval_id} failed: ${metrics.reason}\nRecorded in ${where}; it has no score.\n`,
       metrics,
     };
   }
   const perSeed = metrics.scores.map((s) => `${s.seed}=${s.score}`).join(", ");
   return {
     code: 0,
-    stdout: `eval_id: ${metrics.eval_id}\nseeds: ${perSeed}\nmean: ${metrics.mean}\nstd: ${metrics.std}\nmetrics: ${where}\nLog the experiment with "eval_id":"${metrics.eval_id}" and these numbers.\n`,
-    stderr: "",
+    stdout: `eval_id: ${metrics.eval_id}\nseeds: ${perSeed}\ncommit: ${sha ?? "none"}\nmean: ${metrics.mean}\nstd: ${metrics.std}\nmetrics: ${where}\nLog the experiment with "eval_id":"${metrics.eval_id}" and these numbers.\n`,
+    stderr: warning,
     metrics,
   };
 }

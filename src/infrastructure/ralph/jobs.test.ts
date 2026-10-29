@@ -63,6 +63,11 @@ describe("job start lifecycle", () => {
     expect(await readActiveJobs(dir)).toEqual([]);
   });
 
+  test("reports 128 + signal number when the job dies from a signal", async () => {
+    const result = await runJobCommand(["start", "kill -9 $$"], { cwd: dir });
+    expect(result.code).toBe(137);
+  });
+
   test("rejects a missing command", async () => {
     expect((await runJobCommand(["start"], { cwd: dir })).code).toBe(1);
   });
