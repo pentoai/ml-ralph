@@ -28,17 +28,15 @@ describe("hypothesis", () => {
     expect(validateLogEvent("hypothesis", hypothesis).valid).toBe(true);
   });
 
-  test.each([
-    "claim",
-    "expected_delta",
-    "rubrics",
-    "kill_criterion",
-  ])("names %s when it is missing", (field) => {
-    const { [field as keyof typeof hypothesis]: _omit, ...rest } = hypothesis;
-    const errors = errorsOf("hypothesis", rest);
-    expect(errors.map((e) => e.field)).toEqual([field]);
-    expect(errors[0]?.message).toContain("missing required field");
-  });
+  test.each(["claim", "expected_delta", "rubrics", "kill_criterion"])(
+    "names %s when it is missing",
+    (field) => {
+      const { [field as keyof typeof hypothesis]: _omit, ...rest } = hypothesis;
+      const errors = errorsOf("hypothesis", rest);
+      expect(errors.map((e) => e.field)).toEqual([field]);
+      expect(errors[0]?.message).toContain("missing required field");
+    },
+  );
 
   test("states the expected type for each field", () => {
     const messages = Object.fromEntries(

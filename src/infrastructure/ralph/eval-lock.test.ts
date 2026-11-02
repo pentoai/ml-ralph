@@ -211,17 +211,16 @@ describe("checkEvalGate", () => {
     expect(await Bun.file(evalPath("lock.json")).exists()).toBe(false);
   });
 
-  test.each([
-    "blocked",
-    "complete",
-    "weird",
-  ])("treats a %s PRD as past SETUP and refuses without a lock", async (status) => {
-    await setup({ status, contract: CONTRACT });
-    const gate = await checkEvalGate(dir);
-    expect(gate.ok).toBe(false);
-    expect(gate.ok === false && gate.error).toContain(status);
-    expect(await Bun.file(evalPath("lock.json")).exists()).toBe(false);
-  });
+  test.each(["blocked", "complete", "weird"])(
+    "treats a %s PRD as past SETUP and refuses without a lock",
+    async (status) => {
+      await setup({ status, contract: CONTRACT });
+      const gate = await checkEvalGate(dir);
+      expect(gate.ok).toBe(false);
+      expect(gate.ok === false && gate.error).toContain(status);
+      expect(await Bun.file(evalPath("lock.json")).exists()).toBe(false);
+    },
+  );
 
   test("lets a blocked PRD run when its lock is valid", async () => {
     await setup({ contract: CONTRACT });

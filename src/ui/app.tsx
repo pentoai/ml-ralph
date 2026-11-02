@@ -883,6 +883,29 @@ export function App({ projectPath, enableTeams }: AppProps) {
   );
 }
 
+function Shortcut({
+  keys,
+  label,
+  badge,
+}: {
+  keys: string;
+  label: string;
+  badge?: number;
+}) {
+  return (
+    <Box marginRight={2}>
+      <Text backgroundColor={colors.bgTertiary} color={colors.text}>
+        {" "}
+        {keys}{" "}
+      </Text>
+      <Text color={colors.textSecondary}> {label}</Text>
+      {badge !== undefined && badge > 0 && (
+        <Text color={colors.accentYellow}> ({badge})</Text>
+      )}
+    </Box>
+  );
+}
+
 /**
  * Help bar component with keyboard shortcuts
  */
@@ -895,27 +918,6 @@ function HelpBar({
   agentStatus: string;
   pendingHintsCount: number;
 }) {
-  const Shortcut = ({
-    keys,
-    label,
-    badge,
-  }: {
-    keys: string;
-    label: string;
-    badge?: number;
-  }) => (
-    <Box marginRight={2}>
-      <Text backgroundColor={colors.bgTertiary} color={colors.text}>
-        {" "}
-        {keys}{" "}
-      </Text>
-      <Text color={colors.textSecondary}> {label}</Text>
-      {badge !== undefined && badge > 0 && (
-        <Text color={colors.accentYellow}> ({badge})</Text>
-      )}
-    </Box>
-  );
-
   const nextMode =
     mode === "planning"
       ? "Monitor"

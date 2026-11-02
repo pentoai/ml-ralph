@@ -257,17 +257,18 @@ describe("failure", () => {
     expect(await calls()).toHaveLength(1);
   });
 
-  test.each([
-    "garbage",
-    "no-score",
-    "string-score",
-  ])("unparseable output (%s)", async (mode) => {
-    await setup();
-    const result = await runEvalCommand([await candidate(mode)], { cwd: dir });
-    expect(result.code).not.toBe(0);
-    expect(failed(result).status).toBe("failed");
-    expect(failed(result).reason).toContain('numeric "score"');
-  });
+  test.each(["garbage", "no-score", "string-score"])(
+    "unparseable output (%s)",
+    async (mode) => {
+      await setup();
+      const result = await runEvalCommand([await candidate(mode)], {
+        cwd: dir,
+      });
+      expect(result.code).not.toBe(0);
+      expect(failed(result).status).toBe("failed");
+      expect(failed(result).reason).toContain('numeric "score"');
+    },
+  );
 
   test("a failing later seed discards the earlier scores", async () => {
     await setup();

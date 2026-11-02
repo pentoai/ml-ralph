@@ -210,18 +210,16 @@ describe("rejections append nothing", () => {
 });
 
 describe("hypothesis fields", () => {
-  test.each([
-    "claim",
-    "expected_delta",
-    "rubrics",
-    "kill_criterion",
-  ])("rejects a hypothesis without %s", async (field) => {
-    const { [field as keyof typeof hypothesis]: _omit, ...rest } = hypothesis;
-    const result = await log("hypothesis", JSON.stringify(rest));
-    expect(result.code).not.toBe(0);
-    expect(result.stderr).toContain(`${field}: missing required field`);
-    expect(await readLog()).toBe("");
-  });
+  test.each(["claim", "expected_delta", "rubrics", "kill_criterion"])(
+    "rejects a hypothesis without %s",
+    async (field) => {
+      const { [field as keyof typeof hypothesis]: _omit, ...rest } = hypothesis;
+      const result = await log("hypothesis", JSON.stringify(rest));
+      expect(result.code).not.toBe(0);
+      expect(result.stderr).toContain(`${field}: missing required field`);
+      expect(await readLog()).toBe("");
+    },
+  );
 
   test("rejects empty rubrics and a non-numeric expected_delta", async () => {
     const empty = await log(
