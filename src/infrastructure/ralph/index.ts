@@ -13,6 +13,11 @@ export {
   readBudgetCaps,
   readRecordedBudget,
 } from "./budget.ts";
+export {
+  critiqueJob,
+  parseCritiqueThreshold,
+  readCritiqueThreshold,
+} from "./critique.ts";
 export type {
   EvalCommandOptions,
   EvalCommandResult,

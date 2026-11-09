@@ -130,6 +130,7 @@ See RALPH.md for when and how to use these events.
 | `candidate_rejected` (runner-only) | reason (`eval_not_locked`) (+ eval_id) |
 | `holdout_access` (runner-only) | tool, iteration |
 | `promotion` (runner-only) | verdict, reason (+ candidate_eval_id, incumbent_eval_id, verifier_id, candidate_mean, reference_mean) |
+| `critique_verdict` (runner-only) | hypothesis_id, verdict (approve, reject, error), reason, est_minutes (+ cost_usd) |
 | `verifier_verdict` (runner-only) | id, verdict, checks, reason, output_path (+ model) |
 | `contract_relocked` (runner-only) | changes, files |
 

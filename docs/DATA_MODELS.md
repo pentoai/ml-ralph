@@ -369,6 +369,9 @@ interface ProjectConfig {
     maxIterationsPerStory?: number; // Safety limit
   };
 
+  // Pre-compute critique (optional; unset means no critique)
+  critique_threshold_minutes?: number; // positive number
+
   // Tooling
   runtime: {
     packageManager: "uv" | "pip" | "poetry" | "conda";
@@ -376,6 +379,8 @@ interface ProjectConfig {
   };
 }
 ```
+
+`critique_threshold_minutes`: when set, `ml-ralph job start` requires `--est-minutes <n>` and `--hypothesis-id <id>` (the id of a `hypothesis` event in `log.jsonl`). A job whose estimate is **above** the threshold is first critiqued by a read-only `claude -p` session (120 s limit) that reads the hypothesis, `conclusions.md` and `kanban.json`, and the runner logs a `critique_verdict` event. `reject` makes `job start` exit non-zero, print the one-line reason to stderr and start no job; `approve` and `error` (crash, timeout, unusable reply) let the job start. At or below the threshold, or with the key unset, no critique runs. The critique's `total_cost_usd` is added to the run's spend and counts against `max_usd`. A value that is not a positive number stops the run at start (and `job start`) with an error naming the key.
 
 **File**: `.ml-ralph/config.json`
 
@@ -496,7 +501,7 @@ rubrics: expected non-empty array of non-empty strings
 kill_criterion: missing required field, expected non-empty string
 ```
 
-An unknown type, JSON that does not parse or is not an object, a `type` in the JSON that differs from the argument, and runner-only types (`promotion`, `verifier_verdict`, `contract_relocked`, `eval`, `candidate_rejected`, `overfitting`, `holdout_access`, `run_complete`, `completion_rejected`, `completion_blocked`) are rejected the same way. Fields not in the schema are kept.
+An unknown type, JSON that does not parse or is not an object, a `type` in the JSON that differs from the argument, and runner-only types (`promotion`, `verifier_verdict`, `critique_verdict`, `contract_relocked`, `eval`, `candidate_rejected`, `overfitting`, `holdout_access`, `run_complete`, `completion_rejected`, `completion_blocked`) are rejected the same way. Fields not in the schema are kept.
 
 The runner's own appends (`appendValidatedEvent` in `log-command.ts`: `phase`, `eval`, `promotion`, `verifier_verdict`, `overfitting`, `contract_relocked`, completion and holdout events) pass the same schemas. An event that fails is not appended; it is shown as an error line in the TUI and written to stderr (the helper itself writes to stderr only when the caller gives no callback). Lines already in a log that would fail today are still read: the parser and panels do not validate.
 
@@ -547,6 +552,7 @@ A hypothesis is rejected unless `id`, `claim`, `expected_delta`, `rubrics` (at l
 | `completion_blocked` (runner-only) | `eval_id`, `reason` (`holdout_not_configured`, `holdout_unavailable`, `holdout_already_scored`, `verifier_error`, `holdout_error`, `completion_error`), `error` |
 | `holdout_access` (runner-only) | `tool` (name of the tool whose input contained the holdout path), `iteration` |
 | `promotion` (runner-only) | `verdict` (`promoted`, `rejected`), `reason`; optional `candidate_eval_id`, `incumbent_eval_id`, `verifier_id`, `candidate_mean`, `reference_mean` |
+| `critique_verdict` (runner-only) | `hypothesis_id`, `verdict` (`approve`, `reject`, `error`), `reason` (one line), `est_minutes`; optional `cost_usd` |
 | `verifier_verdict` (runner-only) | `id`, `verdict`, `checks`, `reason`, `output_path`; optional `model` |
 | `contract_relocked` (runner-only) | `changes` (each with `file` and `kind`: `edited` or `deleted`), `files` (SHA-256 of `evaluate.py` and `contract.json`) |
 

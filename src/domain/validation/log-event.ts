@@ -315,6 +315,16 @@ export const LOG_EVENT_SCHEMAS: Record<string, LogEventSchema> = {
     runnerOnly: true,
     fields: { tool: str, iteration: num },
   },
+  critique_verdict: {
+    runnerOnly: true,
+    fields: {
+      hypothesis_id: str,
+      verdict: oneOf("approve", "reject", "error"),
+      reason: str,
+      est_minutes: num,
+      cost_usd: optional(num),
+    },
+  },
   verifier_verdict: {
     runnerOnly: true,
     fields: {

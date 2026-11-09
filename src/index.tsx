@@ -49,7 +49,7 @@ Usage:
   ml-ralph init [name] [path]  Initialize a new ml-ralph project (keeps existing files)
   ml-ralph log <type> '<json>'  Validate an event and append it to .ml-ralph/log.jsonl
   ml-ralph eval <path>       Score a candidate with the locked evaluate.py; writes .ml-ralph/evals/<eval_id>/metrics.json
-  ml-ralph job start <cmd>   Run a training job recorded in .ml-ralph/runs/active.json (stoppable from the TUI)
+  ml-ralph job start [--est-minutes <n> --hypothesis-id <id>] <cmd>   Run a training job recorded in .ml-ralph/runs/active.json (stoppable from the TUI)
   ml-ralph --help            Show this help message
 
 Options:

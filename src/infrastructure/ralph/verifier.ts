@@ -257,14 +257,14 @@ async function gitDiff(
   return out;
 }
 
-interface SessionOutput {
+export interface SessionOutput {
   stdout: string;
   stderr: string;
   exitCode: number | null;
   timedOut: boolean;
 }
 
-async function runClaude(
+export async function runClaude(
   args: string[],
   prompt: string,
   cwd: string,
@@ -453,7 +453,7 @@ async function readContract(projectPath: string): Promise<string> {
 }
 
 /** The envelope's total_cost_usd when it is a finite non-negative number */
-function extractCost(stdout: string): number | undefined {
+export function extractCost(stdout: string): number | undefined {
   try {
     const cost = (JSON.parse(stdout) as { total_cost_usd?: unknown } | null)
       ?.total_cost_usd;
@@ -466,7 +466,7 @@ function extractCost(stdout: string): number | undefined {
 }
 
 /** `claude --output-format json` wraps the reply in {type:"result", result, is_error} */
-function extractResultText(stdout: string): string {
+export function extractResultText(stdout: string): string {
   let envelope: unknown;
   try {
     envelope = JSON.parse(stdout);

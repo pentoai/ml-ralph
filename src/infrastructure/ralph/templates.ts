@@ -740,7 +740,7 @@ Other types have more required fields than \`type\`: the table above lists them.
 
 Start every training run or other long-running job (anything over a minute) with \`${JOB_COMMAND} <cmd>\`, for example \`${JOB_COMMAND} "python train.py --epochs 20"\`. It runs the command, records its pid, command, start time and log path in \`.ml-ralph/runs/active.json\`, and removes the entry when the job exits, so the user can list, stop and tail it from the TUI.
 
-The wrapper stays in the foreground until the job exits, and your Bash tool times out after 2 minutes by default (10 at most); a timeout kills the wrapper, but the job runs detached in its own process group and may keep running orphaned, its \`active.json\` entry staying until the next runner start. Find such a job by its \`pid\` in \`.ml-ralph/runs/active.json\` and stop it yourself with \`kill <pid>\` (\`kill -9\` if it ignores that), or tell the user to select it in the Monitor tab and press \`t\`; you cannot press keys. So run the wrapper itself in the background with the Bash tool's \`run_in_background\` option (keep the wrapper: it is what records the job), then poll: read the job's \`logPath\` from \`.ml-ralph/runs/active.json\` and \`tail\` it, and check the background shell's output, until the entry is gone. Do not start training with a bare \`python\`, \`nohup\` or \`&\`. If the user stops a job, your next prompt says so: do not restart it unless the plan changes.
+The wrapper stays in the foreground until the job exits, and your Bash tool times out after 2 minutes by default (10 at most); a timeout kills the wrapper, but the job runs detached in its own process group and may keep running orphaned, its \`active.json\` entry staying until the next runner start. Find such a job by its \`pid\` in \`.ml-ralph/runs/active.json\` and stop it yourself with \`kill <pid>\` (\`kill -9\` if it ignores that), or tell the user to select it in the Monitor tab and press \`t\`; you cannot press keys. So run the wrapper itself in the background with the Bash tool's \`run_in_background\` option (keep the wrapper: it is what records the job), then poll: read the job's \`logPath\` from \`.ml-ralph/runs/active.json\` and \`tail\` it, and check the background shell's output, until the entry is gone. If \`.ml-ralph/config.json\` sets \`critique_threshold_minutes\`, pass \`--est-minutes <n>\` (your honest estimate of the job's run time) and \`--hypothesis-id <id>\` (the id of a hypothesis you logged) before the command: \`${JOB_COMMAND} --est-minutes 45 --hypothesis-id H3 "python train.py"\`. Without them the wrapper refuses to start. When the estimate is above the threshold, the runner has a short read-only critique check the hypothesis against \`conclusions.md\` and the kanban first and logs \`critique_verdict\`. On \`reject\` the job does not start and the wrapper prints the one-line reason and exits non-zero: change the plan (a cheaper experiment, a different hypothesis) instead of retrying the same job. The critique costs money that counts against \`max_usd\`. Do not start training with a bare \`python\`, \`nohup\` or \`&\`. If the user stops a job, your next prompt says so: do not restart it unless the plan changes.
 
 ## Experiment Tracking with wandb (MANDATORY)
 
@@ -1371,6 +1371,18 @@ export interface TagFailedEvent extends BaseEvent {
   sha: string;
   eval_id: string;
   error: string;
+}
+
+/** Written by the runner (never the agent) when `job start` critiques a job estimated above critique_threshold_minutes */
+export interface CritiqueVerdictEvent extends BaseEvent {
+  type: "critique_verdict";
+  hypothesis_id: string;
+  /** "error": the critique crashed, timed out or gave no usable verdict, and the job started anyway */
+  verdict: "approve" | "reject" | "error";
+  reason: string;
+  est_minutes: number;
+  /** total_cost_usd the critique session reported; counted against max_usd */
+  cost_usd?: number;
 }
 
 /** Written by the runner (never the agent) after each independent verifier run */
