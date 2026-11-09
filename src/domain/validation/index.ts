@@ -23,3 +23,15 @@ export {
 } from "./log-event.ts";
 export type { ValidationError, ValidationResult } from "./prd.ts";
 export { validatePRD, validateStory } from "./prd.ts";
+export type {
+  TuneParamSpec,
+  TuneSpace,
+  TuneSpaceValidation,
+  TuneValue,
+} from "./tune-space.ts";
+export {
+  findPlaceholders,
+  shellQuote,
+  substituteParams,
+  validateTuneSpace,
+} from "./tune-space.ts";
