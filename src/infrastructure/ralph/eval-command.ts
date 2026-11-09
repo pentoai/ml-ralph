@@ -16,6 +16,7 @@ import {
   type EvalLock,
   findEvalChanges,
   readEvalLock,
+  readLockHashes,
   sha256,
 } from "./eval-lock.ts";
 import {
@@ -24,6 +25,7 @@ import {
   type EvalSeedScore,
 } from "./eval-metrics.ts";
 import { evalCommit } from "./git.ts";
+import { readStoredLock } from "./lock-store.ts";
 import { appendValidatedEvent, findProjectDir } from "./log-command.ts";
 import type { EvalEvent } from "./templates.ts";
 
@@ -201,15 +203,18 @@ export type LockedEval =
  * and the run. The contract is parsed from the checked bytes.
  */
 export async function readLockedEval(projectDir: string): Promise<LockedEval> {
-  const lock = await readEvalLock(projectDir);
-  if (!lock) {
+  const hashes = await readLockHashes(projectDir);
+  const lockedAt =
+    (await readStoredLock(projectDir))?.locked_at ??
+    (await readEvalLock(projectDir))?.locked_at;
+  if (!hashes || !lockedAt) {
     return {
       ok: false,
       error:
         "No valid eval lock (.ml-ralph/eval/lock.json): the runner creates it when the PRD is approved.",
     };
   }
-  const changes = await findEvalChanges(projectDir, lock.files);
+  const changes = await findEvalChanges(projectDir, hashes);
   if (changes.length > 0) {
     return {
       ok: false,
@@ -222,7 +227,7 @@ export async function readLockedEval(projectDir: string): Promise<LockedEval> {
       const bytes = new Uint8Array(
         await Bun.file(join(projectDir, EVAL_DIR, name)).arrayBuffer(),
       );
-      return sha256(bytes) === lock.files[name] ? bytes : null;
+      return sha256(bytes) === hashes[name] ? bytes : null;
     } catch {
       return null;
     }
@@ -249,6 +254,7 @@ export async function readLockedEval(projectDir: string): Promise<LockedEval> {
   if (!contract.valid) {
     return { ok: false, error: "contract.json is invalid." };
   }
+  const lock: EvalLock = { locked_at: lockedAt, files: hashes };
   return { ok: true, lock, evaluateBytes, contract: contract.contract };
 }
 

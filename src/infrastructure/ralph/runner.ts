@@ -34,7 +34,7 @@ import {
   type EvalChange,
   type EvalLock,
   findEvalChanges,
-  readEvalLock,
+  readLockHashes,
   relockEvalContract,
 } from "./eval-lock.ts";
 import {
@@ -256,8 +256,13 @@ export class RalphRunner {
           this.config.onError?.(new Error(gate.error));
           return;
         }
-        this.pinnedHashes ??=
-          (await readEvalLock(this.config.projectPath))?.files ?? null;
+        this.pinnedHashes ??= await readLockHashes(this.config.projectPath);
+        if (gate.migrated) {
+          await this.appendLogEvent({
+            type: "lock_migrated",
+            files: gate.migrated,
+          });
+        }
 
         if (!baselineRecorded) {
           baselineRecorded = true;
@@ -776,8 +781,7 @@ export class RalphRunner {
     let relockError: string | undefined;
 
     while (this.running) {
-      const expected =
-        this.pinnedHashes ?? (await readEvalLock(projectPath))?.files;
+      const expected = this.pinnedHashes ?? (await readLockHashes(projectPath));
       const changes = expected
         ? await findEvalChanges(projectPath, expected)
         : [];

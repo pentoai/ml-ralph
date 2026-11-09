@@ -202,6 +202,17 @@ export const LOG_EVENT_SCHEMAS: Record<string, LogEventSchema> = {
       },
     },
   },
+  lock_migrated: {
+    runnerOnly: true,
+    fields: {
+      files: {
+        spec: {
+          kind: "object",
+          fields: { "evaluate.py": str, "contract.json": str },
+        },
+      },
+    },
+  },
   eval: {
     runnerOnly: true,
     fields: {

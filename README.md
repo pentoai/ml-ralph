@@ -57,6 +57,8 @@ The agent may change the file only with a `conclusions_changed` event whose reas
 
 ## Commit before every eval
 
+The runner keeps its copy of the eval lock hashes in `~/.config/ml-ralph/locks/`, keyed by project path, so deleting `.ml-ralph/eval/lock.json` or the marker does not unlock anything. `ml-ralph resume` restores them from the store, `ml-ralph unlock` clears the lock so you can lock again on purpose, and `ml-ralph rekey <old-path>` moves the entry after you move the project directory. `ml-ralph init --force` never touches the store.
+
 Every eval is tied to a commit, so a metric can be reproduced from code. `ml-ralph eval` records the HEAD SHA as `sha` in `metrics.json` and in the runner's `eval` event. If tracked files outside `.ml-ralph/` have uncommitted changes, it exits non-zero with `commit your changes before eval` and scores nothing; the agent is told (in RALPH.md) to commit before each eval, and the runner never commits for it. Outside a git repository, eval warns, records `sha: null` and still scores.
 
 When the runner promotes a candidate it force-moves the git tag `ralph/best` to the promoted commit. A candidate is rejected if HEAD moved after its eval, since the score belongs to the older commit. If the tag cannot be moved, the runner logs `tag_failed` with the error and the promotion stands. The experiments panel shows the short SHA next to each verified metric, and `—` when the eval has none.

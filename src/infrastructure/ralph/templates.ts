@@ -1520,6 +1520,13 @@ export interface ContractRelockedEvent extends BaseEvent {
   files: Record<"evaluate.py" | "contract.json", string>;
 }
 
+/** Written by the runner (never the agent) when it copies a project's pre-existing eval lock into the user-level store */
+export interface LockMigratedEvent extends BaseEvent {
+  type: "lock_migrated";
+  /** The SHA-256 hashes now in the user-level store */
+  files: Record<"evaluate.py" | "contract.json", string>;
+}
+
 export interface LearningEvent extends BaseEvent {
   type: "learning";
   insight: string;
@@ -1640,6 +1647,7 @@ export type RalphEvent =
   | ReportFailedEvent
   | HoldoutAccessEvent
   | ContractRelockedEvent
+  | LockMigratedEvent
   | JobStoppedEvent
   | StrategicRetreatEvent
   | PrdUpdatedEvent
