@@ -2,6 +2,7 @@
  * ML-Ralph runner - executes the autonomous agent loop
  */
 
+import { join } from "node:path";
 import type { Subprocess } from "bun";
 import type { TrainingJob } from "../../domain/types/index.ts";
 import {
@@ -57,6 +58,19 @@ import {
   recordBaselineRef,
 } from "./promotion.ts";
 import { type ReportEndReason, writeReport } from "./report.ts";
+import {
+  checkSandbox,
+  containerArgs,
+  containerName,
+  gitIdentityEnv,
+  readSandboxMode,
+  removeContainer,
+  removeStaleContainers,
+  SANDBOX_DIR_ENV,
+  type SandboxMode,
+  sandboxProjectPath,
+} from "./sandbox.ts";
+import { FORWARD_DIR, startForwarder } from "./sandbox-forward.ts";
 import { verifyCandidate } from "./verifier.ts";
 
 /** Why a run ended. Only the runner ends a run: the agent's output never does */
@@ -76,6 +90,10 @@ export interface RunnerConfig {
   projectPath: string;
   maxIterations?: number;
   enableTeams?: boolean;
+  /** "docker": claude runs in a container that mounts only the project (default: config.json `sandbox`, else host) */
+  sandbox?: SandboxMode | "none";
+  /** The docker executable (default: docker; tests) */
+  dockerBin?: string;
   onOutput?: (event: StreamEvent) => void;
   onIterationStart?: (iteration: number) => void;
   onIterationEnd?: (iteration: number, result: string) => void;
@@ -157,6 +175,9 @@ export class RalphRunner {
   private config: RunnerConfig;
   private running = false;
   private currentProcess: Subprocess | null = null;
+  /** Name of the container claude runs in, in sandbox mode */
+  private currentContainer: string | null = null;
+  private sandbox: SandboxMode | "none" | undefined;
   private currentIteration = 0;
   private pendingHints: string[] = [];
   private pendingFeedback: string[] = [];
@@ -218,6 +239,31 @@ export class RalphRunner {
     if (!caps.ok) {
       this.config.onError?.(new Error(caps.error));
       return;
+    }
+
+    const mode = await readSandboxMode(this.config.projectPath);
+    if (!mode.ok) {
+      this.config.onError?.(new Error(mode.error));
+      return;
+    }
+    this.sandbox = this.config.sandbox ?? mode.mode;
+    if (this.sandbox === "docker") {
+      const docker = this.config.dockerBin ?? "docker";
+      const check = await checkSandbox({
+        projectPath: this.config.projectPath,
+        docker,
+        onStatus: (line) =>
+          this.config.onOutput?.({ type: "text", content: line }),
+      });
+      if (!check.ok) {
+        this.config.onError?.(new Error(check.error));
+        return;
+      }
+      // A TUI that was killed outright cannot remove its container; sweep what it left
+      removeStaleContainers(
+        docker,
+        await sandboxProjectPath(this.config.projectPath),
+      );
     }
 
     this.running = true;
@@ -354,7 +400,7 @@ export class RalphRunner {
     this.running = false;
     this.settleContractDecision(null);
     if (this.currentProcess) {
-      killTree(this.currentProcess, "SIGTERM");
+      this.killAgent(this.currentProcess, "SIGTERM");
       this.currentProcess = null;
     }
     return done;
@@ -475,7 +521,7 @@ export class RalphRunner {
   private stopForBudget(cap: BudgetExhaustion): void {
     if (this.budgetStop) return;
     this.budgetStop = cap;
-    if (this.currentProcess) killTree(this.currentProcess, "SIGKILL");
+    if (this.currentProcess) this.killAgent(this.currentProcess, "SIGKILL");
   }
 
   /** The tool call that named the holdout in this run, if any (a method so TS does not narrow the field across awaits) */
@@ -937,32 +983,77 @@ export class RalphRunner {
 
     // The agent's environment never carries the holdout path, even if the user exported it
     const { [HOLDOUT_PATH_ENV]: _holdout, ...agentEnv } = process.env;
+    const iterationEnv: Record<string, string> = {
+      [ITERATION_ENV]: String(this.currentIteration),
+      // Pinned at start, so editing config.json mid-run cannot loosen the cap
+      ...(this.budgetCaps.max_experiments_per_iteration !== undefined
+        ? {
+            [MAX_EXPERIMENTS_ENV]: String(
+              this.budgetCaps.max_experiments_per_iteration,
+            ),
+          }
+        : {}),
+      ...(this.config.enableTeams
+        ? { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1" }
+        : {}),
+    };
+
+    let spawnCmd = cmd;
+    let spawnEnv: Record<string, string | undefined> = {
+      ...agentEnv,
+      ...iterationEnv,
+    };
+    let forwarder: { stop: () => void } | null = null;
+    let container: string | null = null;
+    const docker = this.config.dockerBin ?? "docker";
+    if (this.sandbox === "docker") {
+      // Mounted at the same path inside, so cwd values in forwarded requests are host paths too
+      const projectPath = await sandboxProjectPath(this.config.projectPath);
+      container = containerName();
+      forwarder = await startForwarder({
+        projectPath,
+        env: { ...agentEnv, ...iterationEnv },
+      });
+      spawnCmd = [
+        docker,
+        ...containerArgs(
+          {
+            projectPath,
+            name: container,
+            env: {
+              ...iterationEnv,
+              ...gitIdentityEnv(),
+              [SANDBOX_DIR_ENV]: join(projectPath, FORWARD_DIR),
+            },
+            uid: process.getuid?.(),
+            gid: process.getgid?.(),
+          },
+          cmd,
+        ),
+      ];
+      spawnEnv = agentEnv;
+      this.currentContainer = container;
+    }
+
     // Own process group, so stop() and the holdout guard also reach what claude's tools started
-    const proc = Bun.spawn(cmd, {
-      cwd: this.config.projectPath,
-      detached: true,
-      stdout: "pipe",
-      stderr: "pipe",
-      env: {
-        ...agentEnv,
-        [ITERATION_ENV]: String(this.currentIteration),
-        // Pinned at start, so editing config.json mid-run cannot loosen the cap
-        ...(this.budgetCaps.max_experiments_per_iteration !== undefined
-          ? {
-              [MAX_EXPERIMENTS_ENV]: String(
-                this.budgetCaps.max_experiments_per_iteration,
-              ),
-            }
-          : {}),
-        ...(this.config.enableTeams
-          ? { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1" }
-          : {}),
-      },
-    });
+    let proc: Subprocess;
+    try {
+      proc = Bun.spawn(spawnCmd, {
+        cwd: this.config.projectPath,
+        detached: true,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: spawnEnv,
+      });
+    } catch (error) {
+      forwarder?.stop();
+      this.currentContainer = null;
+      throw error;
+    }
     this.currentProcess = proc;
 
     // claude is no longer in the TUI's process group, so a normal exit must reap it
-    const killOnExit = () => killTree(proc, "SIGKILL");
+    const killOnExit = () => this.killAgent(proc, "SIGKILL");
     process.on("exit", killOnExit);
 
     // Wall-clock is enforced by a timer so a long iteration cannot overshoot the cap
@@ -985,6 +1076,18 @@ export class RalphRunner {
       clearTimeout(timer);
       clearInterval(ticker);
       process.off("exit", killOnExit);
+      forwarder?.stop();
+      // --rm removes a container that exited; this one may have been killed from outside
+      if (container) removeContainer(docker, container);
+      this.currentContainer = null;
+    }
+  }
+
+  /** Kill claude's process group; in sandbox mode also remove the container, which outlives a killed `docker run` */
+  private killAgent(proc: Subprocess, signal: "SIGTERM" | "SIGKILL"): void {
+    killTree(proc, signal);
+    if (this.currentContainer) {
+      removeContainer(this.config.dockerBin ?? "docker", this.currentContainer);
     }
   }
 
@@ -1065,7 +1168,7 @@ export class RalphRunner {
     }
     if (parsed.holdoutAccess && !this.holdoutAccess) {
       this.holdoutAccess = parsed.holdoutAccess;
-      if (this.currentProcess) killTree(this.currentProcess, "SIGKILL");
+      if (this.currentProcess) this.killAgent(this.currentProcess, "SIGKILL");
     }
     if (parsed.costUsd !== undefined) {
       this.budgetUsd += parsed.costUsd;

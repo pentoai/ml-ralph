@@ -47,6 +47,9 @@ export interface ProjectConfig {
   max_usd?: number; // Summed total_cost_usd of the claude result events
   max_experiments_per_iteration?: number; // `ml-ralph eval` calls per iteration
 
+  // "docker": each iteration's claude runs in a container that mounts only the project (default: host)
+  sandbox?: "docker" | "none";
+
   // Tooling
   runtime: RuntimeConfig;
 }

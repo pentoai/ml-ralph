@@ -138,7 +138,12 @@ export async function readHoldoutPath(
   env: Record<string, string | undefined> = process.env,
 ): Promise<
   | { ok: true; path: string; realPath: string }
-  | { ok: false; error: string; notConfigured?: boolean }
+  | {
+      ok: false;
+      error: string;
+      notConfigured?: boolean;
+      insideProject?: boolean;
+    }
 > {
   const file = holdoutConfigFile(env);
   const keys = [resolve(projectPath)];
@@ -194,6 +199,7 @@ export async function readHoldoutPath(
     return {
       ok: false,
       error: `${where} is inside the project directory; the holdout must live outside it`,
+      insideProject: true,
     };
   }
   return { ok: true, path: holdoutPath, realPath };

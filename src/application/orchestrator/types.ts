@@ -57,4 +57,5 @@ export interface OrchestratorConfig {
   autoAdvance: boolean;
   maxIterations?: number;
   enableTeams?: boolean;
+  sandbox?: "docker" | "none";
 }

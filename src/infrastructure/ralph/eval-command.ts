@@ -50,6 +50,8 @@ export interface EvalCommandOptions {
   cwd?: string;
   /** Python executable (default: python, or python3 when there is no python) */
   python?: string;
+  /** Environment that carries the iteration and experiment-cap variables (default: process.env) */
+  env?: Record<string, string | undefined>;
 }
 
 const USAGE = `Usage: ml-ralph eval <path>
@@ -370,7 +372,7 @@ export async function runEvalCommand(
   // Under the runner, the iteration's eval calls are capped by config.json
   const budget = await readBudgetCaps(projectDir);
   const limit = experimentCapFor(
-    process.env,
+    options.env ?? process.env,
     budget.ok ? budget.caps.max_experiments_per_iteration : undefined,
   );
   if (!limit.ok) return fail(`${limit.error}. Nothing was run.`);

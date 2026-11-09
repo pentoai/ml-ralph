@@ -15,6 +15,8 @@ import { findProjectDir } from "./log-command.ts";
 /** Milliseconds between SIGTERM and SIGKILL when stopping a job */
 export const KILL_GRACE_MS = 10_000;
 export const LOG_TAIL_LINES = 50;
+/** Output kept per stream when a caller captures it */
+const CAPTURE_MAX_CHARS = 64_000;
 
 const activePath = (projectDir: string) =>
   join(projectDir, ".ml-ralph", "runs", "active.json");
@@ -177,7 +179,7 @@ to the log file and to this terminal. A single argument runs through the shell.`
 /** `ml-ralph job start <cmd>`: run the command as a recorded job; resolves when it exits */
 export async function runJobCommand(
   args: string[],
-  options: { cwd?: string } = {},
+  options: { cwd?: string; capture?: boolean } = {},
 ): Promise<JobCommandResult> {
   const fail = (stderr: string): JobCommandResult => ({
     code: 1,
@@ -211,19 +213,25 @@ export async function runJobCommand(
       resolve(code ?? (signal ? 128 + (osConstants.signals[signal] ?? 15) : 1)),
     );
   });
-  for (const [stream, sink] of [
-    [child.stdout, process.stdout],
-    [child.stderr, process.stderr],
+  // capture: keep the tail of the output for the caller (the sandbox forwarder) instead of printing it
+  const captured = { stdout: "", stderr: "" };
+  for (const [stream, sink, name] of [
+    [child.stdout, process.stdout, "stdout"],
+    [child.stderr, process.stderr, "stderr"],
   ] as const) {
     stream?.on("data", (chunk: Buffer) => {
       log.write(chunk);
-      sink.write(chunk);
+      if (options.capture) {
+        captured[name] = (captured[name] + chunk.toString()).slice(
+          -CAPTURE_MAX_CHARS,
+        );
+      } else sink.write(chunk);
     });
   }
 
   if (child.pid === undefined) {
     log.end();
-    return { code: await exit, stdout: "", stderr: "" };
+    return { code: await exit, ...captured };
   }
   const pid = child.pid;
   await updateActiveJobs(projectDir, (jobs) => [
@@ -257,5 +265,5 @@ export async function runJobCommand(
   process.off("SIGINT", onInt);
   await new Promise<void>((resolve) => log.end(resolve));
   await removeActiveJob(projectDir, id);
-  return { code, stdout: "", stderr: "" };
+  return { code, ...captured };
 }

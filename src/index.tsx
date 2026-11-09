@@ -36,8 +36,33 @@ if (process.argv[2] === "job") {
 
 // Get project path from command line or use current directory
 // Skip flags like --teams, --help when determining project path
+// `--sandbox <docker|none>` (or `--sandbox=<mode>`) takes a value that is not the project path
+const sandboxIndex = process.argv.findIndex(
+  (arg, i) => i >= 2 && (arg === "--sandbox" || arg.startsWith("--sandbox=")),
+);
+const sandboxValue =
+  sandboxIndex < 0
+    ? undefined
+    : (process.argv[sandboxIndex] as string).startsWith("--sandbox=")
+      ? (process.argv[sandboxIndex] as string).slice("--sandbox=".length)
+      : process.argv[sandboxIndex + 1];
+const sandboxValueIndex =
+  sandboxIndex >= 0 && process.argv[sandboxIndex] === "--sandbox"
+    ? sandboxIndex + 1
+    : -1;
+if (sandboxIndex >= 0 && sandboxValue !== "docker" && sandboxValue !== "none") {
+  console.error(
+    `--sandbox must be "docker" or "none", got ${JSON.stringify(sandboxValue ?? "")}`,
+  );
+  process.exit(1);
+}
+const sandbox = sandboxValue as "docker" | "none" | undefined;
+
 const projectPath =
-  process.argv.slice(2).find((arg) => !arg.startsWith("--")) ?? process.cwd();
+  process.argv
+    .slice(2)
+    .find((arg, i) => !arg.startsWith("--") && i + 2 !== sandboxValueIndex) ??
+  process.cwd();
 
 // Check for help flag
 if (process.argv.includes("--help") || process.argv.includes("-h")) {
@@ -54,6 +79,8 @@ Usage:
 
 Options:
   --teams                    Enable parallel experiments via agent teams
+  --sandbox docker           Run each iteration's claude in a Docker container that mounts only the project
+                             (needs ANTHROPIC_API_KEY; config.json: "sandbox": "docker"; "none" = host)
   --force                    With init: overwrite template files (RALPH.md, CLAUDE.md, ...), keep project data
 
 Keyboard shortcuts (in TUI):
@@ -212,5 +239,5 @@ await ensureTmux();
 // Disable default Ctrl+C exit so our custom quit confirmation works
 const renderer = await createCliRenderer({ exitOnCtrlC: false });
 createRoot(renderer).render(
-  <App projectPath={projectPath} enableTeams={enableTeams} />,
+  <App projectPath={projectPath} enableTeams={enableTeams} sandbox={sandbox} />,
 );

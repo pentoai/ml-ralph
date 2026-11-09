@@ -42,6 +42,7 @@ export class DefaultOrchestrator implements AgentOrchestrator {
       projectPath: config.projectPath,
       maxIterations: config.maxIterations ?? 10,
       enableTeams: config.enableTeams,
+      sandbox: config.sandbox,
       onOutput: (event) => this.emitOutput(event),
       onIterationStart: (iteration) => this.emitIterationChange(iteration),
       onComplete: (reason) => this.emitComplete(reason),
