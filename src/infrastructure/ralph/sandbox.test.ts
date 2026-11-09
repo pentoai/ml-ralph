@@ -5,7 +5,15 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readdir, realpath, rm } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readdir,
+  realpath,
+  rm,
+  symlink,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { lockEvalContract } from "./eval-lock.ts";
@@ -409,6 +417,7 @@ describe("request forwarding", () => {
         expect(line).toContain("ml-ralph.sandbox=holdout");
         expect(line).toContain("--network none");
         expect(line).toContain("--read-only");
+        expect(line).toContain("--tmpfs /tmp:rw,exec");
         expect(line).toContain(` -v ${dir}:${dir}:ro `);
         expect(line).toContain(` -v ${sealed}:${sealed}:ro `);
         expect(line).toContain(`ML_RALPH_HOLDOUT_PATH=${sealed}`);
@@ -416,6 +425,41 @@ describe("request forwarding", () => {
         expect(line).not.toContain("ANTHROPIC_API_KEY");
       }
     } finally {
+      await Promise.all(
+        [sealed, configHome].map((d) =>
+          rm(d, { recursive: true, force: true }),
+        ),
+      );
+    }
+  });
+
+  test("holdout scoring finds the config entry by the configured path while mounting the real one", async () => {
+    const sealed = await mkdtemp(join(tmpdir(), "ml-ralph-sbx-sealed-"));
+    const configHome = await mkdtemp(join(tmpdir(), "ml-ralph-sbx-cfg-"));
+    const link = `${dir}-link`;
+    await symlink(dir, link);
+    try {
+      await Bun.write(
+        join(configHome, "ml-ralph/config.json"),
+        JSON.stringify({ projects: { [link]: { holdout_path: sealed } } }),
+      );
+      const evaluated = await forward({ argv: ["eval", "cand.txt"], cwd: dir });
+      const evalId = /^eval_id: (\S+)/m.exec(evaluated.stdout)?.[1] as string;
+      const real = await realpath(dir);
+      const result = await scoreHoldout(evalId, {
+        projectPath: link,
+        mountPath: real,
+        env: { XDG_CONFIG_HOME: configHome },
+        wrap,
+      });
+      expect(result.ok).toBe(true);
+      const line = (await calls(stub))
+        .filter((c) => c.startsWith("run "))
+        .find((c) => c.includes("sandbox=holdout")) as string;
+      expect(line).toContain(` -v ${real}:${real}:ro `);
+      expect(line).not.toContain(link);
+    } finally {
+      await rm(link, { force: true });
       await Promise.all(
         [sealed, configHome].map((d) =>
           rm(d, { recursive: true, force: true }),
@@ -632,6 +676,48 @@ describe("the runner with --sandbox docker", () => {
     expect(all).toContain(`rm -f ${name}`);
   });
 
+  test("stop() also stops the jobs the agent started in containers", async () => {
+    const docker = await stubDocker(stub, { run: "exec sleep 60" });
+    const job = Bun.spawn(["sleep", "60"], { detached: true });
+    const runner = new RalphRunner({
+      projectPath: dir,
+      maxIterations: 3,
+      sandbox: "docker",
+      dockerBin: docker,
+      onError: () => {},
+    });
+    const started = runner.start().catch(() => {});
+    for (let i = 0; i < 200; i++) {
+      if ((await calls(stub)).some((c) => c.startsWith("run "))) break;
+      await Bun.sleep(25);
+    }
+    // a job recorded after start, as a forwarded `job start` would
+    await Bun.write(
+      join(dir, ".ml-ralph/runs/active.json"),
+      JSON.stringify({
+        jobs: [
+          {
+            id: "job_1",
+            storyId: "",
+            experimentId: "",
+            pid: job.pid,
+            command: "sleep 60",
+            logPath: join(dir, "j.log"),
+            container: "ml-ralph-job-xyz",
+            startedAt: new Date().toISOString(),
+            status: "running",
+          },
+        ],
+      }),
+    );
+    await runner.stop();
+    await started;
+    expect(await calls(stub)).toContain("rm -f ml-ralph-job-xyz");
+    expect(await readActiveJobs(dir)).toEqual([]);
+    for (let i = 0; i < 100 && job.exitCode === null; i++) await Bun.sleep(25);
+    expect(job.exitCode === null && job.signalCode === null).toBe(false);
+  });
+
   test("host mode never calls docker", async () => {
     const docker = await stubDocker(stub);
     await Bun.write(join(stub, "claude"), "#!/bin/sh\nexit 0\n");
@@ -714,9 +800,11 @@ describe("the container", () => {
         expect(scoring(`touch ${join(project, "copied")}`).exitCode).not.toBe(
           0,
         );
+        // /tmp is scratch space (tempfile works, as in search evals); nothing else is writable
         expect(
-          scoring(`cp ${join(sealed, "holdout.csv")} /tmp/x`).exitCode,
-        ).not.toBe(0);
+          scoring("echo x > /tmp/scratch && cat /tmp/scratch").exitCode,
+        ).toBe(0);
+        expect(scoring("touch /usr/local/x").exitCode).not.toBe(0);
         expect(
           scoring(`cat ${join(configHome, "ml-ralph/config.json")}`).exitCode,
         ).not.toBe(0);

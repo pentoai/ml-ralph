@@ -94,6 +94,8 @@ export interface HoldoutOptions {
    * copy the holdout anywhere. The host reads only the score from stdout.
    */
   wrap?: CommandWrapper;
+  /** With `wrap`: the project's real path, the one mounted into the container; `projectPath` stays the configured key for the config lookup */
+  mountPath?: string;
 }
 
 export type HoldoutResult =
@@ -334,11 +336,12 @@ export async function scoreHoldout(
     };
   }
 
-  const candidatePath = resolve(projectDir, metrics.candidate);
+  const mountDir = options.mountPath ?? projectDir;
+  const candidatePath = resolve(mountDir, metrics.candidate);
   const run = await runEvaluatorSeeds({
     python: options.python ?? defaultPython(),
     evaluateBytes,
-    projectDir,
+    projectDir: mountDir,
     candidatePath,
     split: HOLDOUT_SPLIT,
     seeds: contract.seeds,

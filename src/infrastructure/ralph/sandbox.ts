@@ -168,7 +168,7 @@ export interface ContainerSpec {
   readOnlyMounts?: string[];
   /** Mount the project read-only too, so nothing can be written back (holdout scoring) */
   projectReadOnly?: boolean;
-  /** No network and a read-only root filesystem (holdout scoring) */
+  /** No network and a read-only root filesystem, with scratch tmpfs at /tmp and HOME (holdout scoring) */
   isolated?: boolean;
 }
 
@@ -204,7 +204,16 @@ export function containerArgs(
     "ALL",
     "--security-opt",
     "no-new-privileges",
-    ...(spec.isolated ? ["--network", "none", "--read-only"] : []),
+    // A read-only root still gets a scratch /tmp, as the search-eval containers have, so tempfile works
+    ...(spec.isolated
+      ? [
+          "--network",
+          "none",
+          "--read-only",
+          "--tmpfs",
+          `/tmp:rw,exec${tmpfsOwner}`,
+        ]
+      : []),
     "--tmpfs",
     `/home/agent:rw,exec${tmpfsOwner}`,
     "-v",

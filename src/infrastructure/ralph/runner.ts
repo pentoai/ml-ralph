@@ -48,7 +48,12 @@ import {
   type HoldoutNeedles,
   loadHoldoutNeedles,
 } from "./holdout-guard.ts";
-import { pruneStaleJobs, type StopJobResult, stopJob } from "./jobs.ts";
+import {
+  pruneStaleJobs,
+  readActiveJobs,
+  type StopJobResult,
+  stopJob,
+} from "./jobs.ts";
 import { appendValidatedEvent } from "./log-command.ts";
 import {
   judgeCandidate,
@@ -411,7 +416,28 @@ export class RalphRunner {
       this.killAgent(this.currentProcess, "SIGTERM");
       this.currentProcess = null;
     }
-    return done;
+    // Sandbox jobs run in containers outside the TUI's process tree: stopping the run stops them
+    return Promise.all([done, this.stopSandboxJobs()]).then(() => {});
+  }
+
+  /** Stop the jobs this run's agent started in containers, and remove their containers */
+  private async stopSandboxJobs(): Promise<void> {
+    if (this.sandbox !== "docker") return;
+    const docker = this.config.dockerBin ?? "docker";
+    const jobs = await readActiveJobs(this.config.projectPath).catch(() => []);
+    await Promise.all(
+      jobs
+        .filter((job) => job.container)
+        .map((job) =>
+          stopJob(this.config.projectPath, job, {
+            graceMs: 0,
+            removeContainer: (name) => removeContainer(docker, name),
+          })
+            // killing the `docker run` client does not stop the container: remove it now, not after the grace period
+            .then(() => removeContainer(docker, job.container as string))
+            .catch(() => {}),
+        ),
+    );
   }
 
   /**
@@ -422,17 +448,19 @@ export class RalphRunner {
   async scoreHoldout(evalId: string): Promise<HoldoutResult> {
     // Sandbox mode: the candidate is the agent's code, so it never runs next to the holdout on the host
     const sandboxed = this.sandbox === "docker";
-    const projectPath = sandboxed
+    // The config lookup keeps the configured path; only the mounts use the real one
+    const mountPath = sandboxed
       ? await sandboxProjectPath(this.config.projectPath)
-      : this.config.projectPath;
+      : undefined;
     return scoreHoldout(evalId, {
-      projectPath,
+      projectPath: this.config.projectPath,
       onInvalidEvent: this.reportInvalidEvent,
       ...(sandboxed
         ? {
+            mountPath,
             wrap: commandWrapper(
               this.config.dockerBin ?? "docker",
-              projectPath,
+              mountPath as string,
             ),
           }
         : {}),
