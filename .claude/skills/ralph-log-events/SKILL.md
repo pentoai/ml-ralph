@@ -98,6 +98,12 @@ The runner watches every tool call you make. If one mentions the sealed holdout 
 `ml-ralph eval <path>` writes this after scoring a candidate. Put its `eval_id` in your `experiment` event; the TUI shows that eval's mean as the result, lists your own numbers as unverified, and flags a `primary_metric` number that disagrees with the eval. Without a real `eval_id` your metrics are unverified. Never write anything under `.ml-ralph/evals/` yourself.
 
 ```jsonl
+{"ts":"...","type":"eval","eval_id":"eval-lq3k5p-2c71aa","status":"ok","candidate":"models/0.0123.pkl","mean":0.841,"std":0.003,"trial":4,"params":{"lr":0.0123,"depth":6}}
+{"ts":"...","type":"tune_result","sampler":"tpe","trials_requested":20,"trials_run":20,"trials_ok":19,"trials_failed":1,"best_eval_id":"eval-lq3k5p-2c71aa","best_params":{"lr":0.0123,"depth":6},"best_mean":0.841}
+```
+`ml-ralph tune` logs one `eval` per trial (the `trial` number and `params` are only on those) and a `tune_result` at the end, with `stopped` (`max_experiments_per_iteration`, `max_usd` or `max_wall_clock_minutes`) when a limit ended the sweep early. Its best trial is only a candidate: tune never promotes. Never write `tune_result` yourself.
+
+```jsonl
 {"ts":"...","type":"contract_relocked","changes":[{"file":"evaluate.py","kind":"edited"}],"files":{"evaluate.py":"<sha256>","contract.json":"<sha256>"}}
 ```
 Before each iteration the runner re-hashes the locked eval files. A change or deletion pauses the run, and the user either re-locks (this event) or stops the run. Never edit locked files yourself.
@@ -125,7 +131,8 @@ See RALPH.md for when and how to use these events.
 | `prd_updated` | field, change, reason |
 | `kanban_updated` | changes, reason |
 | `status` | status (`running` or `paused`), reason |
-| `eval` (runner-only) | eval_id, status, candidate (+ mean, std or reason) |
+| `eval` (runner-only) | eval_id, status, candidate (+ mean, std or reason; trial and params from `ml-ralph tune`) |
+| `tune_result` (runner-only) | sampler, trials_requested, trials_run, trials_ok, trials_failed (+ best_eval_id, best_params, best_mean, stopped) |
 | `overfitting` (runner-only) | eval_id, threshold |
 | `candidate_rejected` (runner-only) | reason (`eval_not_locked`) (+ eval_id) |
 | `holdout_access` (runner-only) | tool, iteration |

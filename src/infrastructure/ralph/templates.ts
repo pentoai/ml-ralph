@@ -281,6 +281,19 @@ ${EVAL_COMMAND} <path>
 - Put the \`eval_id\` in the \`experiment\` event that reports the result, and copy the metrics from the command's output, keyed by the contract's \`primary_metric\`: \`{"type":"experiment","hypothesis_id":"H-001","eval_id":"eval-...","metrics":{"auc":0.83},"observations":"..."}\`. An experiment without a real \`eval_id\` counts for nothing.
 - Compare candidates by the mean and std of runner evals, never by a single seed.
 
+#### Numeric sweeps (use tune, not a hand-rolled loop)
+For a sweep over numeric or categorical hyperparameters, write a \`space.json\` and delegate the trials to Optuna. You choose the space and the budget; the optimizer owns the trials, because you track optimizer state poorly:
+
+\`\`\`
+ml-ralph tune --space space.json --trials 20 --sampler tpe --command "python train.py --lr {lr} --depth {depth} --out models/{lr}.pkl" --candidate "models/{lr}.pkl"
+\`\`\`
+
+\`space.json\` maps each parameter name to \`{"type":"float","low":1e-5,"high":1e-1,"log":true}\`, \`{"type":"int","low":1,"high":8}\` or \`{"type":"categorical","choices":["adam","sgd"]}\`. Each \`{param}\` in \`--command\` and \`--candidate\` is filled from the trial; a \`{param}\` with no key in \`space.json\` is refused before any trial. \`--sampler\` is \`tpe\` (default) or \`cmaes\` (continuous spaces); \`--candidate\` is the path \`ml-ralph eval\` would take (default: the current directory). Commit first: tune refuses uncommitted tracked changes, like eval. It needs Python with \`optuna\` installed and says how to install it if not.
+
+- Every trial is scored by the runner like \`ml-ralph eval\` and logged as an \`eval\` event with its \`eval_id\` and \`params\`; a train command that exits non-zero is a failed trial and the sweep continues. At the end tune prints the best \`eval_id\` and params and logs a \`tune_result\`.
+- Trials count against the experiments-per-iteration cap and the USD and wall-clock budget. When one runs out, tune stops and names it; the completed trials stay logged. Size \`--trials\` to the budget you were given.
+- Tune never promotes. Its best trial is only a candidate: to hand it in, train with those params, commit, run \`ml-ralph eval\`, and cite that \`eval_id\` as usual. Log the sweep as one \`experiment\` event citing the best \`eval_id\`.
+
 ### EXECUTION Mode (PRD approved)
 When \`prd.json\` has \`status: "approved"\`:
 1. **Immediately append a phase event to log.jsonl** (the TUI shows ONLY log.jsonl)
@@ -1362,6 +1375,29 @@ export interface EvalEvent extends BaseEvent {
   std?: number;
   /** Why the eval failed; only when status is "failed" */
   reason?: string;
+  /** Set by `ml-ralph tune`: the trial number (from 0) and the parameters it trained with */
+  trial?: number;
+  params?: Record<string, number | string | boolean>;
+}
+
+/** Written by the runner (never the agent) when `ml-ralph tune` ends; the best trial is a candidate only, never promoted */
+export interface TuneResultEvent extends BaseEvent {
+  type: "tune_result";
+  sampler: "tpe" | "cmaes";
+  trials_requested: number;
+  /** Trials started (each counted against max_experiments_per_iteration) */
+  trials_run: number;
+  trials_ok: number;
+  trials_failed: number;
+  /** Best scored trial by the contract's direction; absent when no trial scored */
+  best_eval_id?: string;
+  best_params?: Record<string, number | string | boolean>;
+  best_mean?: number;
+  /** The limit that ended the sweep early */
+  stopped?:
+    | "max_experiments_per_iteration"
+    | "max_usd"
+    | "max_wall_clock_minutes";
 }
 
 /** Written by the runner (never the agent) when it could not move the ralph/best tag; the promotion stands */
@@ -1629,6 +1665,7 @@ export type RalphEvent =
   | HypothesisEvent
   | ExperimentEvent
   | EvalEvent
+  | TuneResultEvent
   | LearningEvent
   | ConclusionsChangedEvent
   | ConclusionsRejectedEvent
