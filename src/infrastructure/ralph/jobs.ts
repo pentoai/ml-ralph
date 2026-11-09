@@ -16,8 +16,6 @@ import type { CommandWrapper } from "./sandbox.ts";
 /** Milliseconds between SIGTERM and SIGKILL when stopping a job */
 export const KILL_GRACE_MS = 10_000;
 export const LOG_TAIL_LINES = 50;
-/** Output kept per stream when a caller captures it */
-const CAPTURE_MAX_CHARS = 64_000;
 
 const activePath = (projectDir: string) =>
   join(projectDir, ".ml-ralph", "runs", "active.json");
@@ -191,7 +189,12 @@ export async function runJobCommand(
   args: string[],
   options: {
     cwd?: string;
-    capture?: boolean;
+    /**
+     * Return as soon as the job is recorded (the sandbox forwarder: a job can
+     * outlive the agent's tool timeout). Output goes only to the job log, and
+     * the exit code to `<log>.exit`.
+     */
+    detach?: boolean;
     /** Sandbox mode: run the command in a container instead of on the host */
     wrap?: CommandWrapper;
   } = {},
@@ -228,25 +231,19 @@ export async function runJobCommand(
       resolve(code ?? (signal ? 128 + (osConstants.signals[signal] ?? 15) : 1)),
     );
   });
-  // capture: keep the tail of the output for the caller (the sandbox forwarder) instead of printing it
-  const captured = { stdout: "", stderr: "" };
-  for (const [stream, sink, name] of [
-    [child.stdout, process.stdout, "stdout"],
-    [child.stderr, process.stderr, "stderr"],
+  for (const [stream, sink] of [
+    [child.stdout, process.stdout],
+    [child.stderr, process.stderr],
   ] as const) {
     stream?.on("data", (chunk: Buffer) => {
       log.write(chunk);
-      if (options.capture) {
-        captured[name] = (captured[name] + chunk.toString()).slice(
-          -CAPTURE_MAX_CHARS,
-        );
-      } else sink.write(chunk);
+      if (!options.detach) sink.write(chunk);
     });
   }
 
   if (child.pid === undefined) {
     log.end();
-    return { code: await exit, ...captured };
+    return { code: await exit, stdout: "", stderr: "" };
   }
   const pid = child.pid;
   await updateActiveJobs(projectDir, (jobs) => [
@@ -264,6 +261,22 @@ export async function runJobCommand(
     },
   ]);
 
+  const finish = async (code: number) => {
+    await new Promise<void>((resolve) => log.end(resolve));
+    if (options.detach) await writeFile(`${logPath}.exit`, `${code}\n`);
+    await removeActiveJob(projectDir, id);
+  };
+
+  if (options.detach) {
+    // The runner (the TUI process) outlives the job, so it must not take SIGTERM/SIGINT for the job
+    void exit.then(finish);
+    return {
+      code: 0,
+      stdout: `job_id: ${id}\nlog: ${logPath}\nexit code: ${logPath}.exit (written when the job ends)\nThe job keeps running after this command returns; follow it with: tail -f ${logPath}\n`,
+      stderr: "",
+    };
+  }
+
   const forward = (signal: NodeJS.Signals) => () => {
     try {
       killJob(pid, signal);
@@ -279,7 +292,6 @@ export async function runJobCommand(
   const code = await exit;
   process.off("SIGTERM", onTerm);
   process.off("SIGINT", onInt);
-  await new Promise<void>((resolve) => log.end(resolve));
-  await removeActiveJob(projectDir, id);
-  return { code, ...captured };
+  await finish(code);
+  return { code, stdout: "", stderr: "" };
 }

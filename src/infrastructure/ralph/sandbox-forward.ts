@@ -98,7 +98,7 @@ export async function executeRequest(
     case "eval":
       return runEvalCommand(args, { cwd, env, wrap });
     case "job":
-      return runJobCommand(args, { cwd, capture: true, wrap });
+      return runJobCommand(args, { cwd, detach: true, wrap });
     default:
       return refuse(
         `sandbox: \`ml-ralph ${command}\` is not available inside the sandbox (only log, eval, job)`,

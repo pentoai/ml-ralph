@@ -9,6 +9,7 @@ import { chmod, mkdir, mkdtemp, readdir, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { lockEvalContract } from "./eval-lock.ts";
+import { scoreHoldout } from "./holdout.ts";
 import { readActiveJobs, stopJob } from "./jobs.ts";
 import { RalphRunner, type RunCompleteReason } from "./runner.ts";
 import {
@@ -86,8 +87,8 @@ describe("readSandboxMode", () => {
  */
 const EMULATE_RUN = `shift; envs=""; w="."
     while [ $# -gt 0 ]; do case "$1" in
-      -v|--name|--label|--user|--cap-drop|--security-opt|--tmpfs) shift 2;;
-      --rm|--init) shift;;
+      -v|--name|--label|--user|--cap-drop|--security-opt|--tmpfs|--network) shift 2;;
+      --rm|--init|--read-only) shift;;
       -w) w="$2"; shift 2;;
       -e) case "$2" in *=*) envs="$envs $2";; esac; shift 2;;
       *) break;; esac; done
@@ -326,11 +327,19 @@ describe("request forwarding", () => {
         ],
         cwd: dir,
       });
-      expect(result).toEqual({
-        code: 0,
-        stdout: "[][][/home/agent]\n",
-        stderr: "",
-      });
+      // returns once the job is recorded, without waiting for it
+      expect(result.code).toBe(0);
+      const jobId = /^job_id: (\S+)/m.exec(result.stdout)?.[1];
+      expect(jobId).toMatch(/^job_/);
+      expect(result.stdout).toContain("tail -f");
+      const exitFile = join(dir, ".ml-ralph/runs/logs", `${jobId}.log.exit`);
+      for (let i = 0; i < 100 && !(await Bun.file(exitFile).exists()); i++)
+        await Bun.sleep(50);
+      expect((await Bun.file(exitFile).text()).trim()).toBe("0");
+      expect(
+        await Bun.file(join(dir, ".ml-ralph/runs/logs", `${jobId}.log`)).text(),
+      ).toBe("[][][/home/agent]\n");
+      expect(await readActiveJobs(dir)).toEqual([]);
     } finally {
       delete process.env.ML_RALPH_HOLDOUT_PATH;
       delete process.env.SECRET_FOR_TEST;
@@ -347,7 +356,13 @@ describe("request forwarding", () => {
   });
 
   test("the job record names its container, and stopping the job removes it", async () => {
-    const pending = forward({ argv: ["job", "start", "sleep 30"], cwd: dir });
+    const started = Date.now();
+    const result = await forward({
+      argv: ["job", "start", "sleep 30"],
+      cwd: dir,
+    });
+    expect(result.code).toBe(0);
+    expect(Date.now() - started).toBeLessThan(5000); // did not wait for the job
     let jobs: Awaited<ReturnType<typeof readActiveJobs>> = [];
     for (let i = 0; i < 100 && jobs.length === 0; i++) {
       await Bun.sleep(50);
@@ -360,10 +375,53 @@ describe("request forwarding", () => {
       graceMs: 20,
       removeContainer: (name) => removed.push(name),
     });
-    await pending;
-    await Bun.sleep(80);
+    await Bun.sleep(150);
     expect(removed).toContain(job.container as string);
     expect(await readActiveJobs(dir)).toEqual([]);
+  });
+
+  test("the holdout is scored in a container with the holdout and project read-only and no network", async () => {
+    const sealed = await mkdtemp(join(tmpdir(), "ml-ralph-sbx-sealed-"));
+    const configHome = await mkdtemp(join(tmpdir(), "ml-ralph-sbx-cfg-"));
+    try {
+      await Bun.write(join(sealed, "holdout.csv"), "y\n1\n");
+      await Bun.write(
+        join(configHome, "ml-ralph/config.json"),
+        JSON.stringify({ projects: { [dir]: { holdout_path: sealed } } }),
+      );
+      const evaluated = await forward({ argv: ["eval", "cand.txt"], cwd: dir });
+      const evalId = /^eval_id: (\S+)/m.exec(evaluated.stdout)?.[1] as string;
+      const before = (await calls(stub)).length;
+
+      const result = await scoreHoldout(evalId, {
+        projectPath: dir,
+        env: { XDG_CONFIG_HOME: configHome },
+        wrap,
+      });
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.holdoutScore).toBe(0.75);
+
+      const lines = (await calls(stub))
+        .slice(before)
+        .filter((c) => c.startsWith("run "));
+      expect(lines).toHaveLength(2); // one container per seed
+      for (const line of lines) {
+        expect(line).toContain("ml-ralph.sandbox=holdout");
+        expect(line).toContain("--network none");
+        expect(line).toContain("--read-only");
+        expect(line).toContain(` -v ${dir}:${dir}:ro `);
+        expect(line).toContain(` -v ${sealed}:${sealed}:ro `);
+        expect(line).toContain(`ML_RALPH_HOLDOUT_PATH=${sealed}`);
+        expect(line).not.toContain(".config");
+        expect(line).not.toContain("ANTHROPIC_API_KEY");
+      }
+    } finally {
+      await Promise.all(
+        [sealed, configHome].map((d) =>
+          rm(d, { recursive: true, force: true }),
+        ),
+      );
+    }
   });
 
   test("log appends a validated event, reading stdin from the request", async () => {
@@ -642,8 +700,34 @@ describe("the container", () => {
               env: { ...process.env, [API_KEY_ENV]: "unused" },
             },
           );
-        // the commands the runner forwards get the same mounts as the agent
+        // the holdout container sees the holdout and the project, both read-only, and has no network
         const wrap = commandWrapper("docker", project);
+        const scoring = (command: string) =>
+          Bun.spawnSync(
+            wrap(["sh", "-c", command], {
+              kind: "holdout",
+              readOnlyMounts: [sealed],
+            }).argv,
+            { stdout: "pipe", stderr: "pipe" },
+          );
+        expect(scoring(`cat ${join(sealed, "holdout.csv")}`).exitCode).toBe(0);
+        expect(scoring(`touch ${join(project, "copied")}`).exitCode).not.toBe(
+          0,
+        );
+        expect(
+          scoring(`cp ${join(sealed, "holdout.csv")} /tmp/x`).exitCode,
+        ).not.toBe(0);
+        expect(
+          scoring(`cat ${join(configHome, "ml-ralph/config.json")}`).exitCode,
+        ).not.toBe(0);
+        expect(
+          scoring(
+            "python3 -c \"import urllib.request as u; u.urlopen('http://1.1.1.1', timeout=3)\"",
+          ).exitCode,
+        ).not.toBe(0);
+        expect(await Bun.file(join(project, "copied")).exists()).toBe(false);
+
+        // the commands the runner forwards get the same mounts as the agent
         const forwarded = (command: string, kind: "job" | "eval" = "job") =>
           Bun.spawnSync(wrap(["sh", "-c", command], { kind }).argv, {
             stdout: "pipe",

@@ -148,7 +148,7 @@ export async function checkSandbox(
 }
 
 /** What runs in a container: the agent, a job it started or an eval of its candidate */
-export type ContainerKind = "agent" | "job" | "eval";
+export type ContainerKind = "agent" | "job" | "eval" | "holdout";
 
 export interface ContainerSpec {
   /** The project directory, mounted at the same absolute path inside */
@@ -164,8 +164,12 @@ export interface ContainerSpec {
   cwd?: string;
   /** Pass ANTHROPIC_API_KEY by name, so it is not in the process list (agent only) */
   apiKey?: boolean;
-  /** Extra read-only mounts (the eval's private copy of evaluate.py) */
+  /** Extra read-only mounts (the eval's private copy of evaluate.py, the sealed holdout) */
   readOnlyMounts?: string[];
+  /** Mount the project read-only too, so nothing can be written back (holdout scoring) */
+  projectReadOnly?: boolean;
+  /** No network and a read-only root filesystem (holdout scoring) */
+  isolated?: boolean;
 }
 
 /**
@@ -200,10 +204,11 @@ export function containerArgs(
     "ALL",
     "--security-opt",
     "no-new-privileges",
+    ...(spec.isolated ? ["--network", "none", "--read-only"] : []),
     "--tmpfs",
     `/home/agent:rw,exec${tmpfsOwner}`,
     "-v",
-    `${spec.projectPath}:${spec.projectPath}`,
+    `${spec.projectPath}:${spec.projectPath}${spec.projectReadOnly ? ":ro" : ""}`,
     ...(spec.readOnlyMounts ?? []).flatMap((m) => ["-v", `${m}:${m}:ro`]),
     "-w",
     spec.cwd ?? spec.projectPath,
@@ -228,7 +233,8 @@ export interface WrappedCommand {
 export type CommandWrapper = (
   argv: string[],
   options: {
-    kind: "job" | "eval";
+    /** "holdout" mounts the project read-only, adds no network and a read-only root */
+    kind: "job" | "eval" | "holdout";
     cwd?: string;
     env?: Record<string, string>;
     readOnlyMounts?: string[];
@@ -256,6 +262,8 @@ export function commandWrapper(
             env: options.env ?? {},
             apiKey: false,
             readOnlyMounts: options.readOnlyMounts,
+            projectReadOnly: options.kind === "holdout",
+            isolated: options.kind === "holdout",
             uid: process.getuid?.(),
             gid: process.getgid?.(),
           },
@@ -311,12 +319,12 @@ export function removeContainer(docker: string, name: string): void {
   }
 }
 
-/** Remove agent and eval containers a crashed earlier run of this project left behind (job containers are tracked by their job record) */
+/** Remove agent, eval and holdout containers a crashed earlier run of this project left behind (job containers are tracked by their job record) */
 export function removeStaleContainers(
   docker: string,
   projectPath: string,
 ): void {
-  for (const kind of ["agent", "eval"] as const) {
+  for (const kind of ["agent", "eval", "holdout"] as const) {
     try {
       const list = Bun.spawnSync(
         [

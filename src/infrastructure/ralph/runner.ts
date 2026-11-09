@@ -419,10 +419,23 @@ export class RalphRunner {
    * The holdout path is read from the user-level config and reaches only the
    * evaluator subprocess; it is never part of a prompt.
    */
-  scoreHoldout(evalId: string): Promise<HoldoutResult> {
+  async scoreHoldout(evalId: string): Promise<HoldoutResult> {
+    // Sandbox mode: the candidate is the agent's code, so it never runs next to the holdout on the host
+    const sandboxed = this.sandbox === "docker";
+    const projectPath = sandboxed
+      ? await sandboxProjectPath(this.config.projectPath)
+      : this.config.projectPath;
     return scoreHoldout(evalId, {
-      projectPath: this.config.projectPath,
+      projectPath,
       onInvalidEvent: this.reportInvalidEvent,
+      ...(sandboxed
+        ? {
+            wrap: commandWrapper(
+              this.config.dockerBin ?? "docker",
+              projectPath,
+            ),
+          }
+        : {}),
     });
   }
 

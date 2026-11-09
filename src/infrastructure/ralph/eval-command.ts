@@ -280,8 +280,14 @@ export interface EvaluatorRunOptions {
   extraEnv?: Record<string, string>;
   /** Strings that must not appear in a failure reason (replaced with `<holdout>`) */
   redact?: string[];
-  /** Run each seed in a container (never for the holdout, which only the host runner may read) */
+  /** Run each seed in a container */
   wrap?: CommandWrapper;
+  /**
+   * With `wrap`: the sealed holdout is being scored. It is mounted read-only
+   * into a container that has the project read-only, no network and a
+   * read-only root, so a candidate script cannot copy it anywhere.
+   */
+  sealedMounts?: string[];
 }
 
 /**
@@ -319,10 +325,14 @@ export async function runEvaluatorSeeds(
       ];
       // In a container only the variables named here exist; the host environment never reaches it
       const wrapped = options.wrap?.(argv, {
-        kind: "eval",
+        kind: options.sealedMounts ? "holdout" : "eval",
         cwd: options.projectDir,
-        env: { [EVAL_DIR_ENV]: join(options.projectDir, EVAL_DIR) },
-        readOnlyMounts: [privateDir],
+        env: {
+          [EVAL_DIR_ENV]: join(options.projectDir, EVAL_DIR),
+          PYTHONDONTWRITEBYTECODE: "1",
+          ...options.extraEnv,
+        },
+        readOnlyMounts: [privateDir, ...(options.sealedMounts ?? [])],
       });
       const run = await runSeed(
         wrapped?.argv ?? argv,

@@ -33,3 +33,23 @@ jobs:
 
       - name: Tests
         run: bun test
+
+  # The sandbox isolation test needs a Docker daemon and the image; the `check`
+  # job skips it (with a logged reason), so run it for real here.
+  sandbox-isolation:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build the sandbox image
+        run: docker build -t ml-ralph-sandbox:1 src/infrastructure/ralph/sandbox
+
+      - name: Sandbox isolation tests (real Docker)
+        run: bun test src/infrastructure/ralph/sandbox.test.ts

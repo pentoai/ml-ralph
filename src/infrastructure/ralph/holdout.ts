@@ -22,6 +22,7 @@ import {
   appendValidatedEvent,
   type InvalidRunnerEvent,
 } from "./log-command.ts";
+import type { CommandWrapper } from "./sandbox.ts";
 import type { OverfittingEvent } from "./templates.ts";
 
 const HOLDOUT_SPLIT = "holdout";
@@ -87,6 +88,12 @@ export interface HoldoutOptions {
   python?: string;
   /** Called when the runner's own overfitting event fails its schema and is not logged */
   onInvalidEvent?: (invalid: InvalidRunnerEvent) => void;
+  /**
+   * Sandbox mode: score in a container that has the holdout read-only and the
+   * project read-only, with no network, so the agent's candidate code cannot
+   * copy the holdout anywhere. The host reads only the score from stdout.
+   */
+  wrap?: CommandWrapper;
 }
 
 export type HoldoutResult =
@@ -337,6 +344,8 @@ export async function scoreHoldout(
     seeds: contract.seeds,
     timeoutSeconds: contract.eval_timeout_seconds,
     extraEnv: { [HOLDOUT_PATH_ENV]: holdout.path },
+    wrap: options.wrap,
+    sealedMounts: options.wrap ? [holdout.path] : undefined,
     redact: [holdout.path, holdout.realPath],
   });
 
