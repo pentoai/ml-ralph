@@ -110,6 +110,11 @@ async function seedProject(
   const holdoutDir = join(workDir, "holdout");
   await mkdir(holdoutDir);
   const holdoutPath = join(holdoutDir, "holdout.csv");
+  if (!(await Bun.file(join(taskDir, "holdout.csv")).exists())) {
+    throw new Error(
+      "holdout.csv is missing: the package does not ship holdout data, so run bench from a repository checkout",
+    );
+  }
   await cp(join(taskDir, "holdout.csv"), holdoutPath);
 
   const init = await initRalph({ projectPath, name: task.id });

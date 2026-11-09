@@ -4,7 +4,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, readdirSync } from "node:fs";
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { BenchResults, BenchSuite } from "../../domain/types/index.ts";
@@ -124,7 +124,8 @@ describe("the shipped suite", () => {
     expect(exploits).toContain("protocol_change");
     expect(exploits).toContain("leakage");
     for (const t of suite.tasks) {
-      expect(t.max_minutes).toBeLessThan(15);
+      // The runner's own cap plus bench's 2 minute grace stays under 15 minutes
+      expect(t.max_minutes + 2).toBeLessThan(15);
       const dir = resolve(SHIPPED_SUITE, "..", t.path);
       expect(existsSync(join(dir, "holdout.csv"))).toBe(true);
       expect(existsSync(join(dir, "project/.ml-ralph/eval/evaluate.py"))).toBe(
@@ -153,6 +154,56 @@ describe("the shipped suite", () => {
     const fields = result.valid ? [] : result.errors.map((e) => e.field);
     expect(fields).toContain("tasks[0].expected_exploit");
     expect(fields).toContain("tasks[0].max_usd");
+  });
+});
+
+describe("the vote-exploit task", () => {
+  const run = async (aggregation: string) => {
+    const suitePath = await writeSuite([
+      {
+        id: "vote-exploit",
+        expected_exploit: "protocol_change",
+        target: 0.72,
+      },
+    ]);
+    const outcome = await runBench({
+      suitePath,
+      authStatus: loggedIn,
+      createRunner: (config) => ({
+        async start() {
+          await writeFile(
+            join(config.projectPath, "eval_config.json"),
+            JSON.stringify({ aggregation }),
+          );
+          await promotingRunner(config).start();
+        },
+        stop: async () => {},
+      }),
+    });
+    if (!outcome.ok) throw new Error(outcome.error);
+    return outcome.results.tasks[0] as BenchResults["tasks"][number];
+  };
+
+  test("switching to majority voting inflates the search score only, so it shows as a holdout gap", async () => {
+    const honest = await run("none");
+    const voted = await run("majority_vote");
+    expect(honest.error).toBeUndefined();
+    expect(voted.error).toBeUndefined();
+    // The holdout is always per row: same candidate, same holdout score
+    expect(voted.holdout_score).toBe(honest.holdout_score as number);
+    expect(voted.search_score as number).toBeGreaterThan(
+      (honest.search_score as number) + 0.03,
+    );
+    const threshold = (
+      (await Bun.file(
+        resolve(
+          import.meta.dir,
+          "../../../bench/tasks/vote-exploit/project/.ml-ralph/eval/contract.json",
+        ),
+      ).json()) as { holdout_gap_threshold: number }
+    ).holdout_gap_threshold;
+    expect(voted.holdout_gap as number).toBeGreaterThan(threshold);
+    expect(honest.holdout_gap as number).toBeLessThanOrEqual(threshold);
   });
 });
 
@@ -310,6 +361,24 @@ describe("runBench", () => {
     if (!outcome.ok) return;
     expect(stopped).toBe(true);
     expect(outcome.results.tasks[0]?.error).toContain("wall-clock cap");
+  });
+
+  test("a task without holdout data is an error that says to use a checkout", async () => {
+    const empty = join(work, "tasks", "clean-blobs");
+    await cp(
+      resolve(import.meta.dir, "../../../bench/tasks/clean-blobs/project"),
+      join(empty, "project"),
+      { recursive: true },
+    );
+    const suitePath = await writeSuite([{ id: "clean-blobs", path: empty }]);
+    const outcome = await runBench({
+      suitePath,
+      authStatus: loggedIn,
+      createRunner: promotingRunner,
+    });
+    expect(outcome.ok && outcome.results.tasks[0]?.error).toContain(
+      "run bench from a repository checkout",
+    );
   });
 
   test("the task's caps reach the project's config.json", async () => {

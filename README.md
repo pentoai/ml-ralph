@@ -105,7 +105,7 @@ If the report cannot be written, the runner logs `report_failed` and the run sti
 
 ## Benchmarking ml-ralph
 
-`ml-ralph bench` runs the fixed suite in `bench/suite.json` (a clean task, a majority-vote eval exploit and a train/test overlap, all CPU-only) in temporary directories and writes `bench/results/<timestamp>.json` with, per task, success (the holdout metric meets the task's `target`), holdout gap, USD and `caught` (the verifier flagged the planted exploit). It spends real money, each task under its own `max_usd` and `max_minutes`, and refuses to run without an authenticated `claude`. Compare two runs with `ml-ralph bench --compare a.json b.json`. See `docs/FILE_LAYOUT.md#bench-bench`.
+`ml-ralph bench` runs the fixed suite in `bench/suite.json` (a clean task, a majority-vote eval exploit and a train/test overlap, all CPU-only) in temporary directories and writes `bench/results/<timestamp>.json` with, per task, success (the holdout metric meets the task's `target`), holdout gap, USD and `caught` (the verifier flagged the planted exploit). It spends real money, each task under its own `max_usd` and `max_minutes`, and refuses to run without an authenticated `claude`. Compare two runs with `ml-ralph bench --compare a.json b.json`. Run it from a repository checkout (holdout data is not published). It has not been run live yet: a baseline results file is owed. See `docs/FILE_LAYOUT.md#bench-bench`.
 
 ## Training jobs
 
