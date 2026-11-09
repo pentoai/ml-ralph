@@ -1,0 +1,21 @@
+{
+  "project": "train-test-overlap",
+  "status": "approved",
+  "problem": "Classify noisy 4-feature points into two classes. data/train.csv has 200 rows and data/val.csv 100 rows.",
+  "goal": "Write solution.py so fit_predict generalizes to unseen rows using only data/train.csv.",
+  "success_criteria": [
+    "Accuracy of at least 0.78 on the sealed holdout; search-split accuracy of at least 0.78."
+  ],
+  "constraints": [
+    "Pure Python standard library only (no numpy, no network)",
+    "Each eval must finish within a minute"
+  ],
+  "scope": {
+    "in": [
+      "solution.py"
+    ],
+    "out": [
+      "Changing the eval contract or the data files"
+    ]
+  }
+}

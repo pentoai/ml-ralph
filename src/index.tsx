@@ -34,6 +34,15 @@ if (process.argv[2] === "job") {
   process.exit(result.code);
 }
 
+// `bench` runs the self-benchmark suite (or compares two results files)
+if (process.argv[2] === "bench") {
+  const { runBenchCommand } = await import("./infrastructure/bench/index.ts");
+  const result = await runBenchCommand(process.argv.slice(3));
+  process.stdout.write(result.stdout);
+  process.stderr.write(result.stderr);
+  process.exit(result.code);
+}
+
 // Get project path from command line or use current directory
 // Skip flags like --teams, --help when determining project path
 const projectPath =
@@ -50,6 +59,8 @@ Usage:
   ml-ralph log <type> '<json>'  Validate an event and append it to .ml-ralph/log.jsonl
   ml-ralph eval <path>       Score a candidate with the locked evaluate.py; writes .ml-ralph/evals/<eval_id>/metrics.json
   ml-ralph job start <cmd>   Run a training job recorded in .ml-ralph/runs/active.json (stoppable from the TUI)
+  ml-ralph bench             Run the bench suite (planted-exploit tasks) and write bench/results/<timestamp>.json
+  ml-ralph bench --compare <a.json> <b.json>  Compare two bench results per task
   ml-ralph --help            Show this help message
 
 Options:

@@ -12,6 +12,7 @@ Complete type definitions for all ml-ralph entities.
 - [Project Config](#project-config)
 - [Eval Contract](#eval-contract)
 - [Eval Metrics](#eval-metrics)
+- [Bench Suite & Results](#bench-suite--results)
 - [Log Events](#log-events)
 - [Chat](#chat)
 - [Enums](#enums)
@@ -472,6 +473,52 @@ interface UserConfig {
 ```
 
 This file is user-level, outside every project. A missing file, a missing `projects["<project path>"].holdout_path` entry, a relative path, a path that does not exist or a path inside the project directory (also through a symlink) is an error naming the file and the key (never the path). The same path is what the holdout access guard looks for in the agent's tool calls (see [ARCHITECTURE.md](./ARCHITECTURE.md#holdout-access-guard)).
+
+---
+
+## Bench Suite & Results
+
+`ml-ralph bench` runs the tasks of `bench/suite.json` and writes one results file per run. See [FILE_LAYOUT.md](./FILE_LAYOUT.md#bench-bench).
+
+```typescript
+// bench/suite.json: { "tasks": BenchTask[] }
+interface BenchTask {
+  id: string; // Letters, digits, - and _; unique
+  description?: string;
+  path: string; // Task directory relative to suite.json (project/ and holdout.csv)
+  target: number; // Holdout metric needed: >= target when the contract's direction is "max", <= when "min"
+  expected_exploit: "leakage" | "protocol_change" | "rubrics" | null; // Verifier check the planted exploit should trip; null for a clean task
+  max_usd: number; // > 0; becomes the project's config.json max_usd
+  max_minutes: number; // > 0; becomes max_wall_clock_minutes
+  max_iterations?: number; // Integer >= 1 (default 8)
+}
+
+// bench/results/<timestamp>.json
+interface BenchResults {
+  schema_version: 1;
+  started_at: string; // ISO time; the file name is this with ":" replaced by "-"
+  finished_at: string;
+  ml_ralph_version: string;
+  suite: string; // Absolute path of the suite file that ran
+  tasks: BenchTaskResult[]; // In suite order
+}
+
+interface BenchTaskResult {
+  id: string;
+  success: boolean; // The final holdout score meets the task's target
+  holdout_score: number | null; // The final incumbent's score on the sealed holdout; null when no candidate was promoted
+  search_score: number | null;
+  holdout_gap: number | null; // search_score - holdout_score for direction "max" (reverse for "min"); positive means worse on holdout
+  usd: number; // Last budget_status usd_spent: agent and verifier sessions
+  caught: boolean | null; // A verifier_verdict failed the check named by expected_exploit; null when expected_exploit is null
+  expected_exploit: "leakage" | "protocol_change" | "rubrics" | null;
+  end_reason: string | null; // RunCompleteReason the runner ended with, e.g. "completed", "max_iterations", "budget_exhausted"
+  duration_seconds: number;
+  error?: string; // Set when the task could not be run or measured (init failure, runner error, wall-clock overrun, holdout scoring failure); the suite went on
+}
+```
+
+`success` is measured by bench itself: after the run it scores the incumbent (`.ml-ralph/incumbent.json`) on the sealed holdout, at most once per eval ID like any other holdout score. A task with no promoted candidate has `success: false` and null scores.
 
 ---
 
