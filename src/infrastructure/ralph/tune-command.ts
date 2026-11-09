@@ -431,14 +431,18 @@ export async function runTuneCommand(
     return fail(`Invalid ${a.space}:\n${lines.join("\n")}\nNo trial was run.`);
   }
   const { space } = validation;
-  const unknown = [
-    ...findPlaceholders(a.command),
-    ...findPlaceholders(a.candidate),
-  ].filter((name) => !Object.hasOwn(space, name));
-  if (unknown.length > 0) {
-    return fail(
-      `--command uses ${[...new Set(unknown)].map((n) => `{${n}}`).join(", ")} but ${a.space} has no such key (keys: ${Object.keys(space).join(", ")}). No trial was run.`,
+  for (const [flag, template] of [
+    ["--command", a.command],
+    ["--candidate", a.candidate],
+  ] as const) {
+    const unknown = findPlaceholders(template).filter(
+      (name) => !Object.hasOwn(space, name),
     );
+    if (unknown.length > 0) {
+      return fail(
+        `${flag} uses ${unknown.map((n) => `{${n}}`).join(", ")} but ${a.space} has no such key (keys: ${Object.keys(space).join(", ")}). No trial was run.`,
+      );
+    }
   }
 
   const projectDir = await findProjectDir(cwd);
@@ -501,6 +505,7 @@ export async function runTuneCommand(
     | { eval_id: string; params: Params; mean: number; std: number }
     | undefined;
   let crash: string | undefined;
+  let dirtyStop = false;
 
   try {
     for (let trial = 0; trial < a.trials; trial++) {
@@ -533,6 +538,7 @@ export async function runTuneCommand(
         if (now.state === "dirty") {
           failure =
             "tracked files changed while training; commit them or keep training output untracked";
+          dirtyStop = true;
         }
       }
 
@@ -565,6 +571,8 @@ export async function runTuneCommand(
           `trial ${id}: failed ${JSON.stringify(params)} (${m?.status === "failed" ? m.reason : result.stderr.trim()})`,
         );
       }
+      // The tree stays dirty, so every later trial would fail the same way
+      if (dirtyStop) break;
     }
   } catch (error) {
     crash = error instanceof Error ? error.message : String(error);
@@ -597,6 +605,11 @@ export async function runTuneCommand(
       ? `best eval_id: ${best.eval_id}\nbest params: ${JSON.stringify(best.params)}\nbest mean: ${best.mean} (std ${best.std})\nThis is a candidate only: tune never promotes. To hand it in, train with these params, commit, then run ml-ralph eval.`
       : "No trial produced a score.",
   ];
+  if (dirtyStop) {
+    summary.push(
+      "tune stopped early: training left tracked files uncommitted, so no later trial could be scored. Keep training output untracked (or gitignored), or commit it, and run tune again.",
+    );
+  }
   if (crash) summary.push(`tune stopped early: ${crash}`);
   if (stopped) {
     summary.push(
@@ -604,7 +617,7 @@ export async function runTuneCommand(
     );
   }
   const text = `${summary.join("\n")}\n`;
-  const code = stopped || crash || !best ? 1 : 0;
+  const code = stopped || crash || dirtyStop || !best ? 1 : 0;
   return {
     code,
     stdout: code === 0 ? text : "",

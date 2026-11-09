@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeRunId } from "./budget.ts";
 import { lockEvalContract } from "./eval-lock.ts";
+import { EVAL_COMMAND, RALPH_MD, TUNE_COMMAND } from "./templates.ts";
 import {
   runTuneCommand,
   type StartOptimizer,
@@ -38,6 +39,20 @@ const CONTRACT = {
 };
 const SPACE = { lr: { type: "float", low: 0.01, high: 1 } };
 const TRAIN = "echo {lr} > cand.txt";
+
+/** The real-driver test needs Python with Optuna; it is skipped where `import optuna` fails */
+const PYTHON = process.env.ML_RALPH_TEST_PYTHON ?? "python3";
+const hasOptuna = await (async () => {
+  try {
+    const probe = Bun.spawn([PYTHON, "-c", "import optuna"], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    return (await probe.exited) === 0;
+  } catch {
+    return false;
+  }
+})();
 
 let dir: string;
 let saved: Record<string, string | undefined>;
@@ -264,6 +279,35 @@ describe("a sweep", () => {
   });
 });
 
+describe("a train command that dirties tracked files", () => {
+  test("fails that trial, stops the sweep and names the cause", async () => {
+    await setup();
+    const opt = scripted([0.2, 0.4, 0.6]);
+    const r = await runTuneCommand(
+      [
+        "--space",
+        "space.json",
+        "--trials",
+        "3",
+        "--candidate",
+        "cand.txt",
+        "--command",
+        "echo {lr} > cand.txt; echo changed >> train.py",
+      ],
+      { cwd: dir, startOptimizer: opt.startOptimizer },
+    );
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("training left tracked files uncommitted");
+    expect(opt.asked()).toBe(1);
+    const events = await logEvents();
+    expect(events.filter((e) => e.type === "eval")).toHaveLength(1);
+    expect(events.find((e) => e.type === "tune_result")).toMatchObject({
+      trials_run: 1,
+      trials_failed: 1,
+    });
+  });
+});
+
 describe("limits", () => {
   test("stops at max_experiments_per_iteration, names it and keeps the completed trials", async () => {
     await setup();
@@ -403,6 +447,27 @@ describe("refusals before any trial", () => {
     await expectNothingRan(opt);
   });
 
+  test("a {param} used only in --candidate names --candidate", async () => {
+    await setup();
+    const opt = scripted([0.1]);
+    const r = await runTuneCommand(
+      [
+        "--space",
+        "space.json",
+        "--trials",
+        "2",
+        "--command",
+        TRAIN,
+        "--candidate",
+        "m/{depth}.pkl",
+      ],
+      { cwd: dir, startOptimizer: opt.startOptimizer },
+    );
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("--candidate uses {depth}");
+    await expectNothingRan(opt);
+  });
+
   test("missing or bad flags", async () => {
     await setup();
     const opt = scripted([0.1]);
@@ -516,6 +581,36 @@ for line in sys.stdin:
     });
   });
 
+  test.skipIf(!hasOptuna)(
+    "the real Optuna driver proposes and accepts trials",
+    async () => {
+      await setup();
+      const opt = await startOptuna({
+        python: PYTHON,
+        space: {
+          lr: { type: "float", low: 0.001, high: 1, log: true },
+          d: { type: "int", low: 1, high: 5, step: 2 },
+          o: { type: "categorical", choices: ["a", "b"] },
+        },
+        sampler: "tpe",
+        direction: "max",
+        seed: 1,
+      });
+      expect(opt.ok).toBe(true);
+      if (!opt.ok) return;
+      for (let i = 0; i < 3; i++) {
+        const t = await opt.optimizer.ask();
+        expect(t.id).toBe(i);
+        expect(t.params.lr as number).toBeGreaterThanOrEqual(0.001);
+        expect(t.params.lr as number).toBeLessThanOrEqual(1);
+        expect([1, 3, 5]).toContain(t.params.d as number);
+        expect(["a", "b"]).toContain(t.params.o as string);
+        await opt.optimizer.tell(t.id, i === 1 ? null : Math.random());
+      }
+      await opt.optimizer.close();
+    },
+  );
+
   test("startOptuna reports a missing interpreter with the install hint", async () => {
     const r = await startOptuna({
       python: join(dir, "nope"),
@@ -525,5 +620,15 @@ for line in sys.stdin:
     });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toContain("pip install optuna");
+  });
+});
+
+describe("RALPH_MD", () => {
+  test("tells the agent to run tune and eval through the pinned command", () => {
+    expect(TUNE_COMMAND).toMatch(/^bunx @pentoai\/ml-ralph@\S+ tune$/);
+    expect(RALPH_MD).toContain(`${TUNE_COMMAND} --space space.json`);
+    expect(RALPH_MD).toContain("numeric or categorical hyperparameters");
+    expect(RALPH_MD).not.toMatch(/^ml-ralph tune/m);
+    expect(RALPH_MD).toContain(`run \`${EVAL_COMMAND}\`, and cite`);
   });
 });

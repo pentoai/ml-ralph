@@ -12,6 +12,8 @@ export const JOB_COMMAND = `bunx @pentoai/ml-ralph@${pkg.version} job start`;
 
 /** How the agent submits a candidate for scoring by the runner */
 export const EVAL_COMMAND = `bunx @pentoai/ml-ralph@${pkg.version} eval`;
+/** How the agent runs `ml-ralph tune`, pinned like the other commands */
+export const TUNE_COMMAND = `bunx @pentoai/ml-ralph@${pkg.version} tune`;
 
 export const RALPH_MD = `# Ralph - Autonomous ML Agent
 
@@ -285,14 +287,14 @@ ${EVAL_COMMAND} <path>
 For a sweep over numeric or categorical hyperparameters, write a \`space.json\` and delegate the trials to Optuna. You choose the space and the budget; the optimizer owns the trials, because you track optimizer state poorly:
 
 \`\`\`
-ml-ralph tune --space space.json --trials 20 --sampler tpe --command "python train.py --lr {lr} --depth {depth} --out models/{lr}.pkl" --candidate "models/{lr}.pkl"
+${TUNE_COMMAND} --space space.json --trials 20 --sampler tpe --command "python train.py --lr {lr} --depth {depth} --out models/{lr}.pkl" --candidate "models/{lr}.pkl"
 \`\`\`
 
-\`space.json\` maps each parameter name to \`{"type":"float","low":1e-5,"high":1e-1,"log":true}\`, \`{"type":"int","low":1,"high":8}\` or \`{"type":"categorical","choices":["adam","sgd"]}\`. Each \`{param}\` in \`--command\` and \`--candidate\` is filled from the trial; a \`{param}\` with no key in \`space.json\` is refused before any trial. \`--sampler\` is \`tpe\` (default) or \`cmaes\` (continuous spaces); \`--candidate\` is the path \`ml-ralph eval\` would take (default: the current directory). Commit first: tune refuses uncommitted tracked changes, like eval. It needs Python with \`optuna\` installed and says how to install it if not.
+\`space.json\` maps each parameter name to \`{"type":"float","low":1e-5,"high":1e-1,"log":true}\`, \`{"type":"int","low":1,"high":8}\` or \`{"type":"categorical","choices":["adam","sgd"]}\`. Each \`{param}\` in \`--command\` and \`--candidate\` is filled from the trial; a \`{param}\` with no key in \`space.json\` is refused before any trial. \`--sampler\` is \`tpe\` (default) or \`cmaes\` (continuous spaces); \`--candidate\` is the path \`${EVAL_COMMAND}\` would take (default: the current directory). Commit first: tune refuses uncommitted tracked changes, like eval. It needs Python with \`optuna\` installed and says how to install it if not.
 
-- Every trial is scored by the runner like \`ml-ralph eval\` and logged as an \`eval\` event with its \`eval_id\` and \`params\`; a train command that exits non-zero is a failed trial and the sweep continues. At the end tune prints the best \`eval_id\` and params and logs a \`tune_result\`.
+- Every trial is scored by the runner like \`${EVAL_COMMAND}\` and logged as an \`eval\` event with its \`eval_id\` and \`params\`; a train command that exits non-zero is a failed trial and the sweep continues. At the end tune prints the best \`eval_id\` and params and logs a \`tune_result\`.
 - Trials count against the experiments-per-iteration cap and the USD and wall-clock budget. When one runs out, tune stops and names it; the completed trials stay logged. Size \`--trials\` to the budget you were given.
-- Tune never promotes. Its best trial is only a candidate: to hand it in, train with those params, commit, run \`ml-ralph eval\`, and cite that \`eval_id\` as usual. Log the sweep as one \`experiment\` event citing the best \`eval_id\`.
+- Tune never promotes. Its best trial is only a candidate: to hand it in, train with those params, commit, run \`${EVAL_COMMAND}\`, and cite that \`eval_id\` as usual. Log the sweep as one \`experiment\` event citing the best \`eval_id\`.
 
 ### EXECUTION Mode (PRD approved)
 When \`prd.json\` has \`status: "approved"\`:
