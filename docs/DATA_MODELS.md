@@ -419,7 +419,7 @@ interface EvalContract {
 
 **Files**: `.ml-ralph/eval/contract.json`, `.ml-ralph/eval/evaluate.py`, `.ml-ralph/eval/lock.json`
 
-All fields are required. The holdout data location is deliberately not part of the contract. When the PRD is approved the runner validates the contract and writes `lock.json` with the SHA-256 of `evaluate.py` and `contract.json` plus `locked_at`; see [FILE_LAYOUT.md](./FILE_LAYOUT.md#ml-ralpheval).
+All fields are required. The holdout data location is deliberately not part of the contract. When the PRD is approved the runner validates the contract and writes `lock.json` with the SHA-256 of `evaluate.py` and `contract.json` plus `locked_at`; the same hashes go to the user-level store `~/.config/ml-ralph/locks/<id>.json` (`project_path`, `locked_at`, `files`), which the gate trusts over the project copy, and approval fails naming that path if it cannot be written. `lock.json` written since carries `"user_store": true`. See [FILE_LAYOUT.md](./FILE_LAYOUT.md#ml-ralpheval).
 
 ---
 
@@ -496,7 +496,7 @@ rubrics: expected non-empty array of non-empty strings
 kill_criterion: missing required field, expected non-empty string
 ```
 
-An unknown type, JSON that does not parse or is not an object, a `type` in the JSON that differs from the argument, and runner-only types (`promotion`, `verifier_verdict`, `contract_relocked`, `eval`, `candidate_rejected`, `overfitting`, `holdout_access`, `run_complete`, `completion_rejected`, `completion_blocked`) are rejected the same way. Fields not in the schema are kept.
+An unknown type, JSON that does not parse or is not an object, a `type` in the JSON that differs from the argument, and runner-only types (`promotion`, `verifier_verdict`, `contract_relocked`, `lock_migrated`, `eval`, `candidate_rejected`, `overfitting`, `holdout_access`, `run_complete`, `completion_rejected`, `completion_blocked`) are rejected the same way. Fields not in the schema are kept.
 
 The runner's own appends (`appendValidatedEvent` in `log-command.ts`: `phase`, `eval`, `promotion`, `verifier_verdict`, `overfitting`, `contract_relocked`, completion and holdout events) pass the same schemas. An event that fails is not appended; it is shown as an error line in the TUI and written to stderr (the helper itself writes to stderr only when the caller gives no callback). Lines already in a log that would fail today are still read: the parser and panels do not validate.
 
@@ -548,6 +548,7 @@ A hypothesis is rejected unless `id`, `claim`, `expected_delta`, `rubrics` (at l
 | `holdout_access` (runner-only) | `tool` (name of the tool whose input contained the holdout path), `iteration` |
 | `promotion` (runner-only) | `verdict` (`promoted`, `rejected`), `reason`; optional `candidate_eval_id`, `incumbent_eval_id`, `verifier_id`, `candidate_mean`, `reference_mean` |
 | `verifier_verdict` (runner-only) | `id`, `verdict`, `checks`, `reason`, `output_path`; optional `model` |
+| `lock_migrated` (runner-only) | `files` (SHA-256 of `evaluate.py` and `contract.json` copied into the user-level store from a pre-store lock) |
 | `contract_relocked` (runner-only) | `changes` (each with `file` and `kind`: `edited` or `deleted`), `files` (SHA-256 of `evaluate.py` and `contract.json`) |
 
 Strings must be non-empty. New event types are added to `LOG_EVENT_SCHEMAS` in `src/domain/validation/log-event.ts`.

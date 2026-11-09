@@ -132,6 +132,7 @@ See RALPH.md for when and how to use these events.
 | `promotion` (runner-only) | verdict, reason (+ candidate_eval_id, incumbent_eval_id, verifier_id, candidate_mean, reference_mean) |
 | `verifier_verdict` (runner-only) | id, verdict, checks, reason, output_path (+ model) |
 | `contract_relocked` (runner-only) | changes, files |
+| `lock_migrated` (runner-only) | files |
 
 ---
 

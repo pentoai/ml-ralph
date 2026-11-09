@@ -171,7 +171,7 @@ describe("checkEvalGate with a draft PRD", () => {
     await writePrd("draft");
     await rm(evalPath("lock.json"));
     const gate = await checkEvalGate(dir);
-    expect(gate.ok === false && gate.error).toContain("removed");
+    expect(gate.ok === false && gate.error).toContain("lock.json");
   });
 });
 

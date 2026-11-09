@@ -207,7 +207,7 @@ describe("checkEvalGate", () => {
 
     const gate = await checkEvalGate(dir);
     expect(gate.ok).toBe(false);
-    expect(gate.ok === false && gate.error).toContain("removed");
+    expect(gate.ok === false && gate.error).toContain("ml-ralph resume");
     expect(await Bun.file(evalPath("lock.json")).exists()).toBe(false);
   });
 
