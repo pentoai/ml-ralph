@@ -20,9 +20,13 @@ import { isAbsolute, join, relative } from "node:path";
 import { runEvalCommand } from "./eval-command.ts";
 import { runJobCommand } from "./jobs.ts";
 import { runLogCommand } from "./log-command.ts";
+import type { CommandWrapper } from "./sandbox.ts";
 
 export const FORWARD_DIR = ".ml-ralph/sandbox";
 const POLL_MS = 100;
+/** The shim treats a heartbeat older than 30 s as a dead runner */
+export const HEARTBEAT_FILE = "alive";
+const HEARTBEAT_MS = 1000;
 const REQUEST_ID = /^[a-f0-9]{8,64}$/;
 
 export interface ForwardedResult {
@@ -42,11 +46,17 @@ const refuse = (stderr: string, code = 2): ForwardedResult => ({
   stderr: `${stderr}\n`,
 });
 
-/** Run one request on the host; `cwd` must be inside the project */
+/**
+ * Run one request; `cwd` must be inside the project. `log` writes the event on
+ * the host. `eval` and `job` run the agent's code (a candidate, a shell command),
+ * so `wrap` is required and puts them in a sibling container with the agent's
+ * mounts: the host keeps only the records and the stop control.
+ */
 export async function executeRequest(
   request: unknown,
   projectPath: string,
   env: Record<string, string | undefined>,
+  wrap: CommandWrapper,
 ): Promise<ForwardedResult> {
   const req = request as {
     argv?: unknown;
@@ -86,9 +96,9 @@ export async function executeRequest(
       return runLogCommand(args, { cwd, readStdin: async () => stdin });
     }
     case "eval":
-      return runEvalCommand(args, { cwd, env });
+      return runEvalCommand(args, { cwd, env, wrap });
     case "job":
-      return runJobCommand(args, { cwd, capture: true });
+      return runJobCommand(args, { cwd, capture: true, wrap });
     default:
       return refuse(
         `sandbox: \`ml-ralph ${command}\` is not available inside the sandbox (only log, eval, job)`,
@@ -103,6 +113,7 @@ export async function executeRequest(
 export async function startForwarder(options: {
   projectPath: string;
   env: Record<string, string | undefined>;
+  wrap: CommandWrapper;
 }): Promise<Forwarder> {
   const base = join(options.projectPath, FORWARD_DIR);
   const requests = join(base, "requests");
@@ -122,6 +133,7 @@ export async function startForwarder(options: {
         JSON.parse(text),
         options.projectPath,
         options.env,
+        options.wrap,
       );
     } catch (error) {
       result = refuse(
@@ -149,6 +161,16 @@ export async function startForwarder(options: {
       polling = false;
     }
   };
+  // The shim gives up when this stops moving, so a dead runner does not hang the agent
+  const beat = () =>
+    writeFile(join(base, HEARTBEAT_FILE), String(Date.now())).catch(() => {});
+  await beat();
   const timer = setInterval(poll, POLL_MS);
-  return { stop: () => clearInterval(timer) };
+  const heart = setInterval(beat, HEARTBEAT_MS);
+  return {
+    stop: () => {
+      clearInterval(timer);
+      clearInterval(heart);
+    },
+  };
 }

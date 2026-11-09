@@ -147,20 +147,31 @@ export async function checkSandbox(
   return { ok: true };
 }
 
+/** What runs in a container: the agent, a job it started or an eval of its candidate */
+export type ContainerKind = "agent" | "job" | "eval";
+
 export interface ContainerSpec {
   /** The project directory, mounted at the same absolute path inside */
   projectPath: string;
   name: string;
-  /** Variables the container receives; the API key is passed by name so it never appears in argv */
+  /** Variables the container receives; nothing else of the host environment reaches it */
   env: Record<string, string>;
   uid?: number;
   gid?: number;
   image?: string;
+  kind?: ContainerKind;
+  /** Working directory inside (default: the project directory) */
+  cwd?: string;
+  /** Pass ANTHROPIC_API_KEY by name, so it is not in the process list (agent only) */
+  apiKey?: boolean;
+  /** Extra read-only mounts (the eval's private copy of evaluate.py) */
+  readOnlyMounts?: string[];
 }
 
 /**
- * `docker run` arguments for one iteration. The only mount is the project
- * directory; HOME is a tmpfs, so ~/.config/ml-ralph and the host login are absent.
+ * `docker run` arguments for one container. The only writable mount is the
+ * project directory; HOME is a tmpfs, so ~/.config/ml-ralph and the host login
+ * are absent. Jobs and evals get the same mounts and hardening as the agent.
  */
 export function containerArgs(
   spec: ContainerSpec,
@@ -181,7 +192,7 @@ export function containerArgs(
     "--name",
     spec.name,
     "--label",
-    `${CONTAINER_LABEL}=1`,
+    `${CONTAINER_LABEL}=${spec.kind ?? "agent"}`,
     "--label",
     `${CONTAINER_LABEL}.project=${spec.projectPath}`,
     ...owner,
@@ -193,16 +204,66 @@ export function containerArgs(
     `/home/agent:rw,exec${tmpfsOwner}`,
     "-v",
     `${spec.projectPath}:${spec.projectPath}`,
+    ...(spec.readOnlyMounts ?? []).flatMap((m) => ["-v", `${m}:${m}:ro`]),
     "-w",
-    spec.projectPath,
+    spec.cwd ?? spec.projectPath,
     "-e",
     "HOME=/home/agent",
-    "-e",
-    API_KEY_ENV,
+    ...(spec.apiKey === false ? [] : ["-e", API_KEY_ENV]),
     ...Object.entries(spec.env).flatMap(([k, v]) => ["-e", `${k}=${v}`]),
     spec.image ?? SANDBOX_IMAGE,
     ...command,
   ];
+}
+
+export interface WrappedCommand {
+  argv: string[];
+  /** The container's name, for removal when the process is killed from outside */
+  container: string;
+  /** Force-remove the container; call when the process was killed or timed out */
+  remove: () => void;
+}
+
+/** Wraps a command so it runs in a sibling container instead of on the host */
+export type CommandWrapper = (
+  argv: string[],
+  options: {
+    kind: "job" | "eval";
+    cwd?: string;
+    env?: Record<string, string>;
+    readOnlyMounts?: string[];
+  },
+) => WrappedCommand;
+
+/** A wrapper for `projectPath` (already resolved) that never forwards the host environment */
+export function commandWrapper(
+  docker: string,
+  projectPath: string,
+): CommandWrapper {
+  return (argv, options) => {
+    const container = containerName();
+    return {
+      container,
+      remove: () => removeContainer(docker, container),
+      argv: [
+        docker,
+        ...containerArgs(
+          {
+            projectPath,
+            name: container,
+            kind: options.kind,
+            cwd: options.cwd,
+            env: options.env ?? {},
+            apiKey: false,
+            readOnlyMounts: options.readOnlyMounts,
+            uid: process.getuid?.(),
+            gid: process.getgid?.(),
+          },
+          argv,
+        ),
+      ],
+    };
+  };
 }
 
 export const containerName = () => `ml-ralph-${randomBytes(5).toString("hex")}`;
@@ -250,26 +311,30 @@ export function removeContainer(docker: string, name: string): void {
   }
 }
 
-/** Remove containers a crashed earlier run of this project left behind */
+/** Remove agent and eval containers a crashed earlier run of this project left behind (job containers are tracked by their job record) */
 export function removeStaleContainers(
   docker: string,
   projectPath: string,
 ): void {
-  try {
-    const list = Bun.spawnSync(
-      [
-        docker,
-        "ps",
-        "-aq",
-        "--filter",
-        `label=${CONTAINER_LABEL}.project=${projectPath}`,
-      ],
-      { stdout: "pipe", stderr: "ignore" },
-    );
-    for (const id of list.stdout.toString().split("\n").filter(Boolean)) {
-      removeContainer(docker, id);
+  for (const kind of ["agent", "eval"] as const) {
+    try {
+      const list = Bun.spawnSync(
+        [
+          docker,
+          "ps",
+          "-aq",
+          "--filter",
+          `label=${CONTAINER_LABEL}=${kind}`,
+          "--filter",
+          `label=${CONTAINER_LABEL}.project=${projectPath}`,
+        ],
+        { stdout: "pipe", stderr: "ignore" },
+      );
+      for (const id of list.stdout.toString().split("\n").filter(Boolean)) {
+        removeContainer(docker, id);
+      }
+    } catch {
+      // docker is gone
     }
-  } catch {
-    // docker is gone
   }
 }

@@ -316,6 +316,7 @@ interface TrainingJob {
   pid: number;
   command: string; // What was executed
   logPath: string; // Path to log file
+  container?: string; // Sandbox mode: the container the job runs in (removed when the job is stopped)
 
   // Tracking
   wandbRunId?: string;

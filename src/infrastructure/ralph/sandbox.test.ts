@@ -9,11 +9,14 @@ import { chmod, mkdir, mkdtemp, readdir, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { lockEvalContract } from "./eval-lock.ts";
+import { readActiveJobs, stopJob } from "./jobs.ts";
 import { RalphRunner, type RunCompleteReason } from "./runner.ts";
 import {
   API_KEY_ENV,
   buildCommand,
+  type CommandWrapper,
   checkSandbox,
+  commandWrapper,
   containerArgs,
   readSandboxMode,
   SANDBOX_IMAGE,
@@ -77,6 +80,20 @@ describe("readSandboxMode", () => {
   });
 });
 
+/**
+ * What `docker run` does, minus the filesystem: only the -e variables exist in
+ * the "container", and it starts in the -w directory
+ */
+const EMULATE_RUN = `shift; envs=""; w="."
+    while [ $# -gt 0 ]; do case "$1" in
+      -v|--name|--label|--user|--cap-drop|--security-opt|--tmpfs) shift 2;;
+      --rm|--init) shift;;
+      -w) w="$2"; shift 2;;
+      -e) case "$2" in *=*) envs="$envs $2";; esac; shift 2;;
+      *) break;; esac; done
+    shift
+    cd "$w" && exec env -i PATH="$PATH" $envs "$@"`;
+
 /** A `docker` that records its calls; `info` and `image inspect` succeed unless the test says otherwise */
 async function stubDocker(
   dir: string,
@@ -94,7 +111,7 @@ case "$1" in
   build) touch "$d/built"; exit 0 ;;
   ps) exit 0 ;;
   rm) exit 0 ;;
-  run) ${opts.run ?? "exit 0"} ;;
+  run) ${opts.run === "emulate" ? EMULATE_RUN : (opts.run ?? "exit 0")} ;;
 esac
 `,
   );
@@ -223,8 +240,16 @@ describe("checkSandbox", () => {
 
 describe("request forwarding", () => {
   let dir: string;
+  let stub: string;
+  let wrap: CommandWrapper;
+  const forward = (
+    request: unknown,
+    env: Record<string, string | undefined> = {},
+  ) => executeRequest(request, dir, env, wrap);
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), "ml-ralph-sbx-fwd-"));
+    stub = await mkdtemp(join(tmpdir(), "ml-ralph-sbx-fwd-stub-"));
+    wrap = commandWrapper(await stubDocker(stub, { run: "emulate" }), dir);
     await mkdir(join(dir, ".ml-ralph/eval"), { recursive: true });
     await Bun.write(
       join(dir, ".ml-ralph/prd.json"),
@@ -251,15 +276,26 @@ describe("request forwarding", () => {
     await Bun.write(join(dir, "cand.txt"), "x");
     expect((await lockEvalContract(dir)).ok).toBe(true);
   });
-  afterEach(() => rm(dir, { recursive: true, force: true }));
+  afterEach(() =>
+    Promise.all(
+      [dir, stub].map((d) => rm(d, { recursive: true, force: true })),
+    ),
+  );
 
-  test("eval runs on the host and returns its eval_id", async () => {
-    const result = await executeRequest(
-      { argv: ["eval", "cand.txt"], cwd: dir },
-      dir,
-      {},
-    );
+  test("eval runs in a container with only the project mounted and returns its eval_id", async () => {
+    const result = await forward({ argv: ["eval", "cand.txt"], cwd: dir }, {});
     expect(result.code).toBe(0);
+    const evalRuns = (await calls(stub)).filter((c) => c.startsWith("run "));
+    expect(evalRuns).toHaveLength(2); // one container per seed
+    for (const line of evalRuns) {
+      expect(line).toContain("ml-ralph.sandbox=eval");
+      expect(line).not.toContain("ANTHROPIC_API_KEY");
+      expect(line).not.toContain(".config");
+      const mounts = line.match(/-v (\S+)/g) ?? [];
+      expect(mounts).toHaveLength(2); // the project, and the private evaluate.py copy
+      expect(mounts[0]).toBe(`-v ${dir}:${dir}`);
+      expect(mounts[1]).toMatch(/ml-ralph-eval-.*:ro$/);
+    }
     const evalId = /^eval_id: (\S+)/m.exec(result.stdout)?.[1];
     expect(evalId).toMatch(/^eval-/);
     expect(
@@ -272,19 +308,62 @@ describe("request forwarding", () => {
   test("the experiment cap pinned by the runner applies to forwarded evals", async () => {
     const env = { ML_RALPH_ITERATION: "1", ML_RALPH_MAX_EXPERIMENTS: "1" };
     const request = { argv: ["eval", "cand.txt"], cwd: dir };
-    expect((await executeRequest(request, dir, env)).code).toBe(0);
-    const second = await executeRequest(request, dir, env);
+    expect((await forward(request, env)).code).toBe(0);
+    const second = await forward(request, env);
     expect(second.code).toBe(1);
     expect(second.stderr).toContain("experiment cap reached");
   });
 
-  test("job start runs on the host, captured, and is recorded as finished", async () => {
-    const result = await executeRequest(
-      { argv: ["job", "start", "echo hello-job"], cwd: dir },
-      dir,
-      {},
-    );
-    expect(result).toEqual({ code: 0, stdout: "hello-job\n", stderr: "" });
+  test("job start runs in a container: nothing of the host environment or filesystem views reaches it", async () => {
+    process.env.ML_RALPH_HOLDOUT_PATH = "/secret/holdout";
+    process.env.SECRET_FOR_TEST = "leak";
+    try {
+      const result = await forward({
+        argv: [
+          "job",
+          "start",
+          "echo [$SECRET_FOR_TEST][$ML_RALPH_HOLDOUT_PATH][$HOME]",
+        ],
+        cwd: dir,
+      });
+      expect(result).toEqual({
+        code: 0,
+        stdout: "[][][/home/agent]\n",
+        stderr: "",
+      });
+    } finally {
+      delete process.env.ML_RALPH_HOLDOUT_PATH;
+      delete process.env.SECRET_FOR_TEST;
+    }
+    const line = (await calls(stub)).find((c) =>
+      c.startsWith("run "),
+    ) as string;
+    expect(line).toContain("ml-ralph.sandbox=job");
+    expect(line).toContain("--cap-drop ALL");
+    expect(line).toContain("--user ");
+    expect(line.match(/-v (\S+)/g)).toEqual([`-v ${dir}:${dir}`]);
+    expect(line).not.toContain("ANTHROPIC_API_KEY");
+    expect(line).toContain(` ${SANDBOX_IMAGE} sh -c echo`);
+  });
+
+  test("the job record names its container, and stopping the job removes it", async () => {
+    const pending = forward({ argv: ["job", "start", "sleep 30"], cwd: dir });
+    let jobs: Awaited<ReturnType<typeof readActiveJobs>> = [];
+    for (let i = 0; i < 100 && jobs.length === 0; i++) {
+      await Bun.sleep(50);
+      jobs = await readActiveJobs(dir);
+    }
+    const job = jobs[0] as (typeof jobs)[number];
+    expect(job.container).toMatch(/^ml-ralph-/);
+    const removed: string[] = [];
+    await stopJob(dir, job, {
+      graceMs: 20,
+      removeContainer: (name) => removed.push(name),
+    });
+    await pending;
+    await Bun.sleep(80);
+    expect(removed).toContain(job.container as string);
+    expect(await readActiveJobs(dir)).toEqual([]);
   });
 
   test("log appends a validated event, reading stdin from the request", async () => {
@@ -293,9 +372,8 @@ describe("request forwarding", () => {
       phase: "EXECUTE",
       summary: "go",
     });
-    const result = await executeRequest(
+    const result = await forward(
       { argv: ["log", "phase", "-"], cwd: dir, stdin: event },
-      dir,
       {},
     );
     expect(result.code).toBe(0);
@@ -305,9 +383,8 @@ describe("request forwarding", () => {
   });
 
   test("runner-only log events are still refused", async () => {
-    const result = await executeRequest(
+    const result = await forward(
       { argv: ["log", "verifier_verdict", "{}"], cwd: dir },
-      dir,
       {},
     );
     expect(result.code).not.toBe(0);
@@ -316,13 +393,10 @@ describe("request forwarding", () => {
   test("anything else, a malformed request or a cwd outside the project is refused", async () => {
     const other = await mkdtemp(join(tmpdir(), "ml-ralph-sbx-out-"));
     try {
-      expect(
-        (await executeRequest({ argv: ["init"], cwd: dir }, dir, {})).code,
-      ).toBe(2);
-      expect((await executeRequest({ argv: "eval" }, dir, {})).code).toBe(2);
-      const outside = await executeRequest(
+      expect((await forward({ argv: ["init"], cwd: dir }, {})).code).toBe(2);
+      expect((await forward({ argv: "eval" }, {})).code).toBe(2);
+      const outside = await forward(
         { argv: ["eval", "cand.txt"], cwd: other },
-        dir,
         {},
       );
       expect(outside.code).toBe(1);
@@ -333,7 +407,7 @@ describe("request forwarding", () => {
   });
 
   test("the container's shim and its bunx alias reach the host runner", async () => {
-    const forwarder = await startForwarder({ projectPath: dir, env: {} });
+    const forwarder = await startForwarder({ projectPath: dir, env: {}, wrap });
     try {
       const sandboxDir = new URL("./sandbox/", import.meta.url).pathname;
       const env = {
@@ -366,8 +440,30 @@ describe("request forwarding", () => {
     }
   });
 
+  test("the shim gives up with a clear error when the runner never answers", async () => {
+    const sandboxDir = new URL("./sandbox/", import.meta.url).pathname;
+    await mkdir(join(dir, ".ml-ralph/sandbox"), { recursive: true });
+    const run = Bun.spawn(
+      ["python3", join(sandboxDir, "ml-ralph-forward.py"), "eval", "cand.txt"],
+      {
+        cwd: dir,
+        env: {
+          ...process.env,
+          ML_RALPH_SANDBOX_DIR: join(dir, ".ml-ralph/sandbox"),
+          ML_RALPH_FORWARD_TIMEOUT_SECONDS: "1",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    expect(await run.exited).toBe(124);
+    expect(await new Response(run.stderr).text()).toContain(
+      "no answer from the host runner after 1s",
+    );
+  });
+
   test("a request file is answered by a response file, the way the shim uses it", async () => {
-    const forwarder = await startForwarder({ projectPath: dir, env: {} });
+    const forwarder = await startForwarder({ projectPath: dir, env: {}, wrap });
     try {
       const id = "0123456789abcdef0123456789abcdef";
       const base = join(dir, ".ml-ralph/sandbox");
@@ -546,6 +642,27 @@ describe("the container", () => {
               env: { ...process.env, [API_KEY_ENV]: "unused" },
             },
           );
+        // the commands the runner forwards get the same mounts as the agent
+        const wrap = commandWrapper("docker", project);
+        const forwarded = (command: string, kind: "job" | "eval" = "job") =>
+          Bun.spawnSync(wrap(["sh", "-c", command], { kind }).argv, {
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+        await Bun.write(join(project, "visible.txt"), "ok");
+        expect(forwarded(`cat ${join(project, "visible.txt")}`).exitCode).toBe(
+          0,
+        );
+        for (const kind of ["job", "eval"] as const) {
+          expect(
+            forwarded(`cat ${join(sealed, "holdout.csv")}`, kind).exitCode,
+          ).not.toBe(0);
+          expect(
+            forwarded(`cat ${join(configHome, "ml-ralph/config.json")}`, kind)
+              .exitCode,
+          ).not.toBe(0);
+          expect(forwarded("ls ~/.config/ml-ralph", kind).exitCode).not.toBe(0);
+        }
         expect(inside(`cat ${join(sealed, "holdout.csv")}`).exitCode).not.toBe(
           0,
         );

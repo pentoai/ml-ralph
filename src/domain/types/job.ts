@@ -19,6 +19,7 @@ export interface TrainingJob {
   pid: number;
   command: string; // What was executed
   logPath: string; // Path to log file
+  container?: string; // Sandbox mode: the container the job runs in
 
   // Tracking
   wandbRunId?: string;

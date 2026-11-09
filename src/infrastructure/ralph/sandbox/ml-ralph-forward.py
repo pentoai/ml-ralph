@@ -11,6 +11,9 @@ import time
 import uuid
 
 COMMANDS = ("log", "eval", "job")
+# The runner touches the heartbeat file every second; an eval or job may run for hours
+HEARTBEAT_STALE_SECONDS = 30
+DEFAULT_TIMEOUT_SECONDS = 24 * 3600
 
 
 def main(argv):
@@ -31,7 +34,21 @@ def main(argv):
     os.rename(tmp, os.path.join(base, "requests", req_id + ".json"))
 
     response = os.path.join(base, "responses", req_id + ".json")
+    heartbeat = os.path.join(base, "alive")
+    limit = float(os.environ.get("ML_RALPH_FORWARD_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS))
+    started = time.time()
     while not os.path.exists(response):
+        now = time.time()
+        if now - started > limit:
+            sys.stderr.write("ml-ralph: no answer from the host runner after %ds (ML_RALPH_FORWARD_TIMEOUT_SECONDS); giving up\n" % limit)
+            return 124
+        try:
+            last_beat = os.path.getmtime(heartbeat)
+        except OSError:
+            last_beat = started
+        if now - max(last_beat, started) > HEARTBEAT_STALE_SECONDS:
+            sys.stderr.write("ml-ralph: the host runner stopped answering (no heartbeat for %ds); giving up\n" % HEARTBEAT_STALE_SECONDS)
+            return 124
         time.sleep(0.1)
     with open(response) as f:
         result = json.load(f)

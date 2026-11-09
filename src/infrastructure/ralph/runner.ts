@@ -60,6 +60,7 @@ import {
 import { type ReportEndReason, writeReport } from "./report.ts";
 import {
   checkSandbox,
+  commandWrapper,
   containerArgs,
   containerName,
   gitIdentityEnv,
@@ -233,7 +234,9 @@ export class RalphRunner {
     }
 
     await ensureConclusions(this.config.projectPath);
-    await pruneStaleJobs(this.config.projectPath).catch(() => []);
+    await pruneStaleJobs(this.config.projectPath, undefined, (name) =>
+      removeContainer(this.config.dockerBin ?? "docker", name),
+    ).catch(() => []);
 
     const caps = await readBudgetCaps(this.config.projectPath);
     if (!caps.ok) {
@@ -790,7 +793,10 @@ export class RalphRunner {
    * log `job_stopped` and tell the agent's next prompt.
    */
   async stopJob(job: TrainingJob): Promise<StopJobResult> {
-    const result = await stopJob(this.config.projectPath, job);
+    const result = await stopJob(this.config.projectPath, job, {
+      removeContainer: (name) =>
+        removeContainer(this.config.dockerBin ?? "docker", name),
+    });
     await this.appendLogEvent({
       type: "job_stopped",
       job_id: job.id,
@@ -1016,7 +1022,8 @@ export class RalphRunner {
       container = containerName();
       forwarder = await startForwarder({
         projectPath,
-        env: { ...agentEnv, ...iterationEnv },
+        env: iterationEnv,
+        wrap: commandWrapper(docker, projectPath),
       });
       spawnCmd = [
         docker,
