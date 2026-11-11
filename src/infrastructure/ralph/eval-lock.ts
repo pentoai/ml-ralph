@@ -3,11 +3,20 @@
  */
 
 import { createHash } from "node:crypto";
+import { rm } from "node:fs/promises";
 import { validateEvalContract } from "../../domain/validation/index.ts";
+import {
+  clearStoredLock,
+  lockStoreFile,
+  readStoredLock,
+  writeStoredLock,
+} from "./lock-store.ts";
 import { readPrdFile } from "./log-parser.ts";
 
 export interface EvalLock {
   locked_at: string;
+  /** Set when the runner also wrote the hashes to the user-level store (absent in locks made before it existed) */
+  user_store?: true;
   files: {
     "evaluate.py": string;
     "contract.json": string;
@@ -90,18 +99,22 @@ async function checkEvalFiles(
   return { ok: true, contractBytes, evaluateBytes };
 }
 
-/** Hash the validated eval files and write lock.json plus the creation marker */
+/** Hash the validated eval files; write the user-level store entry, then lock.json and the creation marker */
 async function writeLock(projectPath: string): Promise<EvalLockResult> {
   const files = await checkEvalFiles(projectPath);
   if (!files.ok) return { ok: false, error: files.errors.join("; ") };
 
   const lock: EvalLock = {
     locked_at: new Date().toISOString(),
+    user_store: true,
     files: {
       "evaluate.py": sha256(files.evaluateBytes),
       "contract.json": sha256(files.contractBytes),
     },
   };
+  // The user-level copy is the one the gate trusts: if it cannot be written, nothing is locked
+  const stored = await writeStoredLock(projectPath, lock);
+  if (!stored.ok) return { ok: false, error: stored.error };
   await Bun.write(
     `${projectPath}/${LOCK_PATH}`,
     `${JSON.stringify(lock, null, 2)}\n`,
@@ -168,6 +181,20 @@ export async function readEvalLock(
 }
 
 /**
+ * The hashes to check the eval files against: the user-level store entry when
+ * there is one, else the project's lock.json (a project locked before the store).
+ */
+export async function readLockHashes(
+  projectPath: string,
+): Promise<EvalLock["files"] | null> {
+  return (
+    (await readStoredLock(projectPath))?.files ??
+    (await readEvalLock(projectPath))?.files ??
+    null
+  );
+}
+
+/**
  * Re-hash the locked files and list those that no longer match `expected`.
  * A missing file is "deleted"; any other difference is "edited".
  */
@@ -212,35 +239,97 @@ async function checkExistingLock(projectPath: string): Promise<string | null> {
   return files.ok ? null : files.errors.join("; ");
 }
 
+export type EvalGateResult =
+  | {
+      ok: true;
+      /** Set when this call copied a project lock made before the store into it */
+      migrated?: EvalLock["files"];
+    }
+  | { ok: false; error: string };
+
+const sameHashes = (a: EvalLock["files"], b: EvalLock["files"]) =>
+  a["evaluate.py"] === b["evaluate.py"] &&
+  a["contract.json"] === b["contract.json"];
+
 /**
- * Decide whether an iteration may start. A draft or missing PRD counts as
- * SETUP and may start, unless a lock or its marker exists: resetting the PRD to
- * draft must not switch the checks off. Past SETUP (approved, complete, blocked, anything
- * else) an existing lock.json must be well-formed and still cover valid files.
- * A missing lock is created once, for an approved PRD; if one was created
- * before and has since disappeared, the gate refuses rather than re-locking
- * whatever the eval files hold now. The returned error is the reason to refuse.
+ * Decide whether an iteration may start. The user-level store decides whether
+ * the project is locked: once it has an entry, a missing or different
+ * lock.json or marker refuses (`ml-ralph resume` restores them) and a draft
+ * PRD does not matter. Without an entry:
+ * - a project lock made before the store is copied into it once (`migrated`);
+ * - a lock written with the store but no entry means the project directory moved: refuse;
+ * - a draft or missing PRD with no lock or marker is SETUP and may start;
+ * - an approved PRD is locked once; a marker without lock.json refuses, as does any other status.
+ * The returned error is the reason to refuse.
  */
 export async function checkEvalGate(
   projectPath: string,
-): Promise<{ ok: true } | { ok: false; error: string }> {
-  const prd = await readPrdFile(projectPath);
+): Promise<EvalGateResult> {
+  const stored = await readStoredLock(projectPath);
   const lockExists = await Bun.file(`${projectPath}/${LOCK_PATH}`).exists();
   const markerExists = await Bun.file(
     `${projectPath}/${LOCK_MARKER_PATH}`,
   ).exists();
 
-  if ((!prd || prd.status === "draft") && !lockExists && !markerExists) {
-    return { ok: true };
-  }
-
-  if (lockExists) {
+  if (stored) {
+    const missing = [
+      ...(lockExists ? [] : [LOCK_PATH]),
+      ...(markerExists ? [] : [LOCK_MARKER_PATH]),
+    ];
+    if (missing.length > 0) {
+      return {
+        ok: false,
+        error: `Refusing to run: ${missing.join(" and ")} ${missing.length > 1 ? "are" : "is"} missing from the project, but the eval is locked in the user-level store. Run \`ml-ralph resume\` to restore ${missing.length > 1 ? "them" : "it"} from the store.`,
+      };
+    }
+    const projectLock = await readEvalLock(projectPath);
+    if (!projectLock || !sameHashes(projectLock.files, stored.files)) {
+      return {
+        ok: false,
+        error: `Refusing to run: ${LOCK_PATH} does not match the lock in the user-level store. Run \`ml-ralph resume\` to restore it from the store.`,
+      };
+    }
     const problem = await checkExistingLock(projectPath);
     if (problem === null) return { ok: true };
     return {
       ok: false,
       error: `Refusing to run: invalid eval lock: ${problem}`,
     };
+  }
+
+  const prd = await readPrdFile(projectPath);
+
+  if (lockExists) {
+    const problem = await checkExistingLock(projectPath);
+    if (problem !== null) {
+      return {
+        ok: false,
+        error: `Refusing to run: invalid eval lock: ${problem}`,
+      };
+    }
+    const lock = (await readEvalLock(projectPath)) as EvalLock;
+    if (lock.user_store) {
+      return {
+        ok: false,
+        error: `Refusing to run: this project has an eval lock but the user-level store (${await lockStoreFile(projectPath)}) has no entry for ${projectPath}; the project directory was probably moved. Run \`ml-ralph rekey <old-project-path>\` to move the old entry here, or \`ml-ralph unlock\` to clear the lock and lock the eval again on purpose.`,
+      };
+    }
+    // Locked before the store existed: copy it over once
+    const migrated = await writeStoredLock(projectPath, lock);
+    if (!migrated.ok) {
+      return { ok: false, error: `Refusing to run: ${migrated.error}` };
+    }
+    if (!markerExists) {
+      await Bun.write(
+        `${projectPath}/${LOCK_MARKER_PATH}`,
+        `${lock.locked_at}\n`,
+      );
+    }
+    return { ok: true, migrated: lock.files };
+  }
+
+  if (!prd || prd.status === "draft") {
+    if (!markerExists) return { ok: true };
   }
 
   if (markerExists) {
@@ -250,7 +339,6 @@ export async function checkEvalGate(
     };
   }
 
-  // Reaching here means a PRD past SETUP: the draft/missing case returned above
   const locked =
     prd?.status === "approved"
       ? await lockEvalContract(projectPath)
@@ -264,4 +352,45 @@ export async function checkEvalGate(
     ok: false,
     error: `Refusing to run: no eval lock (${LOCK_PATH}): ${locked.error}`,
   };
+}
+
+/**
+ * Restore lock.json and the creation marker in the project from the user-level
+ * store. Hash drift in the eval files is not touched: the runner pauses on it.
+ */
+export async function restoreEvalLock(
+  projectPath: string,
+): Promise<{ ok: true; restored: string[] } | { ok: false; error: string }> {
+  const stored = await readStoredLock(projectPath);
+  if (!stored) {
+    return {
+      ok: false,
+      error: `No eval lock in the user-level store for ${projectPath} (${await lockStoreFile(projectPath)}). If the project directory moved, run \`ml-ralph rekey <old-project-path>\`.`,
+    };
+  }
+  const lock: EvalLock = {
+    locked_at: stored.locked_at,
+    user_store: true,
+    files: stored.files,
+  };
+  await Bun.write(
+    `${projectPath}/${LOCK_PATH}`,
+    `${JSON.stringify(lock, null, 2)}\n`,
+  );
+  await Bun.write(`${projectPath}/${LOCK_MARKER_PATH}`, `${lock.locked_at}\n`);
+  return { ok: true, restored: [LOCK_PATH, LOCK_MARKER_PATH] };
+}
+
+/**
+ * Clear the project's store entry and its project copies (lock.json and the
+ * marker) so the eval can be locked again on purpose. Eval files are untouched.
+ */
+export async function unlockEval(
+  projectPath: string,
+): Promise<{ cleared: boolean; storeFile: string }> {
+  const storeFile = await lockStoreFile(projectPath);
+  const cleared = await clearStoredLock(projectPath);
+  await rm(`${projectPath}/${LOCK_PATH}`, { force: true });
+  await rm(`${projectPath}/${LOCK_MARKER_PATH}`, { force: true });
+  return { cleared, storeFile };
 }

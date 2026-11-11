@@ -30,7 +30,7 @@ your-ml-project/
 │   ├── eval/
 │   │   ├── evaluate.py           # Eval script (drafted in SETUP, locked on PRD approval)
 │   │   ├── contract.json         # Eval contract (see DATA_MODELS.md)
-│   │   └── lock.json             # SHA-256 lock written by the runner
+│   │   └── lock.json             # Project mirror of the lock (the user-level store is authoritative)
 │   ├── chat/
 │   │   └── prd-session.jsonl     # PRD creation chat history
 │   └── runs/
@@ -88,7 +88,11 @@ The eval contract. In SETUP the agent drafts `evaluate.py` and `contract.json` w
 }
 ```
 
-Locking fails, with an error naming the file or field, when `contract.json` is missing or invalid, `baseline_score` is missing, or `evaluate.py` does not exist. Only a draft or missing PRD counts as SETUP; any other status (including `blocked`) needs a valid lock. An existing `lock.json` must be well-formed and still cover a valid contract and an existing `evaluate.py`. The runner writes `.ml-ralph/eval-lock.created` when it creates the lock; if `lock.json` later disappears the runner refuses instead of silently locking the current files again (remove the marker to re-lock deliberately). The runner refuses to start an iteration without a usable lock and the TUI shows the reason. The holdout data location is deliberately not part of the contract. Before each iteration the runner also re-hashes the two files against the lock and pauses on any difference (see the tamper check in `ARCHITECTURE.md`); a draft PRD does not switch this off once a lock or the marker exists.
+Locking fails, with an error naming the file or field, when `contract.json` is missing or invalid, `baseline_score` is missing, or `evaluate.py` does not exist. Only a draft or missing PRD counts as SETUP; any other status (including `blocked`) needs a valid lock. An existing `lock.json` must be well-formed and still cover a valid contract and an existing `evaluate.py`. The runner writes `.ml-ralph/eval-lock.created` when it creates the lock, and the same hashes to the user-level store (below). If `lock.json` or the marker later disappears the runner refuses, naming the file, instead of locking the current files again; `ml-ralph resume` restores them from the store, and `ml-ralph unlock` clears the lock deliberately. The runner refuses to start an iteration without a usable lock and the TUI shows the reason. The holdout data location is deliberately not part of the contract. Before each iteration the runner also re-hashes the two files against the lock and pauses on any difference (see the tamper check in `ARCHITECTURE.md`); a draft PRD does not switch this off once the store has an entry.
+
+### `~/.config/ml-ralph/locks/<id>.json`
+
+The runner's copy of the lock, outside the project and keyed by a hash of the project's real path (`$XDG_CONFIG_HOME` is honoured). It holds `project_path`, `locked_at` and the two hashes, and is what the gate and the tamper check trust. `ml-ralph init --force` does not touch it; `ml-ralph unlock` removes it; `ml-ralph rekey <old-path>` moves it after the project directory moved. See the lock store in `ARCHITECTURE.md`.
 
 ### `.ml-ralph/incumbent.json` and `.ml-ralph/baseline.json`
 
@@ -213,6 +217,8 @@ ml-ralph/
 │   │   │   ├── runner.ts            # RalphRunner: spawns claude per iteration, parses stream-json
 │   │   │   ├── init.ts              # initRalph / ensureInitialized
 │   │   │   ├── eval-lock.ts         # Lock .ml-ralph/eval/ by hash; gate iterations on the lock
+│   │   │   ├── lock-store.ts        # User-level copy of the lock hashes (~/.config/ml-ralph/locks)
+│   │   │   ├── lock-command.ts      # `ml-ralph resume | unlock | rekey`
 │   │   │   ├── holdout-guard.ts     # Spot tool calls that name the sealed holdout path in the claude stream
 │   │   │   ├── log-parser.ts        # Read/watch log.jsonl, prd.json, kanban.json
 │   │   │   ├── templates.ts         # Agent prompts and log event types

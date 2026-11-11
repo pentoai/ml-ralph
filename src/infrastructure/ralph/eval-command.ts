@@ -16,6 +16,7 @@ import {
   type EvalLock,
   findEvalChanges,
   readEvalLock,
+  readLockHashes,
   sha256,
 } from "./eval-lock.ts";
 import {
@@ -24,6 +25,7 @@ import {
   type EvalSeedScore,
 } from "./eval-metrics.ts";
 import { evalCommit } from "./git.ts";
+import { readStoredLock } from "./lock-store.ts";
 import { appendValidatedEvent, findProjectDir } from "./log-command.ts";
 import type { EvalEvent } from "./templates.ts";
 
@@ -201,15 +203,18 @@ export type LockedEval =
  * and the run. The contract is parsed from the checked bytes.
  */
 export async function readLockedEval(projectDir: string): Promise<LockedEval> {
-  const lock = await readEvalLock(projectDir);
-  if (!lock) {
+  const hashes = await readLockHashes(projectDir);
+  const lockedAt =
+    (await readStoredLock(projectDir))?.locked_at ??
+    (await readEvalLock(projectDir))?.locked_at;
+  if (!hashes || !lockedAt) {
     return {
       ok: false,
       error:
         "No valid eval lock (.ml-ralph/eval/lock.json): the runner creates it when the PRD is approved.",
     };
   }
-  const changes = await findEvalChanges(projectDir, lock.files);
+  const changes = await findEvalChanges(projectDir, hashes);
   if (changes.length > 0) {
     return {
       ok: false,
@@ -222,7 +227,7 @@ export async function readLockedEval(projectDir: string): Promise<LockedEval> {
       const bytes = new Uint8Array(
         await Bun.file(join(projectDir, EVAL_DIR, name)).arrayBuffer(),
       );
-      return sha256(bytes) === lock.files[name] ? bytes : null;
+      return sha256(bytes) === hashes[name] ? bytes : null;
     } catch {
       return null;
     }
@@ -249,6 +254,7 @@ export async function readLockedEval(projectDir: string): Promise<LockedEval> {
   if (!contract.valid) {
     return { ok: false, error: "contract.json is invalid." };
   }
+  const lock: EvalLock = { locked_at: lockedAt, files: hashes };
   return { ok: true, lock, evaluateBytes, contract: contract.contract };
 }
 
@@ -358,7 +364,6 @@ export async function runEvalCommand(
 
   const locked = await readLockedEval(projectDir);
   if (!locked.ok) return fail(`${locked.error} Nothing was run.`);
-  const { lock, evaluateBytes, contract } = locked;
 
   // A score must be reproducible from a commit; refuse before claiming a slot or running anything
   const commit = await evalCommit(projectDir);
@@ -382,18 +387,50 @@ export async function runEvalCommand(
     }
   }
 
+  const candidatePath = isAbsolute(candidateArg)
+    ? candidateArg
+    : resolve(cwd, candidateArg);
+  return scoreCandidate({
+    projectDir,
+    locked,
+    sha,
+    candidatePath,
+    python: options.python ?? defaultPython(),
+  });
+}
+
+export interface ScoreCandidateOptions {
+  projectDir: string;
+  locked: Extract<LockedEval, { ok: true }>;
+  /** HEAD commit the score is tied to; null outside git */
+  sha: string | null;
+  /** Absolute path of the candidate */
+  candidatePath: string;
+  python: string;
+  /** Set by `ml-ralph tune`: recorded on the eval event */
+  trial?: { trial: number; params: Record<string, number | string | boolean> };
+  /** When set, nothing is scored: the eval is recorded as failed with this reason (a trial whose training failed) */
+  failure?: string;
+}
+
+/**
+ * Score one candidate with the verified evaluator, write metrics.json and append
+ * the eval event. The caller has already checked the lock, the commit and the
+ * experiment cap.
+ */
+export async function scoreCandidate(
+  o: ScoreCandidateOptions,
+): Promise<EvalCommandResult> {
+  const { projectDir, locked, sha, candidatePath } = o;
+  const { lock, evaluateBytes, contract } = locked;
   const { seeds, search_split: split } = contract;
   const timeoutSeconds =
     contract.eval_timeout_seconds ?? DEFAULT_EVAL_TIMEOUT_SECONDS;
 
-  const candidatePath = isAbsolute(candidateArg)
-    ? candidateArg
-    : resolve(cwd, candidateArg);
   const rel = relative(projectDir, candidatePath);
   const candidate =
     rel.startsWith("..") || isAbsolute(rel) ? candidatePath : rel;
 
-  const python = options.python ?? defaultPython();
   const base = {
     eval_id: newEvalId(),
     contract_hash: lock.files["contract.json"],
@@ -404,15 +441,17 @@ export async function runEvalCommand(
     sha,
   };
 
-  const run = await runEvaluatorSeeds({
-    python,
-    evaluateBytes,
-    projectDir,
-    candidatePath,
-    split,
-    seeds,
-    timeoutSeconds,
-  });
+  const run: Awaited<ReturnType<typeof runEvaluatorSeeds>> = o.failure
+    ? { ok: false, reason: o.failure }
+    : await runEvaluatorSeeds({
+        python: o.python,
+        evaluateBytes,
+        projectDir,
+        candidatePath,
+        split,
+        seeds,
+        timeoutSeconds,
+      });
   let metrics: EvalMetrics | undefined;
   if (!run.ok) metrics = { ...base, status: "failed", reason: run.reason };
   const scores = run.ok ? run.scores : [];
@@ -433,6 +472,7 @@ export async function runEvalCommand(
     ...(metrics.status === "ok"
       ? { mean: metrics.mean, std: metrics.std }
       : { reason: metrics.reason }),
+    ...(o.trial ? { trial: o.trial.trial, params: o.trial.params } : {}),
   };
   await appendValidatedEvent(projectDir, event);
 

@@ -25,7 +25,10 @@ export {
   findEvalChanges,
   lockEvalContract,
   readEvalLock,
+  readLockHashes,
   relockEvalContract,
+  restoreEvalLock,
+  unlockEval,
 } from "./eval-lock.ts";
 export type {
   EvalCache,
@@ -70,6 +73,14 @@ export {
   stopJob,
   tailJobLog,
 } from "./jobs.ts";
+export { runLockCommand } from "./lock-command.ts";
+export {
+  clearStoredLock,
+  lockStoreFile,
+  readStoredLock,
+  rekeyStoredLock,
+  writeStoredLock,
+} from "./lock-store.ts";
 export type { LogCommandOptions, LogCommandResult } from "./log-command.ts";
 export { runLogCommand } from "./log-command.ts";
 export type {
@@ -120,6 +131,7 @@ export type {
   HypothesisEvent,
   JobStoppedEvent,
   LearningEvent,
+  LockMigratedEvent,
   OverfittingEvent,
   ParallelResultEvent,
   ParallelStartEvent,
@@ -132,8 +144,11 @@ export type {
   ResearchEvent,
   RunCompleteEvent,
   StatusEvent,
+  TuneResultEvent,
   VerifierVerdictEvent,
 } from "./templates.ts";
+export type { TuneCommandOptions, TuneOptimizer } from "./tune-command.ts";
+export { runTuneCommand } from "./tune-command.ts";
 export type {
   VerifierVerdict,
   VerifyCandidateOptions,

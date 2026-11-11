@@ -25,6 +25,27 @@ if (process.argv[2] === "eval") {
   process.exit(result.code);
 }
 
+// `tune` delegates a numeric sweep to Optuna; each trial is scored like `eval`
+if (process.argv[2] === "tune") {
+  const { runTuneCommand } = await import("./infrastructure/ralph/index.ts");
+  const result = await runTuneCommand(process.argv.slice(3));
+  process.stdout.write(result.stdout);
+  process.stderr.write(result.stderr);
+  process.exit(result.code);
+}
+
+// `resume`, `unlock` and `rekey` manage the eval lock kept in the user-level store
+if (["resume", "unlock", "rekey"].includes(process.argv[2] ?? "")) {
+  const { runLockCommand } = await import("./infrastructure/ralph/index.ts");
+  const result = await runLockCommand(
+    process.argv[2] as string,
+    process.argv.slice(3),
+  );
+  process.stdout.write(result.stdout);
+  process.stderr.write(result.stderr);
+  process.exit(result.code);
+}
+
 // `job start <cmd>` runs a training job and records it in runs/active.json
 if (process.argv[2] === "job") {
   const { runJobCommand } = await import("./infrastructure/ralph/index.ts");
@@ -58,6 +79,10 @@ Usage:
   ml-ralph init [name] [path]  Initialize a new ml-ralph project (keeps existing files)
   ml-ralph log <type> '<json>'  Validate an event and append it to .ml-ralph/log.jsonl
   ml-ralph eval <path>       Score a candidate with the locked evaluate.py; writes .ml-ralph/evals/<eval_id>/metrics.json
+  ml-ralph tune --space space.json --trials N [--sampler tpe|cmaes] --command "<train cmd with {param}>"  Optuna sweep; each trial is scored like eval, never promoted
+  ml-ralph resume [path]     Restore .ml-ralph/eval/lock.json and the lock marker from the user-level lock store
+  ml-ralph unlock [path]     Clear the project's eval lock (store entry, lock.json, marker) so it can be locked again on purpose
+  ml-ralph rekey <old-path>  After moving a project directory, move its lock store entry to the current directory
   ml-ralph job start <cmd>   Run a training job recorded in .ml-ralph/runs/active.json (stoppable from the TUI)
   ml-ralph bench             Run the bench suite (planted-exploit tasks) and write bench/results/<timestamp>.json
   ml-ralph bench --compare <a.json> <b.json>  Compare two bench results per task
