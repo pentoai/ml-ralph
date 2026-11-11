@@ -3,6 +3,11 @@
  */
 
 export type {
+  BenchResultsValidation,
+  BenchSuiteValidation,
+} from "./bench.ts";
+export { validateBenchResults, validateBenchSuite } from "./bench.ts";
+export type {
   EvalContract,
   EvalContractValidation,
   EvalDirection,

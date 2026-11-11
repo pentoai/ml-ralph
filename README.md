@@ -107,6 +107,10 @@ When a run ends (`run_complete`, `budget_exhausted`, `max_iterations`, `contract
 
 If the report cannot be written, the runner logs `report_failed` and the run still ends. Ablations against the baseline are not part of the report yet.
 
+## Benchmarking ml-ralph
+
+`ml-ralph bench` runs the fixed suite in `bench/suite.json` (a clean task, a majority-vote eval exploit and a train/test overlap, all CPU-only) in temporary directories and writes `bench/results/<timestamp>.json` with, per task, success (the holdout metric meets the task's `target`), holdout gap, USD and `caught` (the verifier flagged the planted exploit). It spends real money, each task under its own `max_usd` and `max_minutes`, and refuses to run without an authenticated `claude`. Compare two runs with `ml-ralph bench --compare a.json b.json`. Run it from a repository checkout (holdout data is not published). It has not been run live yet: a baseline results file is owed. See `docs/FILE_LAYOUT.md#bench-bench`.
+
 ## Training jobs
 
 The agent starts training with `ml-ralph job start <cmd>` (RALPH.md tells it to). The command runs in its own process group; its pid, command, start time and log path (`.ml-ralph/runs/logs/<job id>.log`) go to `.ml-ralph/runs/active.json`, and the entry is removed when the job exits. When a run starts, entries whose pid is no longer alive are removed. A single argument runs through the shell; several arguments run the program directly.
