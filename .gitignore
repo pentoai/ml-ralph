@@ -29,3 +29,6 @@ opencode/
 # Secrets (never commit)
 secrets.json
 *.secrets.json
+
+# Bench seed projects ship their approved PRD and eval contract
+!bench/tasks/*/project/.ml-ralph/

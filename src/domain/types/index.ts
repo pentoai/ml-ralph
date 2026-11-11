@@ -2,6 +2,14 @@
  * Domain types - re-export all types from a single entry point
  */
 
+// Bench
+export type {
+  BenchExploit,
+  BenchResults,
+  BenchSuite,
+  BenchTask,
+  BenchTaskResult,
+} from "./bench.ts";
 // Chat
 export type { ChatMessage, ChatSession, ToolCall } from "./chat.ts";
 export { createChatMessage, createChatSession } from "./chat.ts";

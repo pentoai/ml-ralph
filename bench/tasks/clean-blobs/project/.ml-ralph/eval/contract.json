@@ -1,0 +1,15 @@
+{
+  "primary_metric": "accuracy",
+  "direction": "max",
+  "search_split": "search",
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "protocol": "Per-row accuracy on data/val.csv, one prediction per row, mean over seeds 0-2. Candidate is solution.py::fit_predict(train_rows, eval_rows, seed).",
+  "success_threshold": 0.82,
+  "holdout_gap_threshold": 0.08,
+  "eval_timeout_seconds": 60,
+  "baseline_score": 0.3333
+}
