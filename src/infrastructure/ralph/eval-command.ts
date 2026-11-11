@@ -27,6 +27,7 @@ import {
 import { evalCommit } from "./git.ts";
 import { readStoredLock } from "./lock-store.ts";
 import { appendValidatedEvent, findProjectDir } from "./log-command.ts";
+import type { CommandWrapper } from "./sandbox.ts";
 import type { EvalEvent } from "./templates.ts";
 
 /** Per-seed timeout when the contract does not set eval_timeout_seconds */
@@ -52,6 +53,10 @@ export interface EvalCommandOptions {
   cwd?: string;
   /** Python executable (default: python, or python3 when there is no python) */
   python?: string;
+  /** Environment that carries the iteration and experiment-cap variables (default: process.env) */
+  env?: Record<string, string | undefined>;
+  /** Sandbox mode: run evaluate.py in a container with the agent's mounts instead of on the host */
+  wrap?: CommandWrapper;
 }
 
 const USAGE = `Usage: ml-ralph eval <path>
@@ -114,6 +119,7 @@ async function runSeed(
   seed: number,
   timeoutSeconds: number,
   redact: string[],
+  removeContainer?: () => void,
 ): Promise<SeedRun> {
   let proc: ReturnType<typeof Bun.spawn>;
   try {
@@ -144,6 +150,7 @@ async function runSeed(
 
   if (outcome === "timeout") {
     killTree(proc);
+    removeContainer?.();
     await proc.exited;
     return {
       ok: false,
@@ -273,6 +280,14 @@ export interface EvaluatorRunOptions {
   extraEnv?: Record<string, string>;
   /** Strings that must not appear in a failure reason (replaced with `<holdout>`) */
   redact?: string[];
+  /** Run each seed in a container */
+  wrap?: CommandWrapper;
+  /**
+   * With `wrap`: the sealed holdout is being scored. It is mounted read-only
+   * into a container that has the project read-only, no network and a
+   * read-only root, so a candidate script cannot copy it anywhere.
+   */
+  sealedMounts?: string[];
 }
 
 /**
@@ -298,23 +313,37 @@ export async function runEvaluatorSeeds(
     const scores: EvalSeedScore[] = [];
     const redact = options.redact ?? [];
     for (const seed of options.seeds) {
+      const argv = [
+        options.python,
+        script,
+        "--candidate",
+        options.candidatePath,
+        "--split",
+        options.split,
+        "--seed",
+        String(seed),
+      ];
+      // In a container only the variables named here exist; the host environment never reaches it
+      const wrapped = options.wrap?.(argv, {
+        kind: options.sealedMounts ? "holdout" : "eval",
+        cwd: options.projectDir,
+        env: {
+          [EVAL_DIR_ENV]: join(options.projectDir, EVAL_DIR),
+          PYTHONDONTWRITEBYTECODE: "1",
+          ...options.extraEnv,
+        },
+        readOnlyMounts: [privateDir, ...(options.sealedMounts ?? [])],
+      });
       const run = await runSeed(
-        [
-          options.python,
-          script,
-          "--candidate",
-          options.candidatePath,
-          "--split",
-          options.split,
-          "--seed",
-          String(seed),
-        ],
+        wrapped?.argv ?? argv,
         options.projectDir,
         env,
         seed,
         options.timeoutSeconds,
         redact,
+        wrapped?.remove,
       );
+      wrapped?.remove();
       if (!run.ok)
         return { ok: false, reason: redactSecrets(run.reason, redact) };
       scores.push({ seed, score: run.score });
@@ -375,7 +404,7 @@ export async function runEvalCommand(
   // Under the runner, the iteration's eval calls are capped by config.json
   const budget = await readBudgetCaps(projectDir);
   const limit = experimentCapFor(
-    process.env,
+    options.env ?? process.env,
     budget.ok ? budget.caps.max_experiments_per_iteration : undefined,
   );
   if (!limit.ok) return fail(`${limit.error}. Nothing was run.`);
@@ -396,6 +425,7 @@ export async function runEvalCommand(
     sha,
     candidatePath,
     python: options.python ?? defaultPython(),
+    wrap: options.wrap,
   });
 }
 
@@ -411,6 +441,8 @@ export interface ScoreCandidateOptions {
   trial?: { trial: number; params: Record<string, number | string | boolean> };
   /** When set, nothing is scored: the eval is recorded as failed with this reason (a trial whose training failed) */
   failure?: string;
+  /** Runs the evaluator inside the sandbox when set */
+  wrap?: CommandWrapper;
 }
 
 /**
@@ -451,6 +483,7 @@ export async function scoreCandidate(
         split,
         seeds,
         timeoutSeconds,
+        wrap: o.wrap,
       });
   let metrics: EvalMetrics | undefined;
   if (!run.ok) metrics = { ...base, status: "failed", reason: run.reason };

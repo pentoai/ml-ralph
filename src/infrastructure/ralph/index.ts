@@ -117,6 +117,9 @@ export type {
   StreamEvent,
 } from "./runner.ts";
 export { createRunner, RalphRunner } from "./runner.ts";
+export type { SandboxMode } from "./sandbox.ts";
+export { checkSandbox, readSandboxMode, SANDBOX_IMAGE } from "./sandbox.ts";
+export { startForwarder } from "./sandbox-forward.ts";
 export type {
   BudgetExhaustedEvent,
   BudgetStatusEvent,

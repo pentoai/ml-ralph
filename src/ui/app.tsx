@@ -40,9 +40,10 @@ import { ModeTabs } from "./widgets/tabs.tsx";
 interface AppProps {
   projectPath: string;
   enableTeams?: boolean;
+  sandbox?: "docker" | "none";
 }
 
-export function App({ projectPath, enableTeams }: AppProps) {
+export function App({ projectPath, enableTeams, sandbox }: AppProps) {
   const { exit } = useApp();
   const { stdout } = useStdout();
   const { disableFocus } = useFocusManager();
@@ -255,6 +256,7 @@ export function App({ projectPath, enableTeams }: AppProps) {
         projectPath,
         autoAdvance: config.agent.autoAdvance,
         enableTeams: teamsEnabled,
+        sandbox,
       });
       // Subscribe to events
       orchestratorRef.current.onIterationChange(handleIterationChange);
@@ -274,6 +276,7 @@ export function App({ projectPath, enableTeams }: AppProps) {
     handleComplete,
     appendAgentOutput,
     teamsEnabled,
+    sandbox,
   ]);
 
   // Handle mode changes - create/destroy tmux split

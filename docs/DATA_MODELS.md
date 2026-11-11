@@ -317,6 +317,7 @@ interface TrainingJob {
   pid: number;
   command: string; // What was executed
   logPath: string; // Path to log file
+  container?: string; // Sandbox mode: the container the job runs in (removed when the job is stopped)
 
   // Tracking
   wandbRunId?: string;
@@ -370,6 +371,10 @@ interface ProjectConfig {
     maxIterationsPerStory?: number; // Safety limit
   };
 
+  // Where claude runs: "docker" = a container that mounts only the project
+  // (never the holdout or ~/.config/ml-ralph); "none" or unset = the host
+  sandbox?: "docker" | "none";
+
   // Tooling
   runtime: {
     packageManager: "uv" | "pip" | "poetry" | "conda";
@@ -379,6 +384,8 @@ interface ProjectConfig {
 ```
 
 **File**: `.ml-ralph/config.json`
+
+`sandbox: "docker"` (or `ml-ralph --sandbox docker`, which wins over the file) runs each iteration's `claude` in a container; any other value than `"docker"`/`"none"` is an error at start. It needs `ANTHROPIC_API_KEY` in the environment, because the container cannot use the host's `claude` login, and a holdout path outside the project. See [ARCHITECTURE.md](./ARCHITECTURE.md#docker-sandbox). While a sandboxed iteration runs, `.ml-ralph/sandbox/requests/` and `responses/` hold the forwarded `ml-ralph log|eval|job` calls; the runner clears them at the start of each iteration.
 
 ### Default Config
 
