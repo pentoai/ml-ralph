@@ -202,6 +202,17 @@ export const LOG_EVENT_SCHEMAS: Record<string, LogEventSchema> = {
       },
     },
   },
+  lock_migrated: {
+    runnerOnly: true,
+    fields: {
+      files: {
+        spec: {
+          kind: "object",
+          fields: { "evaluate.py": str, "contract.json": str },
+        },
+      },
+    },
+  },
   eval: {
     runnerOnly: true,
     fields: {
@@ -212,6 +223,28 @@ export const LOG_EVENT_SCHEMAS: Record<string, LogEventSchema> = {
       mean: optional(num),
       std: optional(num),
       reason: optional(str),
+      trial: optional(num),
+      params: optional({ spec: { kind: "object", fields: {} } }),
+    },
+  },
+  tune_result: {
+    runnerOnly: true,
+    fields: {
+      sampler: oneOf("tpe", "cmaes"),
+      trials_requested: num,
+      trials_run: num,
+      trials_ok: num,
+      trials_failed: num,
+      best_eval_id: optional(str),
+      best_params: optional({ spec: { kind: "object", fields: {} } }),
+      best_mean: optional(num),
+      stopped: optional(
+        oneOf(
+          "max_experiments_per_iteration",
+          "max_usd",
+          "max_wall_clock_minutes",
+        ),
+      ),
     },
   },
   promotion: {

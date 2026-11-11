@@ -2,6 +2,7 @@
  * ML-Ralph runner - executes the autonomous agent loop
  */
 
+import { join } from "node:path";
 import type { Subprocess } from "bun";
 import type { TrainingJob } from "../../domain/types/index.ts";
 import {
@@ -35,7 +36,7 @@ import {
   type EvalChange,
   type EvalLock,
   findEvalChanges,
-  readEvalLock,
+  readLockHashes,
   relockEvalContract,
 } from "./eval-lock.ts";
 import {
@@ -48,7 +49,12 @@ import {
   type HoldoutNeedles,
   loadHoldoutNeedles,
 } from "./holdout-guard.ts";
-import { pruneStaleJobs, type StopJobResult, stopJob } from "./jobs.ts";
+import {
+  pruneStaleJobs,
+  readActiveJobs,
+  type StopJobResult,
+  stopJob,
+} from "./jobs.ts";
 import { appendValidatedEvent } from "./log-command.ts";
 import {
   judgeCandidate,
@@ -58,6 +64,20 @@ import {
   recordBaselineRef,
 } from "./promotion.ts";
 import { type ReportEndReason, writeReport } from "./report.ts";
+import {
+  checkSandbox,
+  commandWrapper,
+  containerArgs,
+  containerName,
+  gitIdentityEnv,
+  readSandboxMode,
+  removeContainer,
+  removeStaleContainers,
+  SANDBOX_DIR_ENV,
+  type SandboxMode,
+  sandboxProjectPath,
+} from "./sandbox.ts";
+import { FORWARD_DIR, startForwarder } from "./sandbox-forward.ts";
 import { verifyCandidate } from "./verifier.ts";
 
 /** Why a run ended. Only the runner ends a run: the agent's output never does */
@@ -77,6 +97,10 @@ export interface RunnerConfig {
   projectPath: string;
   maxIterations?: number;
   enableTeams?: boolean;
+  /** "docker": claude runs in a container that mounts only the project (default: config.json `sandbox`, else host) */
+  sandbox?: SandboxMode | "none";
+  /** The docker executable (default: docker; tests) */
+  dockerBin?: string;
   onOutput?: (event: StreamEvent) => void;
   onIterationStart?: (iteration: number) => void;
   onIterationEnd?: (iteration: number, result: string) => void;
@@ -158,6 +182,9 @@ export class RalphRunner {
   private config: RunnerConfig;
   private running = false;
   private currentProcess: Subprocess | null = null;
+  /** Name of the container claude runs in, in sandbox mode */
+  private currentContainer: string | null = null;
+  private sandbox: SandboxMode | "none" | undefined;
   private currentIteration = 0;
   private pendingHints: string[] = [];
   private pendingFeedback: string[] = [];
@@ -215,7 +242,9 @@ export class RalphRunner {
     }
 
     await ensureConclusions(this.config.projectPath);
-    await pruneStaleJobs(this.config.projectPath).catch(() => []);
+    await pruneStaleJobs(this.config.projectPath, undefined, (name) =>
+      removeContainer(this.config.dockerBin ?? "docker", name),
+    ).catch(() => []);
 
     const caps = await readBudgetCaps(this.config.projectPath);
     if (!caps.ok) {
@@ -227,6 +256,31 @@ export class RalphRunner {
     if (!threshold.ok) {
       this.config.onError?.(new Error(threshold.error));
       return;
+    }
+
+    const mode = await readSandboxMode(this.config.projectPath);
+    if (!mode.ok) {
+      this.config.onError?.(new Error(mode.error));
+      return;
+    }
+    this.sandbox = this.config.sandbox ?? mode.mode;
+    if (this.sandbox === "docker") {
+      const docker = this.config.dockerBin ?? "docker";
+      const check = await checkSandbox({
+        projectPath: this.config.projectPath,
+        docker,
+        onStatus: (line) =>
+          this.config.onOutput?.({ type: "text", content: line }),
+      });
+      if (!check.ok) {
+        this.config.onError?.(new Error(check.error));
+        return;
+      }
+      // A TUI that was killed outright cannot remove its container; sweep what it left
+      removeStaleContainers(
+        docker,
+        await sandboxProjectPath(this.config.projectPath),
+      );
     }
 
     this.running = true;
@@ -265,8 +319,13 @@ export class RalphRunner {
           this.config.onError?.(new Error(gate.error));
           return;
         }
-        this.pinnedHashes ??=
-          (await readEvalLock(this.config.projectPath))?.files ?? null;
+        this.pinnedHashes ??= await readLockHashes(this.config.projectPath);
+        if (gate.migrated) {
+          await this.appendLogEvent({
+            type: "lock_migrated",
+            files: gate.migrated,
+          });
+        }
 
         if (!baselineRecorded) {
           baselineRecorded = true;
@@ -363,10 +422,31 @@ export class RalphRunner {
     this.running = false;
     this.settleContractDecision(null);
     if (this.currentProcess) {
-      killTree(this.currentProcess, "SIGTERM");
+      this.killAgent(this.currentProcess, "SIGTERM");
       this.currentProcess = null;
     }
-    return done;
+    // Sandbox jobs run in containers outside the TUI's process tree: stopping the run stops them
+    return Promise.all([done, this.stopSandboxJobs()]).then(() => {});
+  }
+
+  /** Stop the jobs this run's agent started in containers, and remove their containers */
+  private async stopSandboxJobs(): Promise<void> {
+    if (this.sandbox !== "docker") return;
+    const docker = this.config.dockerBin ?? "docker";
+    const jobs = await readActiveJobs(this.config.projectPath).catch(() => []);
+    await Promise.all(
+      jobs
+        .filter((job) => job.container)
+        .map((job) =>
+          stopJob(this.config.projectPath, job, {
+            graceMs: 0,
+            removeContainer: (name) => removeContainer(docker, name),
+          })
+            // killing the `docker run` client does not stop the container: remove it now, not after the grace period
+            .then(() => removeContainer(docker, job.container as string))
+            .catch(() => {}),
+        ),
+    );
   }
 
   /**
@@ -374,10 +454,25 @@ export class RalphRunner {
    * The holdout path is read from the user-level config and reaches only the
    * evaluator subprocess; it is never part of a prompt.
    */
-  scoreHoldout(evalId: string): Promise<HoldoutResult> {
+  async scoreHoldout(evalId: string): Promise<HoldoutResult> {
+    // Sandbox mode: the candidate is the agent's code, so it never runs next to the holdout on the host
+    const sandboxed = this.sandbox === "docker";
+    // The config lookup keeps the configured path; only the mounts use the real one
+    const mountPath = sandboxed
+      ? await sandboxProjectPath(this.config.projectPath)
+      : undefined;
     return scoreHoldout(evalId, {
       projectPath: this.config.projectPath,
       onInvalidEvent: this.reportInvalidEvent,
+      ...(sandboxed
+        ? {
+            mountPath,
+            wrap: commandWrapper(
+              this.config.dockerBin ?? "docker",
+              mountPath as string,
+            ),
+          }
+        : {}),
     });
   }
 
@@ -497,7 +592,7 @@ export class RalphRunner {
   private stopForBudget(cap: BudgetExhaustion): void {
     if (this.budgetStop) return;
     this.budgetStop = cap;
-    if (this.currentProcess) killTree(this.currentProcess, "SIGKILL");
+    if (this.currentProcess) this.killAgent(this.currentProcess, "SIGKILL");
   }
 
   /** The tool call that named the holdout in this run, if any (a method so TS does not narrow the field across awaits) */
@@ -761,7 +856,10 @@ export class RalphRunner {
    * log `job_stopped` and tell the agent's next prompt.
    */
   async stopJob(job: TrainingJob): Promise<StopJobResult> {
-    const result = await stopJob(this.config.projectPath, job);
+    const result = await stopJob(this.config.projectPath, job, {
+      removeContainer: (name) =>
+        removeContainer(this.config.dockerBin ?? "docker", name),
+    });
     await this.appendLogEvent({
       type: "job_stopped",
       job_id: job.id,
@@ -798,8 +896,7 @@ export class RalphRunner {
     let relockError: string | undefined;
 
     while (this.running) {
-      const expected =
-        this.pinnedHashes ?? (await readEvalLock(projectPath))?.files;
+      const expected = this.pinnedHashes ?? (await readLockHashes(projectPath));
       const changes = expected
         ? await findEvalChanges(projectPath, expected)
         : [];
@@ -959,32 +1056,78 @@ export class RalphRunner {
 
     // The agent's environment never carries the holdout path, even if the user exported it
     const { [HOLDOUT_PATH_ENV]: _holdout, ...agentEnv } = process.env;
+    const iterationEnv: Record<string, string> = {
+      [ITERATION_ENV]: String(this.currentIteration),
+      // Pinned at start, so editing config.json mid-run cannot loosen the cap
+      ...(this.budgetCaps.max_experiments_per_iteration !== undefined
+        ? {
+            [MAX_EXPERIMENTS_ENV]: String(
+              this.budgetCaps.max_experiments_per_iteration,
+            ),
+          }
+        : {}),
+      ...(this.config.enableTeams
+        ? { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1" }
+        : {}),
+    };
+
+    let spawnCmd = cmd;
+    let spawnEnv: Record<string, string | undefined> = {
+      ...agentEnv,
+      ...iterationEnv,
+    };
+    let forwarder: { stop: () => void } | null = null;
+    let container: string | null = null;
+    const docker = this.config.dockerBin ?? "docker";
+    if (this.sandbox === "docker") {
+      // Mounted at the same path inside, so cwd values in forwarded requests are host paths too
+      const projectPath = await sandboxProjectPath(this.config.projectPath);
+      container = containerName();
+      forwarder = await startForwarder({
+        projectPath,
+        env: iterationEnv,
+        wrap: commandWrapper(docker, projectPath),
+      });
+      spawnCmd = [
+        docker,
+        ...containerArgs(
+          {
+            projectPath,
+            name: container,
+            env: {
+              ...iterationEnv,
+              ...gitIdentityEnv(),
+              [SANDBOX_DIR_ENV]: join(projectPath, FORWARD_DIR),
+            },
+            uid: process.getuid?.(),
+            gid: process.getgid?.(),
+          },
+          cmd,
+        ),
+      ];
+      spawnEnv = agentEnv;
+      this.currentContainer = container;
+    }
+
     // Own process group, so stop() and the holdout guard also reach what claude's tools started
-    const proc = Bun.spawn(cmd, {
-      cwd: this.config.projectPath,
-      detached: true,
-      stdout: "pipe",
-      stderr: "pipe",
-      env: {
-        ...agentEnv,
-        [ITERATION_ENV]: String(this.currentIteration),
-        // Pinned at start, so editing config.json mid-run cannot loosen the cap
-        ...(this.budgetCaps.max_experiments_per_iteration !== undefined
-          ? {
-              [MAX_EXPERIMENTS_ENV]: String(
-                this.budgetCaps.max_experiments_per_iteration,
-              ),
-            }
-          : {}),
-        ...(this.config.enableTeams
-          ? { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1" }
-          : {}),
-      },
-    });
+    let proc: Subprocess;
+    try {
+      proc = Bun.spawn(spawnCmd, {
+        cwd: this.config.projectPath,
+        detached: true,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: spawnEnv,
+      });
+    } catch (error) {
+      forwarder?.stop();
+      this.currentContainer = null;
+      throw error;
+    }
     this.currentProcess = proc;
 
     // claude is no longer in the TUI's process group, so a normal exit must reap it
-    const killOnExit = () => killTree(proc, "SIGKILL");
+    const killOnExit = () => this.killAgent(proc, "SIGKILL");
     process.on("exit", killOnExit);
 
     // Wall-clock is enforced by a timer so a long iteration cannot overshoot the cap
@@ -1009,6 +1152,18 @@ export class RalphRunner {
       clearTimeout(timer);
       clearInterval(ticker);
       process.off("exit", killOnExit);
+      forwarder?.stop();
+      // --rm removes a container that exited; this one may have been killed from outside
+      if (container) removeContainer(docker, container);
+      this.currentContainer = null;
+    }
+  }
+
+  /** Kill claude's process group; in sandbox mode also remove the container, which outlives a killed `docker run` */
+  private killAgent(proc: Subprocess, signal: "SIGTERM" | "SIGKILL"): void {
+    killTree(proc, signal);
+    if (this.currentContainer) {
+      removeContainer(this.config.dockerBin ?? "docker", this.currentContainer);
     }
   }
 
@@ -1089,7 +1244,7 @@ export class RalphRunner {
     }
     if (parsed.holdoutAccess && !this.holdoutAccess) {
       this.holdoutAccess = parsed.holdoutAccess;
-      if (this.currentProcess) killTree(this.currentProcess, "SIGKILL");
+      if (this.currentProcess) this.killAgent(this.currentProcess, "SIGKILL");
     }
     if (parsed.costUsd !== undefined) {
       this.budgetUsd += parsed.costUsd;

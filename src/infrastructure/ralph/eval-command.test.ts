@@ -14,6 +14,7 @@ import {
   type EvalMetricsOk,
   readEvalMetrics,
 } from "./eval-metrics.ts";
+import { clearStoredLock } from "./lock-store.ts";
 
 /** The candidate file's content picks the behaviour; every call is recorded in calls.jsonl */
 const FAKE_EVALUATE = `import argparse, json, os, subprocess, sys, time
@@ -336,6 +337,7 @@ describe("refusal", () => {
 
   test("a malformed lock.json", async () => {
     await setup();
+    await clearStoredLock(dir);
     await Bun.write(evalFile("lock.json"), "{}");
     const result = await runEvalCommand([await candidate("ok")], { cwd: dir });
     await expectNothingRan(result, "lock.json");

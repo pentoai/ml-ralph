@@ -1,6 +1,6 @@
 {
   "name": "@pentoai/ml-ralph",
-  "version": "0.4.17",
+  "version": "0.4.23",
   "description": "Autonomous ML engineering agent with TUI",
   "module": "src/index.tsx",
   "type": "module",
@@ -9,6 +9,10 @@
   },
   "files": [
     "src",
+    "bench",
+    "!bench/results",
+    "!bench/tasks/*/holdout.csv",
+    "!bench/tasks/generate.py",
     "!src/**/*.test.ts",
     "README.md",
     "LICENSE"

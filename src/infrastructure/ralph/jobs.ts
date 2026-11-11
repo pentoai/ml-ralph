@@ -17,6 +17,7 @@ import {
   THRESHOLD_KEY,
 } from "./critique.ts";
 import { findProjectDir } from "./log-command.ts";
+import type { CommandWrapper } from "./sandbox.ts";
 
 /** Milliseconds between SIGTERM and SIGKILL when stopping a job */
 export const KILL_GRACE_MS = 10_000;
@@ -86,6 +87,7 @@ export function isPidAlive(pid: number): boolean {
 export async function pruneStaleJobs(
   projectDir: string,
   alive: (pid: number) => boolean = isPidAlive,
+  removeContainer?: (name: string) => void,
 ): Promise<TrainingJob[]> {
   const removed: TrainingJob[] = [];
   await updateActiveJobs(projectDir, (jobs) =>
@@ -95,6 +97,10 @@ export async function pruneStaleJobs(
       return false;
     }),
   );
+  // A sandbox job whose wrapper died may have left its container running
+  for (const job of removed) {
+    if (job.container) removeContainer?.(job.container);
+  }
   return removed;
 }
 
@@ -108,6 +114,8 @@ export interface StopJobOptions {
   graceMs?: number;
   /** Signal sender (default: the job's process group, then the pid) */
   kill?: (pid: number, signal: NodeJS.Signals | 0) => void;
+  /** Removes a sandbox job's container (killing the `docker run` client does not stop it) */
+  removeContainer?: (name: string) => void;
 }
 
 function killJob(pid: number, signal: NodeJS.Signals | 0): void {
@@ -139,6 +147,7 @@ export async function stopJob(
       } catch {
         // already exited
       }
+      if (job.container) options.removeContainer?.(job.container);
     }, graceMs);
     timer.unref?.();
   } catch (error) {
@@ -147,6 +156,7 @@ export async function stopJob(
       code === "ESRCH"
         ? { outcome: "not_running", message: "job not running" }
         : { outcome: "error", message: (error as Error).message };
+    if (job.container) options.removeContainer?.(job.container);
   }
   await removeActiveJob(projectDir, job.id);
   return result;
@@ -228,6 +238,14 @@ export async function runJobCommand(
     cwd?: string;
     claudeBin?: string;
     critiqueTimeoutMs?: number;
+    /**
+     * Return as soon as the job is recorded (the sandbox forwarder: a job can
+     * outlive the agent's tool timeout). Output goes only to the job log, and
+     * the exit code to `<log>.exit`.
+     */
+    detach?: boolean;
+    /** Sandbox mode: run the command in a container instead of on the host */
+    wrap?: CommandWrapper;
   } = {},
 ): Promise<JobCommandResult> {
   const fail = (stderr: string): JobCommandResult => ({
@@ -281,10 +299,10 @@ export async function runJobCommand(
   await mkdir(dirname(logPath), { recursive: true });
   const log = createWriteStream(logPath, { flags: "a" });
 
-  const child =
-    cmd.length === 1
-      ? spawn("sh", ["-c", cmd[0] as string], { cwd, detached: true })
-      : spawn(cmd[0] as string, cmd.slice(1), { cwd, detached: true });
+  const argv = cmd.length === 1 ? ["sh", "-c", cmd[0] as string] : cmd;
+  const wrapped = options.wrap?.(argv, { kind: "job", cwd });
+  const [bin, ...binArgs] = wrapped?.argv ?? argv;
+  const child = spawn(bin as string, binArgs, { cwd, detached: true });
 
   const exit = new Promise<number>((resolve) => {
     child.on("error", (error) => {
@@ -301,7 +319,7 @@ export async function runJobCommand(
   ] as const) {
     stream?.on("data", (chunk: Buffer) => {
       log.write(chunk);
-      sink.write(chunk);
+      if (!options.detach) sink.write(chunk);
     });
   }
 
@@ -319,10 +337,27 @@ export async function runJobCommand(
       pid,
       command: cmd.join(" "),
       logPath,
+      ...(wrapped ? { container: wrapped.container } : {}),
       startedAt: new Date().toISOString(),
       status: "running",
     },
   ]);
+
+  const finish = async (code: number) => {
+    await new Promise<void>((resolve) => log.end(resolve));
+    if (options.detach) await writeFile(`${logPath}.exit`, `${code}\n`);
+    await removeActiveJob(projectDir, id);
+  };
+
+  if (options.detach) {
+    // The runner (the TUI process) outlives the job, so it must not take SIGTERM/SIGINT for the job
+    void exit.then(finish);
+    return {
+      code: 0,
+      stdout: `job_id: ${id}\nlog: ${logPath}\nexit code: ${logPath}.exit (written when the job ends)\nThe job keeps running after this command returns; follow it with: tail -f ${logPath}\n`,
+      stderr: "",
+    };
+  }
 
   const forward = (signal: NodeJS.Signals) => () => {
     try {
@@ -339,7 +374,6 @@ export async function runJobCommand(
   const code = await exit;
   process.off("SIGTERM", onTerm);
   process.off("SIGINT", onInt);
-  await new Promise<void>((resolve) => log.end(resolve));
-  await removeActiveJob(projectDir, id);
+  await finish(code);
   return { code, stdout: "", stderr: "" };
 }

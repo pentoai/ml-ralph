@@ -57,7 +57,11 @@ The agent may change the file only with a `conclusions_changed` event whose reas
 
 ## Commit before every eval
 
+The runner keeps its copy of the eval lock hashes in `~/.config/ml-ralph/locks/`, keyed by project path, so deleting `.ml-ralph/eval/lock.json` or the marker does not unlock anything. `ml-ralph resume` restores them from the store, `ml-ralph unlock` clears the lock so you can lock again on purpose, and `ml-ralph rekey <old-path>` moves the entry after you move the project directory. `ml-ralph init --force` never touches the store.
+
 Every eval is tied to a commit, so a metric can be reproduced from code. `ml-ralph eval` records the HEAD SHA as `sha` in `metrics.json` and in the runner's `eval` event. If tracked files outside `.ml-ralph/` have uncommitted changes, it exits non-zero with `commit your changes before eval` and scores nothing; the agent is told (in RALPH.md) to commit before each eval, and the runner never commits for it. Outside a git repository, eval warns, records `sha: null` and still scores.
+
+Numeric sweeps go through `ml-ralph tune --space space.json --trials N --sampler tpe|cmaes --command "<train cmd with {param}>"`: the agent chooses the space, Optuna (needs `pip install optuna`, plus `cmaes` for CMA-ES) owns the trials, and each trial is scored by the runner like `ml-ralph eval`. Trials count against the experiment, USD and wall-clock caps below. Tune never promotes; its best trial is only a candidate.
 
 When the runner promotes a candidate it force-moves the git tag `ralph/best` to the promoted commit. A candidate is rejected if HEAD moved after its eval, since the score belongs to the older commit. If the tag cannot be moved, the runner logs `tag_failed` with the error and the promotion stands. The experiments panel shows the short SHA next to each verified metric, and `—` when the eval has none.
 
@@ -102,6 +106,10 @@ When a run ends (`run_complete`, `budget_exhausted`, `max_iterations`, `contract
 - **Claims**: one line per finding from `log.jsonl`, each ending in `[eval:<eval_id>]`. Every number comes from the runner's own `eval` events; an agent's `experiment` event is mentioned only as having been logged against a real eval, without its observations. `auditClaims` in `src/infrastructure/ralph/report.ts` (used by its tests) flags a claim whose eval id is not in the log or that carries a number other than that eval's recorded mean or std.
 
 If the report cannot be written, the runner logs `report_failed` and the run still ends. Ablations against the baseline are not part of the report yet.
+
+## Benchmarking ml-ralph
+
+`ml-ralph bench` runs the fixed suite in `bench/suite.json` (a clean task, a majority-vote eval exploit and a train/test overlap, all CPU-only) in temporary directories and writes `bench/results/<timestamp>.json` with, per task, success (the holdout metric meets the task's `target`), holdout gap, USD and `caught` (the verifier flagged the planted exploit). It spends real money, each task under its own `max_usd` and `max_minutes`, and refuses to run without an authenticated `claude`. Compare two runs with `ml-ralph bench --compare a.json b.json`. Run it from a repository checkout (holdout data is not published). It has not been run live yet: a baseline results file is owed. See `docs/FILE_LAYOUT.md#bench-bench`.
 
 ## Training jobs
 

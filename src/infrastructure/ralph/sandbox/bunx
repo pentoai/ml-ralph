@@ -1,0 +1,6 @@
+#!/bin/sh
+# The agent's prompts call `bunx @pentoai/ml-ralph@<version> <cmd>`; inside the sandbox that is the forwarding shim.
+case "$1" in
+  @pentoai/ml-ralph|@pentoai/ml-ralph@*) shift; exec ml-ralph "$@" ;;
+  *) echo "bunx is not available in the ml-ralph sandbox (only: bunx @pentoai/ml-ralph <log|eval|job>)" >&2; exit 127 ;;
+esac
