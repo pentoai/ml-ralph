@@ -147,8 +147,11 @@ export type {
   ResearchEvent,
   RunCompleteEvent,
   StatusEvent,
+  TuneResultEvent,
   VerifierVerdictEvent,
 } from "./templates.ts";
+export type { TuneCommandOptions, TuneOptimizer } from "./tune-command.ts";
+export { runTuneCommand } from "./tune-command.ts";
 export type {
   VerifierVerdict,
   VerifyCandidateOptions,
