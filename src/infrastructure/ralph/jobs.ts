@@ -10,6 +10,12 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { constants as osConstants } from "node:os";
 import { dirname, join } from "node:path";
 import type { TrainingJob } from "../../domain/types/index.ts";
+import {
+  critiqueJob,
+  findHypothesis,
+  readCritiqueThreshold,
+  THRESHOLD_KEY,
+} from "./critique.ts";
 import { findProjectDir } from "./log-command.ts";
 import type { CommandWrapper } from "./sandbox.ts";
 
@@ -178,17 +184,60 @@ export interface JobCommandResult {
   stderr: string;
 }
 
-const USAGE = `Usage: ml-ralph job start <cmd> [args...]
+const USAGE = `Usage: ml-ralph job start [--est-minutes <n>] [--hypothesis-id <id>] <cmd> [args...]
 
 Runs the command, writes its pid, command, start time and log path to
 .ml-ralph/runs/active.json, and removes the entry when it exits. Output goes
-to the log file and to this terminal. A single argument runs through the shell.`;
+to the log file and to this terminal. A single argument runs through the shell.
+
+When config.json sets ${THRESHOLD_KEY}, both flags are required, and a job
+estimated above it is critiqued against conclusions.md and kanban.json first;
+a rejected job does not start.`;
+
+/** Leading `--est-minutes` / `--hypothesis-id` flags (space or `=` form), then the command */
+function parseJobArgs(
+  args: string[],
+):
+  | { cmd: string[]; estMinutes?: number; hypothesisId?: string }
+  | { error: string } {
+  let estMinutes: number | undefined;
+  let hypothesisId: string | undefined;
+  let i = 0;
+  for (; i < args.length; i++) {
+    const m = /^(--est-minutes|--hypothesis-id)(?:=(.*))?$/.exec(
+      args[i] as string,
+    );
+    if (!m) break;
+    const value = m[2] ?? args[++i];
+    if (value === undefined || value === "") {
+      return { error: `${m[1]} needs a value\n${USAGE}` };
+    }
+    if (m[1] === "--hypothesis-id") {
+      hypothesisId = value;
+      continue;
+    }
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) {
+      return {
+        error: `--est-minutes must be a positive number of minutes (got ${JSON.stringify(value)})`,
+      };
+    }
+    estMinutes = n;
+  }
+  return {
+    cmd: args.slice(i),
+    ...(estMinutes !== undefined ? { estMinutes } : {}),
+    ...(hypothesisId !== undefined ? { hypothesisId } : {}),
+  };
+}
 
 /** `ml-ralph job start <cmd>`: run the command as a recorded job; resolves when it exits */
 export async function runJobCommand(
   args: string[],
   options: {
     cwd?: string;
+    claudeBin?: string;
+    critiqueTimeoutMs?: number;
     /**
      * Return as soon as the job is recorded (the sandbox forwarder: a job can
      * outlive the agent's tool timeout). Output goes only to the job log, and
@@ -205,12 +254,45 @@ export async function runJobCommand(
     stderr: `${stderr}\n`,
   });
   if (args[0] !== "start" || args.length < 2) return fail(USAGE);
-  const cmd = args.slice(1);
+  const parsed = parseJobArgs(args.slice(1));
+  if ("error" in parsed) return fail(parsed.error);
+  const { cmd, estMinutes, hypothesisId } = parsed;
+  if (cmd.length === 0) return fail(USAGE);
 
   const cwd = options.cwd ?? process.cwd();
   const projectDir = await findProjectDir(cwd);
   if (!projectDir)
     return fail("No .ml-ralph/ directory found; run init first.");
+
+  const threshold = await readCritiqueThreshold(projectDir);
+  if (!threshold.ok) return fail(threshold.error);
+  if (threshold.threshold !== undefined) {
+    if (estMinutes === undefined || hypothesisId === undefined) {
+      return fail(
+        `config.json sets ${THRESHOLD_KEY} (${threshold.threshold}), so job start needs both --est-minutes <n> and --hypothesis-id <id> (the id of a logged hypothesis).`,
+      );
+    }
+    const hypothesis = await findHypothesis(projectDir, hypothesisId);
+    if (!hypothesis) {
+      return fail(
+        `--hypothesis-id ${hypothesisId}: no hypothesis with that id in .ml-ralph/log.jsonl; log it first with \`ml-ralph log hypothesis\`.`,
+      );
+    }
+    if (estMinutes > threshold.threshold) {
+      const critique = await critiqueJob({
+        projectPath: projectDir,
+        hypothesisId,
+        hypothesis,
+        estMinutes,
+        command: cmd.join(" "),
+        ...(options.claudeBin ? { claudeBin: options.claudeBin } : {}),
+        ...(options.critiqueTimeoutMs
+          ? { timeoutMs: options.critiqueTimeoutMs }
+          : {}),
+      });
+      if (critique.verdict === "reject") return fail(critique.reason);
+    }
+  }
 
   const id = `job_${Date.now()}_${process.pid}_${randomBytes(2).toString("hex")}`;
   const logPath = join(projectDir, ".ml-ralph", "runs", "logs", `${id}.log`);

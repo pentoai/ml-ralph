@@ -108,7 +108,7 @@ Usage:
   ml-ralph resume [path]     Restore .ml-ralph/eval/lock.json and the lock marker from the user-level lock store
   ml-ralph unlock [path]     Clear the project's eval lock (store entry, lock.json, marker) so it can be locked again on purpose
   ml-ralph rekey <old-path>  After moving a project directory, move its lock store entry to the current directory
-  ml-ralph job start <cmd>   Run a training job recorded in .ml-ralph/runs/active.json (stoppable from the TUI)
+  ml-ralph job start [--est-minutes <n> --hypothesis-id <id>] <cmd>   Run a training job recorded in .ml-ralph/runs/active.json (stoppable from the TUI)
   ml-ralph bench             Run the bench suite (planted-exploit tasks) and write bench/results/<timestamp>.json
   ml-ralph bench --compare <a.json> <b.json>  Compare two bench results per task
   ml-ralph --help            Show this help message

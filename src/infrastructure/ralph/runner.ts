@@ -28,6 +28,7 @@ import {
   ensureConclusions,
   readConclusions,
 } from "./conclusions.ts";
+import { readCritiqueCosts, readCritiqueThreshold } from "./critique.ts";
 import { HOLDOUT_PATH_ENV, killTree } from "./eval-command.ts";
 import {
   checkEvalGate,
@@ -200,6 +201,8 @@ export class RalphRunner {
   private budgetBase = { usd_spent: 0, elapsed_minutes: 0 };
   private budgetStartedAt = 0;
   private budgetUsd = 0;
+  /** Lines of the critique cost ledger already counted in budgetUsd */
+  private critiqueLinesCounted = 0;
   private iterationCost: number | null = null;
   private budgetStop: BudgetExhaustion | null = null;
   private userStopped = false;
@@ -246,6 +249,12 @@ export class RalphRunner {
     const caps = await readBudgetCaps(this.config.projectPath);
     if (!caps.ok) {
       this.config.onError?.(new Error(caps.error));
+      return;
+    }
+
+    const threshold = await readCritiqueThreshold(this.config.projectPath);
+    if (!threshold.ok) {
+      this.config.onError?.(new Error(threshold.error));
       return;
     }
 
@@ -504,8 +513,20 @@ export class RalphRunner {
     );
     this.budgetStartedAt = Date.now();
     this.budgetUsd = 0;
+    // Critiques before this start are already in the totals the log recorded
+    this.critiqueLinesCounted = readCritiqueCosts(projectPath).lines;
     this.iterationCost = null;
     this.config.onBudget?.(this.budgetNow());
+  }
+
+  /** Count critique sessions `job start` ran since the last look: the agent's claude result never includes them */
+  private absorbCritiqueCosts(): void {
+    const seen = readCritiqueCosts(
+      this.config.projectPath,
+      this.critiqueLinesCounted,
+    );
+    this.critiqueLinesCounted = Math.max(this.critiqueLinesCounted, seen.lines);
+    this.budgetUsd += seen.usd;
   }
 
   /** Spend and elapsed time of the whole run, including what earlier starts recorded */
@@ -522,6 +543,7 @@ export class RalphRunner {
   private async recordBudget(): Promise<void> {
     const reported = this.iterationCost !== null;
     this.iterationCost = null;
+    this.absorbCritiqueCosts();
     const status = this.budgetNow();
     if (!reported) {
       await this.appendLogEvent({
@@ -1118,10 +1140,12 @@ export class RalphRunner {
         Math.min(Math.max(0, leftMs), MAX_TIMER_MS),
       );
     }
-    const ticker = setInterval(
-      () => this.config.onBudget?.(this.budgetNow()),
-      BUDGET_TICK_MS,
-    );
+    const ticker = setInterval(() => {
+      this.absorbCritiqueCosts();
+      const status = this.budgetNow();
+      this.config.onBudget?.(status);
+      if (exhaustedCap(status) === "usd") this.stopForBudget("usd");
+    }, BUDGET_TICK_MS);
     try {
       return await this.readIteration(proc);
     } finally {

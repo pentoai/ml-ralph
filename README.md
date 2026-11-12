@@ -113,7 +113,7 @@ If the report cannot be written, the runner logs `report_failed` and the run sti
 
 ## Training jobs
 
-The agent starts training with `ml-ralph job start <cmd>` (RALPH.md tells it to). The command runs in its own process group; its pid, command, start time and log path (`.ml-ralph/runs/logs/<job id>.log`) go to `.ml-ralph/runs/active.json`, and the entry is removed when the job exits. When a run starts, entries whose pid is no longer alive are removed. A single argument runs through the shell; several arguments run the program directly.
+The agent starts training with `ml-ralph job start <cmd>` (RALPH.md tells it to). The command runs in its own process group; its pid, command, start time and log path (`.ml-ralph/runs/logs/<job id>.log`) go to `.ml-ralph/runs/active.json`, and the entry is removed when the job exits. When a run starts, entries whose pid is no longer alive are removed. A single argument runs through the shell; several arguments run the program directly. When `config.json` sets `critique_threshold_minutes`, the job needs `--est-minutes <n> --hypothesis-id <id>`, and an estimate above the threshold is critiqued first (see `docs/DATA_MODELS.md`).
 
 ## Keyboard shortcuts
 
