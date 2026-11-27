@@ -340,6 +340,18 @@ export const LOG_EVENT_SCHEMAS: Record<string, LogEventSchema> = {
       max_experiments_per_iteration: optional(num),
     },
   },
+  ablation: {
+    runnerOnly: true,
+    fields: {
+      run_id: str,
+      reverted_sha: str,
+      status: oneOf("ok", "failed", "skipped"),
+      reason: optional(str),
+      eval_id: optional(str),
+      mean: optional(num),
+      std: optional(num),
+    },
+  },
   report_failed: {
     runnerOnly: true,
     fields: { run_id: str, reason: str },

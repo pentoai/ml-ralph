@@ -105,7 +105,7 @@ When a run ends (`run_complete`, `budget_exhausted`, `max_iterations`, `contract
 - **Result**: the end reason; the incumbent's eval id, search score (from the runner's `metrics.json`), holdout score (`not scored` unless the completion gate scored it) and commit SHA. With no promotion it says `no candidate was promoted`.
 - **Claims**: one line per finding from `log.jsonl`, each ending in `[eval:<eval_id>]`. Every number comes from the runner's own `eval` events; an agent's `experiment` event is mentioned only as having been logged against a real eval, without its observations. `auditClaims` in `src/infrastructure/ralph/report.ts` (used by its tests) flags a claim whose eval id is not in the log or that carries a number other than that eval's recorded mean or std.
 
-If the report cannot be written, the runner logs `report_failed` and the run still ends. Ablations against the baseline are not part of the report yet.
+If the report cannot be written, the runner logs `report_failed` and the run still ends. A run that ended with `run_complete` also gets an **Ablations** table: the runner reverts each commit between the baseline and `ralph/best` one at a time in a throwaway worktree, scores the result with the locked evaluator over the contract seeds, logs an `ablation` event per row and links each row to its `eval_id`. Ablations are evidence only and never promote. `max_ablations` in `config.json` (default 5, `0` disables) caps them; the rest read `skipped: cap`. They count against `max_usd` and `max_wall_clock_minutes` (`skipped: budget`). A revert that conflicts or an eval that fails shows as `failed: <reason>`.
 
 ## Benchmarking ml-ralph
 

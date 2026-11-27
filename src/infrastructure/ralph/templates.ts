@@ -1543,6 +1543,21 @@ export interface BudgetExhaustedEvent extends BaseEvent {
   max_experiments_per_iteration?: number;
 }
 
+/** Written by the runner (never the agent) once per ablation after a completed run: one commit between the baseline and ralph/best, reverted and re-scored */
+export interface AblationEvent extends BaseEvent {
+  type: "ablation";
+  run_id: string;
+  /** The reverted commit */
+  reverted_sha: string;
+  /** "failed": the revert or its eval failed (reason says which); "skipped": reason is cap, budget or stopped */
+  status: "ok" | "failed" | "skipped";
+  reason?: string;
+  /** The runner's eval of the result; set when it ran, even when it failed */
+  eval_id?: string;
+  mean?: number;
+  std?: number;
+}
+
 /** Written by the runner (never the agent) when report.md could not be written; the run still ends */
 export interface ReportFailedEvent extends BaseEvent {
   type: "report_failed";
@@ -1696,6 +1711,7 @@ export type RalphEvent =
   | BudgetWarningEvent
   | BudgetExhaustedEvent
   | ReportFailedEvent
+  | AblationEvent
   | HoldoutAccessEvent
   | ContractRelockedEvent
   | LockMigratedEvent

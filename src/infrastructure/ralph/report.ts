@@ -3,6 +3,7 @@
  * built only from its own records: log.jsonl, incumbent.json and metrics.json
  */
 
+import type { AblationOutcome, AblationRow } from "./ablation.ts";
 import { readEvalMetrics } from "./eval-metrics.ts";
 import { readHoldoutScore } from "./holdout.ts";
 import { readIncumbent } from "./promotion.ts";
@@ -104,6 +105,7 @@ export function buildClaims(events: LogEvent[]): string[] {
  * number must end in `[eval:<id>]` where <id> is an `eval` event in the log,
  * and every standalone number in it must be that eval's recorded mean or std.
  * Digits inside identifiers (h001, H-1) and in the candidate path are not numbers here.
+ * Rows of the Ablations table are audited too (auditAblations).
  */
 export function auditClaims(report: string, logText: string): string[] {
   const recorded = new Map<string, Set<number>>();
@@ -114,7 +116,7 @@ export function auditClaims(report: string, logText: string): string[] {
     candidates.set(e.eval_id, oneLine(e.candidate));
   }
   const section = report.split(/^## Claims$/m)[1]?.split(/^## /m)[0] ?? "";
-  return section
+  const unlinked = section
     .split("\n")
     .filter((l) => l.startsWith("- ") && /\d/.test(l))
     .filter((l) => {
@@ -132,12 +134,95 @@ export function auditClaims(report: string, logText: string): string[] {
       );
       return (numbers ?? []).some((n) => !values.has(Number(n)));
     });
+  return [...unlinked, ...auditAblations(report, logText)];
+}
+
+export const ABLATIONS_DISABLED_LINE = "Ablations disabled";
+export const NO_ABLATIONS_LINE = "No promoted changes to ablate";
+const ABLATION_HEADER = "| Reverted commit | Mean | Std | Eval | Status |";
+
+const cell = (text: string) => oneLine(text).replace(/\|/g, "/");
+
+function ablationRow(r: AblationRow): string {
+  const status =
+    r.status === "ok" ? "ok" : `${r.status}: ${cell(r.reason ?? "unknown")}`;
+  const link = r.evalId ? `[eval:${cell(r.evalId)}]` : "-";
+  const num = (n: number | undefined) =>
+    r.status === "ok" && isNumber(n) ? String(n) : "-";
+  return `| ${cell(r.sha.slice(0, 12))} | ${num(r.mean)} | ${num(r.std)} | ${link} | ${status} |`;
+}
+
+/** The report's Ablations section: a table linking each row to its eval, or why there is none */
+export function ablationSection(
+  outcome: AblationOutcome | undefined,
+): string[] {
+  if (!outcome) return [];
+  const body =
+    outcome.state === "disabled"
+      ? [ABLATIONS_DISABLED_LINE]
+      : outcome.state === "none"
+        ? [NO_ABLATIONS_LINE]
+        : [
+            "Each row reverts one commit between the baseline and ralph/best and re-scores the result over the contract seeds. Evidence only: nothing was promoted.",
+            "",
+            ABLATION_HEADER,
+            "| --- | --- | --- | --- | --- |",
+            ...outcome.rows.map(ablationRow),
+          ];
+  return ["## Ablations", "", ...body, ""];
+}
+
+/**
+ * Rows of a report's Ablations table that fail the audit: an ok row must link
+ * to an `eval` event in the log whose recorded mean and std it repeats, and a
+ * failed row may link only to an eval the log knows.
+ */
+export function auditAblations(report: string, logText: string): string[] {
+  const recorded = new Map<string, { mean: unknown; std: unknown }>();
+  for (const e of parseLog(logText)) {
+    if (e.type === "eval" && typeof e.eval_id === "string") {
+      recorded.set(e.eval_id, { mean: e.mean, std: e.std });
+    }
+  }
+  const section = report.split(/^## Ablations$/m)[1]?.split(/^## /m)[0] ?? "";
+  return section
+    .split("\n")
+    .filter((l) => l.startsWith("| ") && l !== ABLATION_HEADER)
+    .filter((l) => !/^\|( --- \|)+$/.test(l))
+    .filter((l) => {
+      const cells = l
+        .split("|")
+        .slice(1, -1)
+        .map((c) => c.trim());
+      if (cells.length !== 5) return true;
+      const [, mean, std, link, status] = cells as [
+        string,
+        string,
+        string,
+        string,
+        string,
+      ];
+      const id = link.match(/^\[eval:([^\]]+)\]$/)?.[1];
+      const known = id === undefined ? undefined : recorded.get(id);
+      if (status !== "ok") {
+        return id !== undefined && !known;
+      }
+      return (
+        !known ||
+        Number(mean) !== known.mean ||
+        Number(std) !== known.std ||
+        mean === "-" ||
+        std === "-"
+      );
+    });
 }
 
 export interface ReportInput {
   projectPath: string;
   runId: string;
   endReason: ReportEndReason;
+  /** The ablation phase's result; set only for a completed run */
+  ablation?: AblationOutcome;
   now?: Date;
 }
 
@@ -213,6 +298,7 @@ export async function renderReport(input: ReportInput): Promise<string> {
       ? claims
       : ["No claims: the log has no runner evals."]),
     "",
+    ...ablationSection(input.ablation),
   ].join("\n");
 }
 
