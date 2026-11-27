@@ -41,7 +41,7 @@ export class DefaultOrchestrator implements AgentOrchestrator {
     this.runner = new RalphRunner({
       projectPath: config.projectPath,
       maxIterations: config.maxIterations ?? 10,
-      enableTeams: config.enableTeams,
+      workers: config.workers,
       sandbox: config.sandbox,
       onOutput: (event) => this.emitOutput(event),
       onIterationStart: (iteration) => this.emitIterationChange(iteration),

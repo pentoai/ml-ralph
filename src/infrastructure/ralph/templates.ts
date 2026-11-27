@@ -395,74 +395,6 @@ The Kanban forces you to:
 
 ---
 
-## Parallel Experiments (Agent Teams)
-
-When you have **2-3 independent hypotheses** ready to test simultaneously, you can use agent teams to run them in parallel. This saves significant time when experiments are independent and training takes more than a few minutes.
-
-### When to Use Parallel Experiments
-
-**DO use when:**
-- 2-3 hypotheses are independent (no shared state or sequential dependencies)
-- Each can run on its own git branch
-- Training/evaluation takes >5 minutes per experiment
-- You're in the EXECUTE phase with a clear strategy
-
-**DO NOT use when:**
-- Hypotheses are sequential (one depends on results of another)
-- You're still in the UNDERSTAND or STRATEGIZE phase
-- You have only 1 hypothesis to test
-- Experiments modify shared files (data, configs) that would conflict
-
-### How to Run Parallel Experiments
-
-1. **Create a team**: Use \`TeamCreate\` to create a coordination team
-2. **Create tasks**: Use \`TaskCreate\` for each experiment
-3. **Spawn teammates**: Use \`Task\` (with \`team_name\`) for each hypothesis — one agent per experiment, each on its own \`experiment/<H-ID>\` branch
-4. **Teammate prompt template**: Each teammate receives:
-   - Branch name: \`experiment/<H-ID>\`
-   - Hypothesis description and expected outcome
-   - Specific steps to execute
-   - Constraints: stay on your branch, don't modify shared state, log results to wandb
-5. **Collect results**: Teammates send results via \`SendMessage\`
-6. **Synthesize**: Compare metrics across experiments, pick winner
-7. **Merge**: Merge the winning branch, clean up others
-
-### Teammate Prompt Template
-
-When spawning a teammate for an experiment, include:
-
-\`\`\`
-You are running experiment <H-ID> for an ML project.
-
-Branch: experiment/<H-ID>
-Hypothesis: <description>
-Expected outcome: <what you expect>
-
-Steps:
-1. git checkout -b experiment/<H-ID>
-2. <specific implementation steps>
-3. Train and evaluate
-4. Log results to wandb with name "<descriptive-name>"
-
-Constraints:
-- Stay on your branch — do not modify main
-- Do not modify shared data files
-- Log final metrics via SendMessage when done
-
-Report back: final metrics dict and any observations/surprises.
-\`\`\`
-
-### Parallel Experiment Log Events
-
-\`\`\`jsonl
-{"type":"parallel_start","team":"exp-team","hypotheses":["H-001","H-002"],"reason":"Both hypotheses are independent feature engineering approaches"}
-{"type":"parallel_result","hypothesis_id":"H-001","agent":"experiment-1","metrics":{"auc":0.8234,"f1":0.71},"branch":"experiment/H-001"}
-{"type":"parallel_result","hypothesis_id":"H-002","agent":"experiment-2","metrics":{"auc":0.7891,"f1":0.68},"branch":"experiment/H-002"}
-{"type":"parallel_synthesis","winner":"H-001","reason":"Higher AUC with simpler model","merged_branch":"experiment/H-001"}
-\`\`\`
-
----
-
 ## Data Verification (MANDATORY - Before ANY Modeling)
 
 Before you write a single line of training code, you MUST verify your data:
@@ -736,9 +668,6 @@ Log events with \`${LOG_COMMAND} <type> '<json>'\`. Each example below is the JS
 | \`prd_updated\` | field, change, reason | PRD modification |
 | \`kanban_updated\` | changes, reason | Plan evolution (every iteration) |
 | \`status\` | status, reason | Status change |
-| \`parallel_start\` | team, hypotheses, reason | Starting parallel experiments |
-| \`parallel_result\` | hypothesis_id, agent, metrics, branch | Result from a parallel experiment |
-| \`parallel_synthesis\` | winner, reason, merged_branch | Synthesis of parallel results |
 
 A \`hypothesis\` event is rejected unless all of these are present:
 - \`id\` (string): e.g. \`H-001\`; experiments and decisions refer to it as \`hypothesis_id\`
@@ -1263,6 +1192,8 @@ export const DEFAULT_KANBAN = {
 export interface BaseEvent {
   ts: string;
   type: string;
+  /** With --workers 2: the worker (1 or 2) whose session or candidate the event belongs to */
+  worker?: number;
 }
 
 export interface PhaseEvent extends BaseEvent {
@@ -1563,6 +1494,21 @@ export interface HoldoutAccessEvent extends BaseEvent {
   iteration: number;
 }
 
+/** Written by the runner (never the agent) when a worker's claude process failed (--workers 2); the other worker carries on */
+export interface WorkerCrashedEvent extends BaseEvent {
+  type: "worker_crashed";
+  worker: number;
+  iteration: number;
+  /** First line of the failure, at most a few hundred characters */
+  error: string;
+}
+
+/** Written by the runner (never the agent) when a start removed worktrees a crashed run had left */
+export interface WorktreesCleanedEvent extends BaseEvent {
+  type: "worktrees_cleaned";
+  removed: number;
+}
+
 /** Written by the runner (never the agent) when the user re-locks the eval files after a change */
 export interface ContractRelockedEvent extends BaseEvent {
   type: "contract_relocked";
@@ -1702,6 +1648,8 @@ export type RalphEvent =
   | BudgetExhaustedEvent
   | ReportFailedEvent
   | HoldoutAccessEvent
+  | WorkerCrashedEvent
+  | WorktreesCleanedEvent
   | ContractRelockedEvent
   | LockMigratedEvent
   | JobStoppedEvent

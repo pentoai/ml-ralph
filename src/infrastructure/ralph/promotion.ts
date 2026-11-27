@@ -66,6 +66,10 @@ export interface JudgeCandidateOptions {
   lockedFiles: EvalLock["files"];
   /** Called when the runner's own promotion event fails its schema and is not logged */
   onInvalidEvent?: (invalid: InvalidRunnerEvent) => void;
+  /** --workers 2: the worker whose candidate this is. Only its eval and hypotheses count, and its events carry the tag */
+  worker?: number;
+  /** --workers 2: the worker's worktree, where HEAD is the candidate's commit (default: projectPath) */
+  gitPath?: string;
 }
 
 type JudgeState = Partial<
@@ -261,6 +265,7 @@ export async function judgeCandidate(
 ): Promise<PromotionDecision> {
   const { projectPath, claimedEvalId } = options;
   const state: JudgeState = {};
+  const tag = options.worker ? { worker: options.worker } : {};
 
   const finish = async (
     verdict: PromotionEvent["verdict"],
@@ -269,6 +274,7 @@ export async function judgeCandidate(
     const text = oneLine(reason);
     const event: Omit<PromotionEvent, "ts"> = {
       type: "promotion",
+      ...tag,
       verdict,
       reason: text,
       ...(claimedEvalId
@@ -338,7 +344,9 @@ async function judge(
     (e): e is EvalEvent =>
       e.type === "eval" &&
       e.eval_id === claimedEvalId &&
-      e.ts >= iterationStartedAt,
+      e.ts >= iterationStartedAt &&
+      // A worker cannot hand in the other worker's eval
+      (options.worker === undefined || e.worker === options.worker),
   );
   if (!evalEvent) {
     return reject(
@@ -426,7 +434,7 @@ async function judge(
   }
 
   // Only a candidate that already wins on score is worth a verifier session
-  const head = await gitHead(projectPath, true);
+  const head = await gitHead(options.gitPath ?? projectPath, true);
   if (!head.ok) return reject(head.error);
   if (metrics.sha && metrics.sha !== head.ref) {
     return reject(
@@ -441,7 +449,7 @@ async function judge(
     );
   }
 
-  const hypothesis = pickHypothesis(events, iterationStartedAt);
+  const hypothesis = pickHypothesis(events, iterationStartedAt, options.worker);
   if (!hypothesis) {
     return reject("no hypothesis with rubrics was logged for this candidate");
   }
@@ -455,6 +463,7 @@ async function judge(
     ...(options.onInvalidEvent
       ? { onInvalidEvent: options.onInvalidEvent }
       : {}),
+    ...(options.worker ? { worker: options.worker } : {}),
   };
   const verdict = await verify(verifierOptions);
   state.verifier_id = verdict.id;
@@ -482,6 +491,7 @@ async function judge(
         projectPath,
         {
           type: "tag_failed",
+          ...(options.worker ? { worker: options.worker } : {}),
           tag: BEST_TAG,
           sha: head.ref,
           eval_id: metrics.eval_id,
@@ -512,10 +522,12 @@ async function judge(
 function pickHypothesis(
   events: Awaited<ReturnType<typeof readLogFile>>,
   iterationStartedAt: string,
+  worker?: number,
 ): VerifyCandidateOptions["hypothesis"] | null {
   const hypotheses = events.filter(
     (e): e is HypothesisEvent =>
       e.type === "hypothesis" &&
+      (worker === undefined || e.worker === worker) &&
       Array.isArray(e.rubrics) &&
       e.rubrics.length > 0,
   );

@@ -38,10 +38,10 @@ This repository is the whole product. There is no separate Python agent. The age
 
 See `docs/ARCHITECTURE.md` for the details. In short:
 
-- `src/index.tsx` handles `--help`, `--teams` and `init`, re-launches inside tmux, and renders `<App>`.
+- `src/index.tsx` handles `--help`, `--workers` and `init`, re-launches inside tmux, and renders `<App>`.
 - `src/ui/app.tsx` calls `ensureInitialized`, creates a `DefaultOrchestrator`, and owns the keyboard shortcuts.
 - `DefaultOrchestrator` (`src/application/orchestrator`) wraps `RalphRunner` and fans its callbacks out to the UI.
-- `RalphRunner` (`src/infrastructure/ralph/runner.ts`) runs up to N iterations. Each one spawns `claude --dangerously-skip-permissions --verbose -p <prompt> --output-format stream-json` in the project directory and parses the stream into `StreamEvent`s. With `--teams` it sets `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`.
+- `RalphRunner` (`src/infrastructure/ralph/runner.ts`) runs up to N iterations. Each one spawns `claude --dangerously-skip-permissions --verbose -p <prompt> --output-format stream-json` in the project directory and parses the stream into `StreamEvent`s. With `--workers 2` two loops run in separate git worktrees (see `docs/ARCHITECTURE.md`, Workers).
 - `log-parser.ts` reads and watches `.ml-ralph/log.jsonl`, `prd.json` and `kanban.json`. The panels render what it returns.
 
 Every module under `src/infrastructure` is used by the running app. If you add one, wire it in. If you stop using one, delete it with its tests.
@@ -77,7 +77,7 @@ Every module under `src/infrastructure` is used by the running app. If you add o
 ```
 ml-ralph [project-path]       Launch the TUI (default: current directory)
 ml-ralph init [name] [path]   Initialize a project, keeping existing files
-ml-ralph --teams              Enable parallel experiments via agent teams
+ml-ralph --workers 2          Run two iteration loops in separate git worktrees (default 1)
 ml-ralph init --force         Overwrite template files, keep project data
 ```
 
@@ -109,7 +109,7 @@ The agent alternates between four phases, logged as `phase` events:
 UNDERSTAND → STRATEGIZE → EXECUTE → REFLECT
 ```
 
-Other event types in `log.jsonl` include `thinking`, `mental_model`, `research`, `path_analysis`, `hypothesis`, `experiment`, `learning`, `decision`, `strategic_retreat`, `prd_updated`, `kanban_updated` and `parallel_*` events for agent teams. The TypeScript interfaces are at the bottom of `templates.ts`. The same events are documented in the `ralph-log-events` skill, and the file schemas are in the `ralph-file-schemas` skill. Change them together.
+Other event types in `log.jsonl` include `thinking`, `mental_model`, `research`, `path_analysis`, `hypothesis`, `experiment`, `learning`, `decision`, `strategic_retreat`, `prd_updated`, `kanban_updated` and the older `parallel_*` events (RALPH_MD no longer asks for them). The TypeScript interfaces are at the bottom of `templates.ts`. The same events are documented in the `ralph-log-events` skill, and the file schemas are in the `ralph-file-schemas` skill. Change them together.
 
 Experiment events can carry `wandb_run_id` and `wandb_url`, and the experiments panel shows them. The agent is told to track every training run in W&B (using offline mode if the user is not logged in). The app has no W&B API client.
 
