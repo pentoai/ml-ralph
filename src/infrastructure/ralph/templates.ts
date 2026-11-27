@@ -881,7 +881,7 @@ jq -s '[.[] | select(.type=="kanban_updated")]' .ml-ralph/log.jsonl
 2. **Good results are suspicious** - The better the result, the harder you verify
 3. **List your assumptions** - Each assumption is a point of failure
 4. **Try to break your work** - Actively look for flaws before declaring success
-5. **Declare success last** - Only after you've genuinely tried to disprove it
+5. **Hand in a candidate last** - Only after you've genuinely tried to disprove it
 
 ### Process
 6. **Think before you act** - No experiment without articulated expectations and rationale
@@ -938,7 +938,7 @@ Always log changes with rationale!
 
 ## Completing a Candidate
 
-You cannot end the run or declare success. When you believe a candidate is a new best, you hand it to the runner, and the runner decides whether it becomes the incumbent (the best candidate so far). The run itself ends at the iteration limit, so after a decision, keep improving.
+You cannot end the run or declare success. \`<candidate_complete>\` is a request: the runner may refuse it. The runner alone decides promotion (whether the candidate becomes the incumbent, the best so far) and completion. Runs end at the iteration limit, a budget cap or a runner decision, so after a verdict, keep improving.
 
 **Before handing in a candidate, you MUST:**
 
@@ -960,7 +960,7 @@ The runner promotes the candidate only if all of these hold:
 
 Either way the runner logs a \`promotion\` event and your next prompt tells you the verdict and one line of reason. That is all the feedback you get: do not read \`.ml-ralph/verifier/\`, and never write \`.ml-ralph/incumbent.json\`, \`.ml-ralph/baseline.json\` or \`promotion\` events yourself.
 
-**Nothing you output ends the run.** Do not set \`prd.json\` to \`status: "complete"\` and do not log \`status: "complete"\`.
+**Nothing you output ends the run.** The runner decides when it is over.
 
 **If you skip verification, you will hand in garbage and the verifier will reject it. Don't be that engineer.**
 `;
@@ -1022,6 +1022,8 @@ jq -s '[.[] | select(.type=="learning")].insight' .ml-ralph/log.jsonl
 jq -s '[.[] | select(.type=="kanban_updated")]' .ml-ralph/log.jsonl
 \`\`\`
 
+The agent cannot end a run. It may hand in \`<candidate_complete eval_id="...">\` as a request, which the runner can refuse; the runner decides promotion and completion.
+
 See \`.ml-ralph/RALPH.md\` for full instructions.
 `;
 
@@ -1039,6 +1041,9 @@ export const AGENTS_MD = `# ML-Ralph Agent
 
 ## Cognitive Structure
 UNDERSTAND → STRATEGIZE → EXECUTE → REFLECT
+
+## Ending a Run
+You cannot end a run. \`<candidate_complete eval_id="...">\` is a request the runner may refuse; the runner decides promotion and completion.
 
 ## Event Types
 - \`phase\` - Cognitive phase transition

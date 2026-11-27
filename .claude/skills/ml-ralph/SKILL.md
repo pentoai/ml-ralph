@@ -9,11 +9,11 @@ Help users create a PRD for their ML project through conversation.
 
 ## Core Principle: PERSISTENCE
 
-**The agent does NOT stop until success criteria are met.**
+**Keep going until the runner ends the run; only the runner decides completion.**
 
 - If something seems "impossible," investigate why - don't rationalize
 - If you hit a ceiling, try fundamentally different approaches (not variations)
-- If you truly cannot progress, set `status: "blocked"` and ask user - never declare "complete" prematurely
+- If you truly cannot progress, set `status: "blocked"` and ask user - never claim success prematurely
 - Before ANY stopping decision, run the **Devil's Advocate** check (see RALPH.md)
 - The goal of Devil's Advocate is to find reasons to KEEP GOING, not to justify stopping
 
