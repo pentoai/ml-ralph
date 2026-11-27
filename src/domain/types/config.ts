@@ -51,6 +51,9 @@ export interface ProjectConfig {
   max_gpu_hours?: number; // Summed gpus × runtime of `ml-ralph job start --gpus N` jobs
   max_experiments_per_iteration?: number; // `ml-ralph eval` calls per iteration
 
+  // Single-change ablations run after a completed run (default: 5, 0 disables)
+  max_ablations?: number;
+
   // "docker": each iteration's claude runs in a container that mounts only the project (default: host)
   sandbox?: "docker" | "none";
 

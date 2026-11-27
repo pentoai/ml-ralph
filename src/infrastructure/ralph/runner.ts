@@ -6,6 +6,12 @@ import { join } from "node:path";
 import type { Subprocess } from "bun";
 import type { TrainingJob } from "../../domain/types/index.ts";
 import {
+  type AblationOutcome,
+  type AblationRow,
+  readMaxAblations,
+  runAblations,
+} from "./ablation.ts";
+import {
   type BudgetCaps,
   type BudgetExhaustion,
   type BudgetStatus,
@@ -212,6 +218,8 @@ export class RalphRunner {
   private reported = false;
   /** Why the loop returned early without its own report, when the cause is known */
   private endCause: ReportEndReason | null = null;
+  private maxAblations = 0;
+  private ablation: AblationOutcome | undefined;
   /** Pending from start() until the run has ended and its report is on disk */
   private settled: Promise<void> | null = null;
   private contractDecision: ((d: ContractDecision | null) => void) | null =
@@ -261,6 +269,13 @@ export class RalphRunner {
       return;
     }
 
+    const ablations = await readMaxAblations(this.config.projectPath);
+    if (!ablations.ok) {
+      this.config.onError?.(new Error(ablations.error));
+      return;
+    }
+    this.maxAblations = ablations.max;
+
     const mode = await readSandboxMode(this.config.projectPath);
     if (!mode.ok) {
       this.config.onError?.(new Error(mode.error));
@@ -296,6 +311,7 @@ export class RalphRunner {
     this.userStopped = false;
     this.reported = false;
     this.endCause = null;
+    this.ablation = undefined;
     this.budgetRunId = "";
     this.pinnedHashes = null;
     this.pendingFeedback = [];
@@ -381,6 +397,7 @@ export class RalphRunner {
         this.config.onIterationEnd?.(i, result);
 
         if (await this.judgeIteration(result, iterationStartedAt)) {
+          await this.runAblationPhase();
           await this.endRun("completed");
           return;
         }
@@ -485,6 +502,65 @@ export class RalphRunner {
     this.config.onComplete?.(reason);
   }
 
+  /**
+   * After a completed run: revert each promoted commit one at a time and score
+   * the result. Evidence only. The phase counts against max_usd and
+   * max_wall_clock_minutes; a failure here never stops the run from ending.
+   */
+  private async runAblationPhase(): Promise<void> {
+    try {
+      // Sandbox mode: the reverted candidate is the agent's code, so it runs in a container as search evals do
+      const wrap =
+        this.sandbox === "docker"
+          ? commandWrapper(
+              this.config.dockerBin ?? "docker",
+              await sandboxProjectPath(this.config.projectPath),
+            )
+          : undefined;
+      this.ablation = await runAblations({
+        projectPath: this.config.projectPath,
+        runId: this.budgetRunId,
+        maxAblations: this.maxAblations,
+        wrap,
+        stopReason: () =>
+          exhaustedCap(this.budgetNow())
+            ? "budget"
+            : this.running
+              ? null
+              : "stopped",
+        onRow: (row) => this.logAblation(row),
+      });
+    } catch (error) {
+      await this.logCompletion({
+        type: "report_failed",
+        run_id: this.budgetRunId.slice(0, 100),
+        reason: `ablations: ${errorText(error)}`,
+      });
+    }
+    // The phase's time is part of the run's totals
+    const status = this.budgetNow();
+    await this.appendLogEvent({
+      type: "budget_status",
+      run_id: this.budgetRunId,
+      iteration: this.currentIteration,
+      ...status,
+    });
+    this.config.onBudget?.(status);
+  }
+
+  private async logAblation(row: AblationRow): Promise<void> {
+    await this.appendLogEvent({
+      type: "ablation",
+      run_id: this.budgetRunId.slice(0, 100),
+      reverted_sha: row.sha,
+      status: row.status,
+      ...(row.reason ? { reason: row.reason } : {}),
+      ...(row.evalId ? { eval_id: row.evalId } : {}),
+      ...(row.mean !== undefined ? { mean: row.mean } : {}),
+      ...(row.std !== undefined ? { std: row.std } : {}),
+    });
+  }
+
   /** Write report.md; a failure is logged as report_failed and never stops the run from ending */
   private async writeRunReport(endReason: ReportEndReason): Promise<void> {
     this.reported = true;
@@ -493,6 +569,7 @@ export class RalphRunner {
         projectPath: this.config.projectPath,
         runId: this.budgetRunId,
         endReason,
+        ablation: endReason === "run_complete" ? this.ablation : undefined,
       });
     } catch (error) {
       await this.logCompletion({

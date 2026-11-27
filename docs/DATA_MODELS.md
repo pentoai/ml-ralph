@@ -377,6 +377,9 @@ interface ProjectConfig {
   // (never the holdout or ~/.config/ml-ralph); "none" or unset = the host
   sandbox?: "docker" | "none";
 
+  // Ablations after a completed run (default 5, 0 disables)
+  max_ablations?: number;
+
   // Tooling
   runtime: {
     packageManager: "uv" | "pip" | "poetry" | "conda";
@@ -384,6 +387,8 @@ interface ProjectConfig {
   };
 }
 ```
+
+`max_ablations`: after a completed run the runner reverts each commit between the baseline and `ralph/best` one at a time and scores it (see the `ablation` event). A non-negative integer, default 5; `0` disables the phase. Only the first N ablations in commit order run and the rest are `skipped: cap`. Anything else stops the run at start with an error naming the key.
 
 `critique_threshold_minutes`: when set, `ml-ralph job start` requires `--est-minutes <n>` and `--hypothesis-id <id>` (the id of a `hypothesis` event in `log.jsonl`). A job whose estimate is **above** the threshold is first critiqued by a read-only `claude -p` session (120 s limit) that reads the hypothesis, `conclusions.md` and `kanban.json`, and the runner logs a `critique_verdict` event. `reject` makes `job start` exit non-zero, print the one-line reason to stderr and start no job; `approve` and `error` (crash, timeout, unusable reply) let the job start. At or below the threshold, or with the key unset, no critique runs. The critique's `total_cost_usd` is added to the run's spend and counts against `max_usd`. A value that is not a positive number stops the run at start (and `job start`) with an error naming the key.
 
@@ -610,6 +615,7 @@ A hypothesis is rejected unless `id`, `claim`, `expected_delta`, `rubrics` (at l
 | `run_complete` (runner-only) | `eval_id`, `search_score`, `holdout_score`, `verifier_verdict` (`approve`), `verifier_id` |
 | `completion_rejected` (runner-only) | `eval_id`, `reason` (`verifier_rejected`, `holdout_failed`, `overfitting_gap`), `detail`; optional `verifier_id` |
 | `completion_blocked` (runner-only) | `eval_id`, `reason` (`holdout_not_configured`, `holdout_unavailable`, `holdout_already_scored`, `verifier_error`, `holdout_error`, `completion_error`), `error` |
+| `ablation` (runner-only) | `run_id`, `reverted_sha`, `status` (`ok`, `failed`, `skipped`); optional `reason` (`cap`, `budget`, `stopped` when skipped, the cause when failed), `eval_id` (the runner's eval of the reverted tree, also set when that eval failed), `mean`, `std` (over the contract seeds; `ok` only) |
 | `holdout_access` (runner-only) | `tool` (name of the tool whose input contained the holdout path), `iteration` |
 | `promotion` (runner-only) | `verdict` (`promoted`, `rejected`), `reason`; optional `candidate_eval_id`, `incumbent_eval_id`, `verifier_id`, `candidate_mean`, `reference_mean` |
 | `critique_verdict` (runner-only) | `hypothesis_id`, `verdict` (`approve`, `reject`, `error`), `reason` (one line), `est_minutes`; optional `cost_usd` |
