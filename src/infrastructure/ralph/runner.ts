@@ -56,7 +56,7 @@ import {
   type StopJobResult,
   stopJob,
 } from "./jobs.ts";
-import { appendValidatedEvent } from "./log-command.ts";
+import { appendValidatedEvent, WORKER_ENV } from "./log-command.ts";
 import {
   judgeCandidate,
   type PromotedCandidate,
@@ -80,6 +80,16 @@ import {
 } from "./sandbox.ts";
 import { FORWARD_DIR, startForwarder } from "./sandbox-forward.ts";
 import { verifyCandidate } from "./verifier.ts";
+import {
+  checkWorktreeSupport,
+  cleanStaleWorktrees,
+  createWorktree,
+  mergeConclusions,
+  parseWorkers,
+  removeWorktrees,
+  splitConclusions,
+  type Worktree,
+} from "./workers.ts";
 
 /** Why a run ended. Only the runner ends a run: the agent's output never does */
 export type RunCompleteReason =
@@ -97,7 +107,8 @@ const MAX_TIMER_MS = 2_147_483_647;
 export interface RunnerConfig {
   projectPath: string;
   maxIterations?: number;
-  enableTeams?: boolean;
+  /** Iteration loops to run, each in its own git worktree, sharing one budget (1 or 2; default 1) */
+  workers?: number;
   /** "docker": claude runs in a container that mounts only the project (default: config.json `sandbox`, else host) */
   sandbox?: SandboxMode | "none";
   /** The docker executable (default: docker; tests) */
@@ -160,6 +171,8 @@ export interface StreamEvent {
   toolInput?: Record<string, unknown>;
   isError?: boolean;
   agentName?: string;
+  /** With --workers 2: the worker whose session produced the event */
+  worker?: number;
   teamEvent?:
     | "team_create"
     | "teammate_spawn"
@@ -168,6 +181,59 @@ export interface StreamEvent {
 }
 
 export type ContractDecision = "relock" | "stop";
+
+/**
+ * One iteration loop: its claude process, where that runs and what the
+ * runner will tell it next. Without --workers there is exactly one, in the
+ * project directory, and its events carry no worker tag.
+ */
+interface WorkerCtx {
+  /** 1-based */
+  id: number;
+  /** More than one worker runs: output and log events carry the worker number */
+  tagged: boolean;
+  /** The cwd of its claude process: its worktree, or the project itself */
+  dir: string;
+  /** Added to its claude process's environment (the git settings of a worktree) */
+  env: Record<string, string>;
+  process: Subprocess | null;
+  /** Name of the container claude runs in, in sandbox mode */
+  container: string | null;
+  lastToolCall: ToolCallRef | null;
+  iterationCost: number | null;
+  /** The runner's decisions on this worker's candidates, for its next prompt */
+  feedback: string[];
+  /** False once its claude process failed; the other worker carries on */
+  alive: boolean;
+}
+
+/** What a worker's iteration hands back for judging */
+interface WorkerIteration {
+  worker: WorkerCtx;
+  result: string;
+  startedAt: string;
+}
+
+const workerTag = (w: WorkerCtx | undefined) =>
+  w?.tagged ? { worker: w.id } : {};
+
+const newWorker = (
+  id: number,
+  dir: string,
+  tagged: boolean,
+  env: Record<string, string> = {},
+): WorkerCtx => ({
+  id,
+  tagged,
+  dir,
+  env,
+  process: null,
+  container: null,
+  lastToolCall: null,
+  iterationCost: null,
+  feedback: [],
+  alive: true,
+});
 
 const BASE_PROMPT = `Read .ml-ralph/RALPH.md for instructions.
 
@@ -182,20 +248,21 @@ Only the runner decides whether a candidate is promoted, and only the runner end
 export class RalphRunner {
   private config: RunnerConfig;
   private running = false;
-  private currentProcess: Subprocess | null = null;
-  /** Name of the container claude runs in, in sandbox mode */
-  private currentContainer: string | null = null;
+  /** The run's loops, in worker order; empty until start() */
+  private workers: WorkerCtx[] = [];
+  /** The git worktrees of this run's workers (empty with one worker) */
+  private worktrees: Worktree[] = [];
+  /** With more than one worker: the workers' conclusions merged, what every prompt inlines */
+  private mergedConclusions: string | null = null;
   private sandbox: SandboxMode | "none" | undefined;
   private currentIteration = 0;
   private pendingHints: string[] = [];
-  private pendingFeedback: string[] = [];
   /** Jobs the user stopped; kept across start() so a stop while idle still reaches the next prompt */
   private pendingJobNotes: string[] = [];
   /** eval_ids the completion gate has asked scoreHoldout about in this run */
   private holdoutScored = new Set<string>();
-  private lastToolCall: ToolCallRef | null = null;
   private holdoutNeedles: HoldoutNeedles = [];
-  private holdoutAccess: { toolName: string } | null = null;
+  private holdoutAccess: { toolName: string; worker: WorkerCtx } | null = null;
   private pinnedHashes: EvalLock["files"] | null = null;
   private budgetCaps: BudgetCaps = {};
   private budgetRunId = "";
@@ -206,7 +273,6 @@ export class RalphRunner {
   private budgetGpuHours = 0;
   /** Lines of the critique cost ledger already counted in budgetUsd */
   private critiqueLinesCounted = 0;
-  private iterationCost: number | null = null;
   private budgetStop: BudgetExhaustion | null = null;
   private userStopped = false;
   private reported = false;
@@ -244,7 +310,30 @@ export class RalphRunner {
       return;
     }
 
+    const workerCount = parseWorkers(String(this.config.workers ?? 1));
+    if (!workerCount.ok) {
+      this.config.onError?.(new Error(workerCount.error));
+      return;
+    }
+    if (workerCount.workers > 1) {
+      const unsupported = await checkWorktreeSupport(this.config.projectPath);
+      if (unsupported) {
+        this.config.onError?.(new Error(unsupported));
+        return;
+      }
+    }
+
     await ensureConclusions(this.config.projectPath);
+    // A run that crashed leaves its worktrees behind; they never outlive the next start
+    const stale = await cleanStaleWorktrees(this.config.projectPath).catch(
+      () => [],
+    );
+    if (stale.length > 0) {
+      await this.appendLogEvent({
+        type: "worktrees_cleaned",
+        removed: stale.length,
+      }).catch(() => {});
+    }
     await pruneStaleJobs(this.config.projectPath, undefined, (name) =>
       removeContainer(this.config.dockerBin ?? "docker", name),
     ).catch(() => []);
@@ -298,7 +387,9 @@ export class RalphRunner {
     this.endCause = null;
     this.budgetRunId = "";
     this.pinnedHashes = null;
-    this.pendingFeedback = [];
+    this.workers = [];
+    this.worktrees = [];
+    this.mergedConclusions = null;
     this.holdoutScored = new Set();
     this.holdoutAccess = null;
     let baselineRecorded = false;
@@ -310,6 +401,7 @@ export class RalphRunner {
         await this.endForBudget(spent);
         return;
       }
+      this.workers = [newWorker(1, this.config.projectPath, false)];
 
       for (let i = 1; i <= this.config.maxIterations!; i++) {
         if (!this.running) break;
@@ -323,6 +415,10 @@ export class RalphRunner {
           return;
         }
         this.pinnedHashes ??= await readLockHashes(this.config.projectPath);
+        // The workers start once the eval is locked: SETUP writes the contract in the project itself
+        if (this.pinnedHashes && this.workers.length < workerCount.workers) {
+          await this.startWorkers(workerCount.workers);
+        }
         if (gate.migrated) {
           await this.appendLogEvent({
             type: "lock_migrated",
@@ -341,14 +437,6 @@ export class RalphRunner {
         this.currentIteration = i;
         this.config.onIterationStart?.(i);
 
-        // Build prompt with the runner's last decision and any pending hints
-        const prompt = await this.buildPrompt();
-        const conclusionsBefore = await readConclusions(
-          this.config.projectPath,
-        );
-        const logLinesBefore = await countLogLines(this.config.projectPath);
-        const iterationStartedAt = new Date().toISOString();
-
         // Emit iteration marker
         this.config.onOutput?.({
           type: "iteration_marker",
@@ -356,20 +444,34 @@ export class RalphRunner {
         });
 
         this.holdoutNeedles = await loadHoldoutNeedles(this.config.projectPath);
-        let result: string;
-        try {
-          result = await this.runIteration(prompt);
-        } catch (error) {
-          await this.recordBudget();
-          await this.enforceConclusions(conclusionsBefore, logLinesBefore);
-          throw error;
+        // Every worker runs its iteration; the faster one waits here for the other
+        const active = this.workers.filter((w) => w.alive);
+        let waiting = active.length;
+        const outcomes = await Promise.allSettled(
+          active.map(async (w) => {
+            try {
+              return await this.runWorkerIteration(w);
+            } finally {
+              waiting--;
+              if (w.tagged && waiting > 0 && this.running) {
+                this.config.onOutput?.({
+                  type: "text",
+                  content: `Worker ${w.id} finished iteration ${i}; waiting for the other worker`,
+                  worker: w.id,
+                });
+              }
+            }
+          }),
+        );
+        const finished: WorkerIteration[] = [];
+        for (const [index, outcome] of outcomes.entries()) {
+          if (outcome.status === "fulfilled") finished.push(outcome.value);
+          else await this.workerFailed(active[index]!, outcome.reason);
         }
-        await this.recordBudget();
-        await this.enforceConclusions(conclusionsBefore, logLinesBefore);
 
         const access = this.holdoutAccessed();
         if (access) {
-          await this.endForHoldoutAccess(access.toolName);
+          await this.endForHoldoutAccess(access.toolName, access.worker);
           return;
         }
 
@@ -378,18 +480,29 @@ export class RalphRunner {
           return;
         }
 
-        this.config.onIterationEnd?.(i, result);
+        // Both workers are done: their conclusions are merged before anyone reads them again
+        await this.syncConclusions();
+        this.config.onIterationEnd?.(
+          i,
+          finished.length === 1 && !finished[0]!.worker.tagged
+            ? finished[0]!.result
+            : finished
+                .map((f) => `[worker ${f.worker.id}]\n${f.result}`)
+                .join("\n\n"),
+        );
 
-        if (await this.judgeIteration(result, iterationStartedAt)) {
-          await this.endRun("completed");
-          return;
-        }
-
-        // Judging spends time and verifier USD: re-check before building the next prompt
-        const exhausted = exhaustedCap(this.budgetNow());
-        if (exhausted) {
-          await this.endForBudget(exhausted);
-          return;
+        // Candidates are judged one at a time, so the second faces the incumbent the first may have just become
+        for (const f of finished) {
+          if (await this.judgeIteration(f.worker, f.result, f.startedAt)) {
+            await this.endRun("completed");
+            return;
+          }
+          // Judging spends time and verifier USD: re-check before the next judgement and prompt
+          const exhausted = exhaustedCap(this.budgetNow());
+          if (exhausted) {
+            await this.endForBudget(exhausted);
+            return;
+          }
         }
       }
 
@@ -402,17 +515,105 @@ export class RalphRunner {
       this.config.onError?.(err);
       throw err;
     } finally {
-      this.currentProcess = null;
       // Any other way out (user quit, an error) still leaves a report; isRunning() stays true until it is written
       if (!this.reported) {
         await this.writeRunReport(
           this.endCause ?? (this.userStopped ? "user_quit" : "error"),
         );
       }
+      await this.syncConclusions().catch(() => {});
+      await removeWorktrees(this.config.projectPath, this.worktrees).catch(
+        () => {},
+      );
+      this.worktrees = [];
       this.running = false;
       this.settled = null;
       settle();
     }
+  }
+
+  /** Replace the run's single loop in the project with one loop per worker, each in its own git worktree */
+  private async startWorkers(count: number): Promise<void> {
+    const projectPath = this.config.projectPath;
+    const carried = this.workers.flatMap((w) => w.feedback);
+    this.workers = [];
+    // What an earlier run left in conclusions.md goes back to the worker it came from
+    const earlier = splitConclusions(await readConclusions(projectPath));
+    for (let n = 1; n <= count; n++) {
+      const worktree = await createWorktree(projectPath, n, {
+        runId: this.budgetRunId,
+        conclusions: earlier.get(n) ?? "",
+      });
+      this.worktrees.push(worktree);
+      const worker = newWorker(n, worktree.dir, true, worktree.env);
+      worker.feedback.push(...carried);
+      this.workers.push(worker);
+    }
+    await this.syncConclusions();
+  }
+
+  /** Merge the workers' own conclusions.md files into the project's, the one every prompt inlines */
+  private async syncConclusions(): Promise<void> {
+    if (this.workers.length < 2) return;
+    const merged = mergeConclusions(
+      await Promise.all(
+        this.workers.map(async (w) => ({
+          worker: w.id,
+          text: await readConclusions(w.dir),
+        })),
+      ),
+    );
+    this.mergedConclusions = merged;
+    await Bun.write(
+      join(this.config.projectPath, ".ml-ralph/conclusions.md"),
+      merged,
+    );
+  }
+
+  /** One worker's iteration: prompt, claude, then the budget and conclusions bookkeeping */
+  private async runWorkerIteration(w: WorkerCtx): Promise<WorkerIteration> {
+    const prompt = await this.buildPrompt(w);
+    const conclusionsBefore = await readConclusions(w.dir);
+    const logLinesBefore = await countLogLines(this.config.projectPath);
+    const startedAt = new Date().toISOString();
+    let result: string;
+    try {
+      result = await this.runIteration(prompt, w);
+    } catch (error) {
+      await this.recordBudget(w);
+      await this.enforceConclusions(w, conclusionsBefore, logLinesBefore);
+      throw error;
+    }
+    await this.recordBudget(w);
+    await this.enforceConclusions(w, conclusionsBefore, logLinesBefore);
+    return { worker: w, result, startedAt };
+  }
+
+  /**
+   * A worker's claude process failed. With one worker, or when the user
+   * stopped the run, that ends the run as it always did. With two, the crash
+   * is logged and shown, the worker is retired and the other carries on; only
+   * when none is left does the run fail.
+   */
+  private async workerFailed(w: WorkerCtx, reason: unknown): Promise<void> {
+    const error = reason instanceof Error ? reason : new Error(String(reason));
+    if (!w.tagged || !this.running) throw error;
+    w.alive = false;
+    await this.logCompletion(
+      {
+        type: "worker_crashed",
+        iteration: this.currentIteration,
+        error: errorText(error),
+      },
+      w,
+    );
+    this.config.onOutput?.({
+      type: "error",
+      content: `Worker ${w.id} crashed and is retired: ${errorText(error)}`,
+      isError: true,
+      worker: w.id,
+    });
+    if (!this.workers.some((other) => other.alive)) throw error;
   }
 
   /**
@@ -424,9 +625,9 @@ export class RalphRunner {
     if (this.running) this.userStopped = true;
     this.running = false;
     this.settleContractDecision(null);
-    if (this.currentProcess) {
-      this.killAgent(this.currentProcess, "SIGTERM");
-      this.currentProcess = null;
+    for (const w of this.workers) {
+      if (w.process) this.killAgent(w, w.process, "SIGTERM");
+      w.process = null;
     }
     // Sandbox jobs run in containers outside the TUI's process tree: stopping the run stops them
     return Promise.all([done, this.stopSandboxJobs()]).then(() => {});
@@ -457,7 +658,10 @@ export class RalphRunner {
    * The holdout path is read from the user-level config and reaches only the
    * evaluator subprocess; it is never part of a prompt.
    */
-  async scoreHoldout(evalId: string): Promise<HoldoutResult> {
+  async scoreHoldout(
+    evalId: string,
+    worker?: WorkerCtx,
+  ): Promise<HoldoutResult> {
     // Sandbox mode: the candidate is the agent's code, so it never runs next to the holdout on the host
     const sandboxed = this.sandbox === "docker";
     // The config lookup keeps the configured path; only the mounts use the real one
@@ -467,6 +671,8 @@ export class RalphRunner {
     return scoreHoldout(evalId, {
       projectPath: this.config.projectPath,
       onInvalidEvent: this.reportInvalidEvent,
+      // The candidate's code is in the worker's worktree
+      ...(worker?.tagged ? { workDir: worker.dir, worker: worker.id } : {}),
       ...(sandboxed
         ? {
             mountPath,
@@ -519,7 +725,6 @@ export class RalphRunner {
     await this.refreshGpuHours();
     // Critiques before this start are already in the totals the log recorded
     this.critiqueLinesCounted = readCritiqueCosts(projectPath).lines;
-    this.iterationCost = null;
     this.config.onBudget?.(this.budgetNow());
   }
 
@@ -567,40 +772,49 @@ export class RalphRunner {
   }
 
   /** After an iteration: log the running totals, and a warning when claude reported no cost */
-  private async recordBudget(): Promise<void> {
-    const reported = this.iterationCost !== null;
-    this.iterationCost = null;
+  private async recordBudget(w: WorkerCtx): Promise<void> {
+    const reported = w.iterationCost !== null;
+    w.iterationCost = null;
     this.absorbCritiqueCosts();
     await this.refreshGpuHours();
     const status = this.budgetNow();
     if (!reported) {
-      await this.appendLogEvent({
-        type: "budget_warning",
+      await this.appendLogEvent(
+        {
+          type: "budget_warning",
+          run_id: this.budgetRunId,
+          iteration: this.currentIteration,
+          reason:
+            "no result event with total_cost_usd; this iteration counted as $0",
+        },
+        w,
+      );
+    }
+    await this.appendLogEvent(
+      {
+        type: "budget_status",
         run_id: this.budgetRunId,
         iteration: this.currentIteration,
-        reason:
-          "no result event with total_cost_usd; this iteration counted as $0",
-      });
-    }
-    await this.appendLogEvent({
-      type: "budget_status",
-      run_id: this.budgetRunId,
-      iteration: this.currentIteration,
-      ...status,
-    });
+        ...status,
+      },
+      w,
+    );
     this.config.onBudget?.(status);
   }
 
   /** The verifier is a claude session the runner spawns: its cost counts against max_usd */
-  private async addVerifierCost(costUsd: number): Promise<void> {
+  private async addVerifierCost(costUsd: number, w: WorkerCtx): Promise<void> {
     this.budgetUsd += costUsd;
     const status = this.budgetNow();
-    await this.appendLogEvent({
-      type: "budget_status",
-      run_id: this.budgetRunId,
-      iteration: this.currentIteration,
-      ...status,
-    });
+    await this.appendLogEvent(
+      {
+        type: "budget_status",
+        run_id: this.budgetRunId,
+        iteration: this.currentIteration,
+        ...status,
+      },
+      w,
+    );
     this.config.onBudget?.(status);
   }
 
@@ -623,11 +837,18 @@ export class RalphRunner {
     if (this.budgetStop) return;
     this.budgetStop = cap;
     if (cap === "gpu_hours") void this.stopAllJobs();
-    if (this.currentProcess) this.killAgent(this.currentProcess, "SIGKILL");
+    this.killAllAgents();
+  }
+
+  /** SIGKILL every worker's claude process group */
+  private killAllAgents(): void {
+    for (const w of this.workers) {
+      if (w.process) this.killAgent(w, w.process, "SIGKILL");
+    }
   }
 
   /** The tool call that named the holdout in this run, if any (a method so TS does not narrow the field across awaits) */
-  private holdoutAccessed(): { toolName: string } | null {
+  private holdoutAccessed(): { toolName: string; worker: WorkerCtx } | null {
     return this.holdoutAccess;
   }
 
@@ -636,12 +857,18 @@ export class RalphRunner {
    * was killed: record which tool did it (never the call itself, so the path
    * stays out of log.jsonl) and end the run. No candidate is judged.
    */
-  private async endForHoldoutAccess(toolName: string): Promise<void> {
-    await this.appendLogEvent({
-      type: "holdout_access",
-      tool: toolName,
-      iteration: this.currentIteration,
-    });
+  private async endForHoldoutAccess(
+    toolName: string,
+    w: WorkerCtx,
+  ): Promise<void> {
+    await this.appendLogEvent(
+      {
+        type: "holdout_access",
+        tool: toolName,
+        iteration: this.currentIteration,
+      },
+      w,
+    );
     await this.endRun("holdout_access");
   }
 
@@ -652,6 +879,7 @@ export class RalphRunner {
    * the completion gate and the run is over.
    */
   private async judgeIteration(
+    w: WorkerCtx,
     result: string,
     iterationStartedAt: string,
   ): Promise<boolean> {
@@ -665,32 +893,38 @@ export class RalphRunner {
           iterationStartedAt,
           lockedFiles: this.pinnedHashes,
           onInvalidEvent: this.reportInvalidEvent,
+          // The candidate is the commit at the worker's HEAD, and only its own evals count
+          gitPath: w.dir,
+          ...(w.tagged ? { worker: w.id } : {}),
         },
         this.config.promotionDeps,
       );
-      this.pendingFeedback.push(decision.feedback);
-      if (decision.costUsd) await this.addVerifierCost(decision.costUsd);
+      w.feedback.push(decision.feedback);
+      if (decision.costUsd) await this.addVerifierCost(decision.costUsd, w);
       if (
         decision.promoted &&
         meetsSuccess(decision.promoted.contract, decision.promoted.searchScore)
       ) {
-        completed = await this.checkCompletion(decision.promoted);
+        completed = await this.checkCompletion(w, decision.promoted);
       }
     }
     if (candidate && !this.pinnedHashes) {
-      await this.appendLogEvent({
-        type: "candidate_rejected",
-        reason: "eval_not_locked",
-        ...(candidate.evalId
-          ? { eval_id: candidate.evalId.slice(0, 100) }
-          : {}),
-      });
-      this.pendingFeedback.push(
+      await this.appendLogEvent(
+        {
+          type: "candidate_rejected",
+          reason: "eval_not_locked",
+          ...(candidate.evalId
+            ? { eval_id: candidate.evalId.slice(0, 100) }
+            : {}),
+        },
+        w,
+      );
+      w.feedback.push(
         "Runner decision on your candidate: rejected - eval_not_locked: the eval contract is not locked yet, so no eval can score a candidate. Get the contract locked, then run `ml-ralph eval` and hand the candidate in again.",
       );
     }
     if (!completed && result.includes("<project_complete>")) {
-      this.pendingFeedback.push(
+      w.feedback.push(
         'The runner ignores <project_complete>: only the runner ends a run. Hand in a candidate with <candidate_complete eval_id="..."> instead.',
       );
     }
@@ -706,15 +940,21 @@ export class RalphRunner {
    * logged and queued as a verdict plus one line (no scores) for the next
    * prompt; a check that could not run is only logged and shown. Never throws.
    */
-  private async checkCompletion(p: PromotedCandidate): Promise<boolean> {
+  private async checkCompletion(
+    w: WorkerCtx,
+    p: PromotedCandidate,
+  ): Promise<boolean> {
     const evalId = p.evalId;
     const blocked = async (reason: CompletionBlockedReason, error: string) => {
-      await this.logCompletion({
-        type: "completion_blocked",
-        eval_id: evalId,
-        reason,
-        error,
-      });
+      await this.logCompletion(
+        {
+          type: "completion_blocked",
+          eval_id: evalId,
+          reason,
+          error,
+        },
+        w,
+      );
       this.config.onOutput?.({
         type: "text",
         content: `Completion blocked for ${evalId}: ${reason} (${error})`,
@@ -726,14 +966,17 @@ export class RalphRunner {
       detail: string,
       verifierId?: string,
     ) => {
-      await this.logCompletion({
-        type: "completion_rejected",
-        eval_id: evalId,
-        reason,
-        detail,
-        ...(verifierId ? { verifier_id: verifierId } : {}),
-      });
-      this.pendingFeedback.push(
+      await this.logCompletion(
+        {
+          type: "completion_rejected",
+          eval_id: evalId,
+          reason,
+          detail,
+          ...(verifierId ? { verifier_id: verifierId } : {}),
+        },
+        w,
+      );
+      w.feedback.push(
         `Runner completion check on ${JSON.stringify(evalId)}: rejected (${reason}) - ${detail}`,
       );
       this.config.onOutput?.({
@@ -773,11 +1016,12 @@ export class RalphRunner {
           candidateRef: p.candidateRef,
           baselineRef: p.baselineRef,
           onInvalidEvent: this.reportInvalidEvent,
+          ...(w.tagged ? { worker: w.id } : {}),
         });
       } catch (error) {
         return await blocked("verifier_error", errorText(error));
       }
-      if (verdict.costUsd) await this.addVerifierCost(verdict.costUsd);
+      if (verdict.costUsd) await this.addVerifierCost(verdict.costUsd, w);
       if (verdict.reason === "verifier_error") {
         return await blocked(
           "verifier_error",
@@ -797,7 +1041,7 @@ export class RalphRunner {
       try {
         holdout = await (
           this.config.completionDeps?.scoreHoldout ??
-          ((id: string) => this.scoreHoldout(id))
+          ((id: string) => this.scoreHoldout(id, w))
         )(evalId);
       } catch (error) {
         return await blocked("holdout_error", errorText(error));
@@ -823,23 +1067,29 @@ export class RalphRunner {
         );
       }
 
-      await this.logCompletion({
-        type: "run_complete",
-        eval_id: evalId,
-        search_score: holdout.searchScore,
-        holdout_score: holdout.holdoutScore,
-        verifier_verdict: "approve",
-        verifier_id: verdict.id,
-      });
+      await this.logCompletion(
+        {
+          type: "run_complete",
+          eval_id: evalId,
+          search_score: holdout.searchScore,
+          holdout_score: holdout.holdoutScore,
+          verifier_verdict: "approve",
+          verifier_id: verdict.id,
+        },
+        w,
+      );
       return true;
     } catch (error) {
       return await blocked("completion_error", errorText(error));
     }
   }
 
-  private async logCompletion(event: Record<string, unknown>): Promise<void> {
+  private async logCompletion(
+    event: Record<string, unknown>,
+    w?: WorkerCtx,
+  ): Promise<void> {
     try {
-      await this.appendLogEvent(event);
+      await this.appendLogEvent(event, w);
     } catch {
       // The decision stands even if the log line could not be written
     }
@@ -850,34 +1100,54 @@ export class RalphRunner {
    * conclusions plus the last N log events (flat in log length), the budget
    * left, and the runner's pending feedback and hints.
    */
-  async buildPrompt(): Promise<string> {
+  async buildPrompt(
+    w: WorkerCtx | undefined = this.workers[0],
+  ): Promise<string> {
     return (
       BASE_PROMPT +
-      (await buildContextPrompt(this.config.projectPath)) +
+      this.workerPrompt(w) +
+      (await buildContextPrompt(
+        this.config.projectPath,
+        this.mergedConclusions ?? undefined,
+      )) +
       budgetPrompt(this.budgetNow()) +
-      this.consumeFeedback() +
+      this.consumeFeedback(w) +
       (this.consumeHints() ?? "")
     );
   }
 
+  /** With two workers: which one this is, and which conclusions are its own to edit */
+  private workerPrompt(w: WorkerCtx | undefined): string {
+    if (!w?.tagged) return "";
+    return `
+
+You are worker ${w.id} of ${this.workers.length}. Your working directory is your own git worktree: commit your candidates there. The other worker runs in parallel in its own worktree on the same project, and both of you share the run budget and log.jsonl.
+The conclusions below merge both workers' conclusions.md, each under a [worker N] tag. Your .ml-ralph/conclusions.md holds only your own claims: edit that file (with a conclusions_changed event, within 300 words), and treat the other worker's claims as read-only.`;
+  }
+
   /** Restore conclusions.md and tell the next prompt why when the iteration's edit broke the rules */
   private async enforceConclusions(
+    w: WorkerCtx,
     before: string,
     logLinesBefore: number,
   ): Promise<void> {
     const rejection = await enforceConclusions(
-      this.config.projectPath,
+      w.dir,
       before,
       logLinesBefore,
+      w.tagged ? w.id : undefined,
     );
     if (!rejection) return;
-    await this.appendLogEvent({
-      type: "conclusions_rejected",
-      reason: rejection.reason,
-      detail: rejection.detail,
-      words: rejection.words,
-    });
-    this.pendingFeedback.push(
+    await this.appendLogEvent(
+      {
+        type: "conclusions_rejected",
+        reason: rejection.reason,
+        detail: rejection.detail,
+        words: rejection.words,
+      },
+      w,
+    );
+    w.feedback.push(
       `Your last change to conclusions.md was rejected and the previous version restored: ${rejection.detail}. Edit it again only with a conclusions_changed event.`,
     );
   }
@@ -907,9 +1177,9 @@ export class RalphRunner {
     return result;
   }
 
-  private consumeFeedback(): string {
-    const feedback = [...this.pendingFeedback, ...this.pendingJobNotes];
-    this.pendingFeedback = [];
+  private consumeFeedback(w: WorkerCtx | undefined): string {
+    const feedback = [...(w?.feedback ?? []), ...this.pendingJobNotes];
+    if (w) w.feedback = [];
     this.pendingJobNotes = [];
     return feedback.map((line) => `\n\n${line}`).join("");
   }
@@ -1042,10 +1312,13 @@ export class RalphRunner {
   /**
    * Append a log event to .ml-ralph/log.jsonl
    */
-  private async appendLogEvent(event: Record<string, unknown>): Promise<void> {
+  private async appendLogEvent(
+    event: Record<string, unknown>,
+    w?: WorkerCtx,
+  ): Promise<void> {
     await appendValidatedEvent(
       this.config.projectPath,
-      event,
+      { ...workerTag(w), ...event },
       this.reportInvalidEvent,
     );
   }
@@ -1063,17 +1336,24 @@ export class RalphRunner {
   /**
    * Run a single iteration
    */
-  protected async runIteration(prompt: string): Promise<string> {
+  protected async runIteration(
+    prompt: string,
+    w: WorkerCtx = this.workers[0]!,
+  ): Promise<string> {
+    // Each worker has its own experiment cap: its slots are keyed by iteration and worker
+    const iterationId = w.tagged
+      ? `${this.currentIteration}-w${w.id}`
+      : String(this.currentIteration);
     // Inject an initial log event so the TUI shows something immediately
-    await resetExperimentCount(
-      this.config.projectPath,
-      String(this.currentIteration),
+    await resetExperimentCount(this.config.projectPath, iterationId);
+    await this.appendLogEvent(
+      {
+        type: "phase",
+        phase: this.currentIteration === 1 ? "UNDERSTAND" : "EXECUTE",
+        summary: `Iteration ${this.currentIteration} starting...`,
+      },
+      w,
     );
-    await this.appendLogEvent({
-      type: "phase",
-      phase: this.currentIteration === 1 ? "UNDERSTAND" : "EXECUTE",
-      summary: `Iteration ${this.currentIteration} starting...`,
-    });
 
     const cmd = [
       "claude",
@@ -1088,7 +1368,10 @@ export class RalphRunner {
     // The agent's environment never carries the holdout path, even if the user exported it
     const { [HOLDOUT_PATH_ENV]: _holdout, ...agentEnv } = process.env;
     const iterationEnv: Record<string, string> = {
-      [ITERATION_ENV]: String(this.currentIteration),
+      [ITERATION_ENV]: iterationId,
+      // Tags the events the agent's `ml-ralph log`, `eval` and `job` calls write
+      ...(w.tagged ? { [WORKER_ENV]: String(w.id) } : {}),
+      ...w.env,
       // Pinned at start, so editing config.json mid-run cannot loosen the cap
       ...(this.budgetCaps.max_experiments_per_iteration !== undefined
         ? {
@@ -1096,9 +1379,6 @@ export class RalphRunner {
               this.budgetCaps.max_experiments_per_iteration,
             ),
           }
-        : {}),
-      ...(this.config.enableTeams
-        ? { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1" }
         : {}),
     };
 
@@ -1130,6 +1410,8 @@ export class RalphRunner {
               ...gitIdentityEnv(),
               [SANDBOX_DIR_ENV]: join(projectPath, FORWARD_DIR),
             },
+            // A worker runs in its worktree, which the project mount contains
+            ...(w.dir !== this.config.projectPath ? { cwd: w.dir } : {}),
             uid: process.getuid?.(),
             gid: process.getgid?.(),
           },
@@ -1137,14 +1419,14 @@ export class RalphRunner {
         ),
       ];
       spawnEnv = agentEnv;
-      this.currentContainer = container;
+      w.container = container;
     }
 
     // Own process group, so stop() and the holdout guard also reach what claude's tools started
     let proc: Subprocess;
     try {
       proc = Bun.spawn(spawnCmd, {
-        cwd: this.config.projectPath,
+        cwd: w.dir,
         detached: true,
         stdout: "pipe",
         stderr: "pipe",
@@ -1152,13 +1434,13 @@ export class RalphRunner {
       });
     } catch (error) {
       forwarder?.stop();
-      this.currentContainer = null;
+      w.container = null;
       throw error;
     }
-    this.currentProcess = proc;
+    w.process = proc;
 
     // claude is no longer in the TUI's process group, so a normal exit must reap it
-    const killOnExit = () => this.killAgent(proc, "SIGKILL");
+    const killOnExit = () => this.killAgent(w, proc, "SIGKILL");
     process.on("exit", killOnExit);
 
     // Wall-clock is enforced by a timer so a long iteration cannot overshoot the cap
@@ -1180,7 +1462,7 @@ export class RalphRunner {
       if (hit === "usd" || hit === "gpu_hours") this.stopForBudget(hit);
     }, BUDGET_TICK_MS);
     try {
-      return await this.readIteration(proc);
+      return await this.readIteration(proc, w);
     } finally {
       clearTimeout(timer);
       clearInterval(ticker);
@@ -1188,15 +1470,20 @@ export class RalphRunner {
       forwarder?.stop();
       // --rm removes a container that exited; this one may have been killed from outside
       if (container) removeContainer(docker, container);
-      this.currentContainer = null;
+      w.container = null;
+      w.process = null;
     }
   }
 
   /** Kill claude's process group; in sandbox mode also remove the container, which outlives a killed `docker run` */
-  private killAgent(proc: Subprocess, signal: "SIGTERM" | "SIGKILL"): void {
+  private killAgent(
+    w: WorkerCtx,
+    proc: Subprocess,
+    signal: "SIGTERM" | "SIGKILL",
+  ): void {
     killTree(proc, signal);
-    if (this.currentContainer) {
-      removeContainer(this.config.dockerBin ?? "docker", this.currentContainer);
+    if (w.container) {
+      removeContainer(this.config.dockerBin ?? "docker", w.container);
     }
   }
 
@@ -1204,7 +1491,7 @@ export class RalphRunner {
    * Read claude's stdout until it ends (or the holdout guard fired) and return
    * the final result text; a non-zero exit is an error unless the guard killed it
    */
-  private async readIteration(proc: Subprocess): Promise<string> {
+  private async readIteration(proc: Subprocess, w: WorkerCtx): Promise<string> {
     let fullResult = "";
     const stdout = proc.stdout;
     if (!stdout || typeof stdout === "number") {
@@ -1224,7 +1511,7 @@ export class RalphRunner {
         buffer = lines.pop() || "";
 
         for (const line of lines) {
-          fullResult = this.processLine(line, fullResult);
+          fullResult = this.processLine(line, fullResult, w);
           if (this.holdoutAccess || this.budgetStop) break;
         }
         if (this.holdoutAccess || this.budgetStop) {
@@ -1235,7 +1522,7 @@ export class RalphRunner {
 
       // Process remaining buffer
       if (!this.holdoutAccess && !this.budgetStop) {
-        fullResult = this.processLine(buffer, fullResult);
+        fullResult = this.processLine(buffer, fullResult, w);
       }
     } finally {
       reader.releaseLock();
@@ -1265,23 +1552,24 @@ export class RalphRunner {
   /**
    * Parse one stdout line, emit its events and return the running result text
    */
-  protected processLine(line: string, fullResult: string): string {
-    const parsed = parseStreamLine(
-      line,
-      this.lastToolCall,
-      this.holdoutNeedles,
-    );
-    this.lastToolCall = parsed.lastToolCall;
+  protected processLine(
+    line: string,
+    fullResult: string,
+    w: WorkerCtx = this.workers[0]!,
+  ): string {
+    const parsed = parseStreamLine(line, w.lastToolCall, this.holdoutNeedles);
+    w.lastToolCall = parsed.lastToolCall;
     for (const output of parsed.outputs) {
-      this.config.onOutput?.(output);
+      this.config.onOutput?.(w.tagged ? { ...output, worker: w.id } : output);
     }
     if (parsed.holdoutAccess && !this.holdoutAccess) {
-      this.holdoutAccess = parsed.holdoutAccess;
-      if (this.currentProcess) this.killAgent(this.currentProcess, "SIGKILL");
+      this.holdoutAccess = { ...parsed.holdoutAccess, worker: w };
+      // One worker named the holdout: the run ends, so neither session may go on
+      this.killAllAgents();
     }
     if (parsed.costUsd !== undefined) {
       this.budgetUsd += parsed.costUsd;
-      this.iterationCost = (this.iterationCost ?? 0) + parsed.costUsd;
+      w.iterationCost = (w.iterationCost ?? 0) + parsed.costUsd;
       const status = this.budgetNow();
       this.config.onBudget?.(status);
       const cap = exhaustedCap(status);

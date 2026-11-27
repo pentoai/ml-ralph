@@ -55,6 +55,10 @@ Strategic retreat — going back to understand when stuck — is a first-class c
 
 The agent may change the file only with a `conclusions_changed` event whose reason is `contradiction`, `new_category`, `flipped_recommendation` or `refinement`. If an iteration leaves it over 300 whitespace-separated words, or changed without such an event, the runner restores the previous version, logs `conclusions_rejected` with the reason and says why in the next prompt.
 
+## Two workers
+
+`ml-ralph --workers 2` runs two iteration loops at once, each with its own `claude` process in its own git worktree (`.ml-ralph/worktrees/worker-1` and `worker-2`, removed when the run ends). The default is 1; more than 2 is refused, and the project must be a git repository with at least one commit. The workers share the run budget (USD, GPU-hours and minutes are one total; `max_experiments_per_iteration` applies to each worker) and `log.jsonl`, where every event carries `worker`. They start once the eval is locked and wait for each other at the end of every iteration, where the runner merges their `conclusions.md` files by concatenation under `[worker 1]` / `[worker 2]` tags; both read the merge next. The runner then judges their candidates one at a time, so the second must beat the new best by the seed-noise margin, and `ralph/best` stays one tag. If one worker's `claude` crashes, a `worker_crashed` event is logged and the other worker carries on. A run that crashed leaves its worktrees behind; the next start removes them.
+
 ## Commit before every eval
 
 The runner keeps its copy of the eval lock hashes in `~/.config/ml-ralph/locks/`, keyed by project path, so deleting `.ml-ralph/eval/lock.json` or the marker does not unlock anything. `ml-ralph resume` restores them from the store, `ml-ralph unlock` clears the lock so you can lock again on purpose, and `ml-ralph rekey <old-path>` moves the entry after you move the project directory. `ml-ralph init --force` never touches the store.

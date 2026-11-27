@@ -52,6 +52,8 @@ export interface VerifyCandidateOptions {
   killGraceMs?: number;
   /** Called when the runner's verifier_verdict event fails its schema and is not logged */
   onInvalidEvent?: (invalid: InvalidRunnerEvent) => void;
+  /** Tags the verifier_verdict event with this worker (--workers 2) */
+  worker?: number;
 }
 
 export interface VerifyCandidateResult extends VerifierVerdict {
@@ -441,7 +443,11 @@ export async function verifyCandidate(
     ...(costUsd !== undefined ? { cost_usd: costUsd } : {}),
     output_path: outputPath,
   };
-  await appendValidatedEvent(projectPath, event, options.onInvalidEvent);
+  await appendValidatedEvent(
+    projectPath,
+    options.worker ? { ...event, worker: options.worker } : event,
+    options.onInvalidEvent,
+  );
 
   return result;
 }

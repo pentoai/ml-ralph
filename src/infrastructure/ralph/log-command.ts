@@ -44,15 +44,64 @@ async function isDirectory(path: string): Promise<boolean> {
   }
 }
 
-/** Walk up from `start` to the nearest directory containing .ml-ralph/ */
-export async function findProjectDir(start: string): Promise<string | null> {
+/** Set by the runner on a worker's claude process: its events in log.jsonl carry this worker number */
+export const WORKER_ENV = "ML_RALPH_WORKER";
+
+/** Written into a worker's worktree `.ml-ralph/`: the CLI tools run there use the real project's state */
+export const WORKER_MARKER = "worker.json";
+
+/** The project a worker's worktree belongs to, from its marker; null when `dir` is not a worktree root */
+async function readWorkerMarker(
+  dir: string,
+): Promise<{ worker: number; project: string } | null> {
+  try {
+    const value = (await Bun.file(
+      join(dir, ".ml-ralph", WORKER_MARKER),
+    ).json()) as { worker?: unknown; project?: unknown } | null;
+    if (
+      typeof value?.worker === "number" &&
+      typeof value.project === "string" &&
+      (await isDirectory(join(value.project, ".ml-ralph")))
+    ) {
+      return { worker: value.worker, project: value.project };
+    }
+  } catch {
+    // Not a worktree root
+  }
+  return null;
+}
+
+/**
+ * Walk up from `start` to the nearest directory containing .ml-ralph/.
+ * `projectDir` holds the run's state; `workDir` is where the agent's code
+ * lives. They are the same directory unless `start` is inside a worker's
+ * git worktree, whose `.ml-ralph/worker.json` names the real project.
+ */
+export async function locateProject(
+  start: string,
+): Promise<{ projectDir: string; workDir: string } | null> {
   let dir = resolve(start);
   while (true) {
-    if (await isDirectory(join(dir, ".ml-ralph"))) return dir;
+    if (await isDirectory(join(dir, ".ml-ralph"))) {
+      const marker = await readWorkerMarker(dir);
+      return { projectDir: marker?.project ?? dir, workDir: dir };
+    }
     const parent = dirname(dir);
     if (parent === dir) return null;
     dir = parent;
   }
+}
+
+/** The directory holding the run's .ml-ralph/ state, from anywhere inside the project or one of its worktrees */
+export async function findProjectDir(start: string): Promise<string | null> {
+  return (await locateProject(start))?.projectDir ?? null;
+}
+
+/** The worker number to tag events with: the explicit one, else the runner's variable in the environment */
+function workerTag(event: Record<string, unknown>): { worker: number } | null {
+  if (typeof event.worker === "number") return null;
+  const n = Number(process.env[WORKER_ENV]);
+  return Number.isInteger(n) && n > 0 ? { worker: n } : null;
 }
 
 /** Append one event, stamped with ts, to .ml-ralph/log.jsonl without rewriting the file */
@@ -61,7 +110,7 @@ export async function appendLogLine(
   event: Record<string, unknown>,
 ): Promise<void> {
   const logPath = join(projectDir, ".ml-ralph", "log.jsonl");
-  const line = `${JSON.stringify({ ts: new Date().toISOString(), ...event })}\n`;
+  const line = `${JSON.stringify({ ts: new Date().toISOString(), ...workerTag(event), ...event })}\n`;
   const file = Bun.file(logPath);
   // Start on a fresh line if an earlier writer left the log unterminated
   const needsNewline =
@@ -140,7 +189,12 @@ export async function runLogCommand(
     );
   }
 
-  const { ts: _ts, ...body } = parsed as Record<string, unknown>;
+  // The worker tag comes from the runner's environment, never from the agent
+  const {
+    ts: _ts,
+    worker: _worker,
+    ...body
+  } = parsed as Record<string, unknown>;
   if (body.type !== undefined && body.type !== type) {
     return fail(
       `type: JSON says ${JSON.stringify(body.type)} but the command says ${JSON.stringify(type)}; nothing was logged`,

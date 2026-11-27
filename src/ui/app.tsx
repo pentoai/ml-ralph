@@ -39,11 +39,11 @@ import { ModeTabs } from "./widgets/tabs.tsx";
 
 interface AppProps {
   projectPath: string;
-  enableTeams?: boolean;
+  workers?: number;
   sandbox?: "docker" | "none";
 }
 
-export function App({ projectPath, enableTeams, sandbox }: AppProps) {
+export function App({ projectPath, workers, sandbox }: AppProps) {
   const { exit } = useApp();
   const { stdout } = useStdout();
   const { disableFocus } = useFocusManager();
@@ -170,9 +170,6 @@ export function App({ projectPath, enableTeams, sandbox }: AppProps) {
     init();
   }, [projectPath, setError]);
 
-  // Teams enabled by default; CLI flag or config can override
-  const teamsEnabled = enableTeams ?? config?.agent.enableTeams ?? true;
-
   // Initialize project on mount
   useEffect(() => {
     setProjectPath(projectPath);
@@ -255,7 +252,7 @@ export function App({ projectPath, enableTeams, sandbox }: AppProps) {
       orchestratorRef.current = createOrchestrator({
         projectPath,
         autoAdvance: config.agent.autoAdvance,
-        enableTeams: teamsEnabled,
+        workers,
         sandbox,
       });
       // Subscribe to events
@@ -275,7 +272,7 @@ export function App({ projectPath, enableTeams, sandbox }: AppProps) {
     handleIterationChange,
     handleComplete,
     appendAgentOutput,
-    teamsEnabled,
+    workers,
     sandbox,
   ]);
 

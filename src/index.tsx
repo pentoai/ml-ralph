@@ -5,6 +5,7 @@
 
 import { createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
+import { parseWorkers } from "./infrastructure/ralph/workers.ts";
 import { App } from "./ui/app.tsx";
 
 // Handle `log` before anything else: its arguments (even -h) belong to the event
@@ -65,8 +66,8 @@ if (process.argv[2] === "bench") {
 }
 
 // Get project path from command line or use current directory
-// Skip flags like --teams, --help when determining project path
-// `--sandbox <docker|none>` (or `--sandbox=<mode>`) takes a value that is not the project path
+// Skip flags like --help when determining project path
+// `--sandbox <docker|none>` (or `--sandbox=<mode>`) and `--workers <n>` take a value that is not the project path
 const sandboxIndex = process.argv.findIndex(
   (arg, i) => i >= 2 && (arg === "--sandbox" || arg.startsWith("--sandbox=")),
 );
@@ -88,11 +89,35 @@ if (sandboxIndex >= 0 && sandboxValue !== "docker" && sandboxValue !== "none") {
 }
 const sandbox = sandboxValue as "docker" | "none" | undefined;
 
+// `--workers <n>` (or `--workers=<n>`): up to two iteration loops in git worktrees
+const workersIndex = process.argv.findIndex(
+  (arg, i) => i >= 2 && (arg === "--workers" || arg.startsWith("--workers=")),
+);
+const workersArg =
+  workersIndex < 0 ? undefined : (process.argv[workersIndex] as string);
+const workersValue = workersArg?.startsWith("--workers=")
+  ? workersArg.slice("--workers=".length)
+  : process.argv[workersIndex + 1];
+const workersValueIndex = workersArg === "--workers" ? workersIndex + 1 : -1;
+const parsedWorkers =
+  workersIndex < 0
+    ? ({ ok: true, workers: 1 } as const)
+    : parseWorkers(workersValue ?? "");
+if (!parsedWorkers.ok) {
+  console.error(parsedWorkers.error);
+  process.exit(1);
+}
+const workers = parsedWorkers.workers;
+
 const projectPath =
   process.argv
     .slice(2)
-    .find((arg, i) => !arg.startsWith("--") && i + 2 !== sandboxValueIndex) ??
-  process.cwd();
+    .find(
+      (arg, i) =>
+        !arg.startsWith("--") &&
+        i + 2 !== sandboxValueIndex &&
+        i + 2 !== workersValueIndex,
+    ) ?? process.cwd();
 
 // Check for help flag
 if (process.argv.includes("--help") || process.argv.includes("-h")) {
@@ -114,7 +139,8 @@ Usage:
   ml-ralph --help            Show this help message
 
 Options:
-  --teams                    Enable parallel experiments via agent teams
+  --workers <1|2>            Run 1 (default) or 2 iteration loops in separate git worktrees, sharing one budget
+                             (needs a git repository with a commit; the runner merges their conclusions at iteration boundaries)
   --sandbox docker           Run each iteration's claude in a Docker container that mounts only the project
                              (needs ANTHROPIC_API_KEY; config.json: "sandbox": "docker"; "none" = host)
   --force                    With init: overwrite template files (RALPH.md, CLAUDE.md, ...), keep project data
@@ -135,9 +161,6 @@ For more information, visit: https://github.com/pentoai/ml-ralph
   process.exit(0);
 }
 
-// Parse --teams flag
-const enableTeams = process.argv.includes("--teams");
-
 // Check for init command
 if (process.argv[2] === "init") {
   const [name = "my-ml-project", targetPath = process.cwd()] = process.argv
@@ -149,7 +172,7 @@ if (process.argv[2] === "init") {
     projectPath: targetPath,
     name,
     force: process.argv.includes("--force"),
-    enableTeams,
+    enableTeams: process.argv.includes("--teams"),
   });
 
   if (!result.success) {
@@ -275,5 +298,5 @@ await ensureTmux();
 // Disable default Ctrl+C exit so our custom quit confirmation works
 const renderer = await createCliRenderer({ exitOnCtrlC: false });
 createRoot(renderer).render(
-  <App projectPath={projectPath} enableTeams={enableTeams} sandbox={sandbox} />,
+  <App projectPath={projectPath} workers={workers} sandbox={sandbox} />,
 );

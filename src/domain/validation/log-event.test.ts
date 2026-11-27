@@ -199,3 +199,21 @@ describe("contract_relocked", () => {
     ).toEqual(["changes[0].file", "files.contract.json"]);
   });
 });
+
+describe("worker events", () => {
+  test("worker_crashed and worktrees_cleaned are runner-only and validate", () => {
+    expect(
+      validateLogEvent("worker_crashed", {
+        worker: 2,
+        iteration: 3,
+        error: "Claude process failed: boom",
+      }).valid,
+    ).toBe(true);
+    expect(validateLogEvent("worker_crashed", { worker: 2 }).valid).toBe(false);
+    expect(validateLogEvent("worktrees_cleaned", { removed: 2 }).valid).toBe(
+      true,
+    );
+    expect(isRunnerOnlyEvent("worker_crashed")).toBe(true);
+    expect(isRunnerOnlyEvent("worktrees_cleaned")).toBe(true);
+  });
+});

@@ -56,6 +56,7 @@ export interface OrchestratorConfig {
   projectPath: string;
   autoAdvance: boolean;
   maxIterations?: number;
-  enableTeams?: boolean;
+  /** Iteration loops to run in git worktrees (1 or 2; default 1) */
+  workers?: number;
   sandbox?: "docker" | "none";
 }
