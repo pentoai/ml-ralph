@@ -132,6 +132,17 @@ export function holdoutConfigFile(
   return join(base, "ml-ralph", "config.json");
 }
 
+/** The holdout path, its real path and their parent directories (a log line may show only the directory), the filesystem root excepted */
+export function redactionTargets(...paths: string[]): string[] {
+  const out = new Set<string>();
+  for (const path of paths) {
+    out.add(path);
+    const parent = dirname(path);
+    if (parent !== path && parent !== dirname(parent)) out.add(parent);
+  }
+  return [...out];
+}
+
 const isInside = (parent: string, child: string) => {
   const rel = relative(parent, child);
   return (
@@ -355,7 +366,7 @@ export async function scoreHoldout(
     extraEnv: { [HOLDOUT_PATH_ENV]: holdout.path },
     wrap: options.wrap,
     sealedMounts: options.wrap ? [holdout.path] : undefined,
-    redact: [holdout.path, holdout.realPath],
+    redact: redactionTargets(holdout.path, holdout.realPath),
   });
 
   const scoredAt = new Date().toISOString();

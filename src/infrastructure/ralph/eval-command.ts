@@ -102,7 +102,7 @@ function parseScore(stdout: string): number | null {
 }
 
 /** Replace every occurrence of each secret with `<holdout>` */
-function redactSecrets(text: string, secrets: string[]): string {
+export function redactSecrets(text: string, secrets: string[]): string {
   let out = text;
   for (const secret of [...new Set(secrets)]
     .filter(Boolean)
