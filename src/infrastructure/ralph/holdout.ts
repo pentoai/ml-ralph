@@ -96,6 +96,10 @@ export interface HoldoutOptions {
   wrap?: CommandWrapper;
   /** With `wrap`: the project's real path, the one mounted into the container; `projectPath` stays the configured key for the config lookup */
   mountPath?: string;
+  /** Where the candidate's code is: a worker's worktree under the project (default: the project) */
+  workDir?: string;
+  /** Tags the overfitting event with this worker (--workers 2) */
+  worker?: number;
 }
 
 export type HoldoutResult =
@@ -348,11 +352,13 @@ export async function scoreHoldout(
   }
 
   const mountDir = options.mountPath ?? projectDir;
-  const candidatePath = resolve(mountDir, metrics.candidate);
+  const codeDir = options.workDir ?? mountDir;
+  const candidatePath = resolve(codeDir, metrics.candidate);
   const run = await runEvaluatorSeeds({
     python: options.python ?? defaultPython(),
     evaluateBytes,
     projectDir: mountDir,
+    workDir: codeDir,
     candidatePath,
     split: HOLDOUT_SPLIT,
     seeds: contract.seeds,
@@ -399,7 +405,11 @@ export async function scoreHoldout(
       eval_id: evalId,
       threshold: contract.holdout_gap_threshold,
     };
-    await appendValidatedEvent(projectDir, event, options.onInvalidEvent);
+    await appendValidatedEvent(
+      projectDir,
+      options.worker ? { ...event, worker: options.worker } : event,
+      options.onInvalidEvent,
+    );
   }
   return {
     ok: true,

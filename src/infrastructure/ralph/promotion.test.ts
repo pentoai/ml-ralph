@@ -216,6 +216,103 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
+describe("judgeCandidate with workers", () => {
+  const judgeAs = (worker: number, evalId: string, gitPath = dir) =>
+    judgeCandidate(
+      {
+        projectPath: dir,
+        claimedEvalId: evalId,
+        iterationStartedAt: LONG_AGO,
+        lockedFiles: lockFiles,
+        worker,
+        gitPath,
+      },
+      deps(),
+    );
+
+  test("a worker cannot hand in the other worker's eval", async () => {
+    await appendLog({
+      type: "hypothesis",
+      worker: 1,
+      id: "H-001",
+      claim: "c",
+      expected_delta: 0.03,
+      rubrics: ["r"],
+      kill_criterion: "k",
+    });
+    const id = `eval-w1-${++evalCounter}`;
+    await writeEval({ id, mean: 0.85, logEvent: false });
+    await appendLog({
+      type: "eval",
+      worker: 1,
+      eval_id: id,
+      status: "ok",
+      candidate: "submissions/h001.csv",
+      mean: 0.85,
+      std: 0.01,
+    });
+
+    const stolen = await judgeAs(2, id);
+    expect(stolen.verdict).toBe("rejected");
+    expect(stolen.reason).toContain("no eval with that eval_id");
+    expect(await readIncumbent(dir)).toEqual({ state: "none" });
+
+    const own = await judgeAs(1, id);
+    expect(own.verdict).toBe("promoted");
+    const events = await promotionEvents();
+    expect(events.map((e) => e.worker)).toEqual([2, 1]);
+    // The verifier's event is tagged too
+    expect(verifierCalls[0]?.worker).toBe(1);
+  });
+
+  test("only the worker's own hypotheses give the verifier its rubrics, and HEAD is read in its worktree", async () => {
+    const hypothesis = (worker: number, rubric: string) =>
+      appendLog({
+        type: "hypothesis",
+        worker,
+        id: `H-w${worker}`,
+        claim: "c",
+        expected_delta: 0.03,
+        rubrics: [rubric],
+        kill_criterion: "k",
+      });
+    await hypothesis(1, "worker one rubric");
+    await hypothesis(2, "worker two rubric");
+    const id = `eval-w2-${++evalCounter}`;
+    await writeEval({ id, mean: 0.85, logEvent: false });
+    await appendLog({
+      type: "eval",
+      worker: 2,
+      eval_id: id,
+      status: "ok",
+      candidate: "submissions/h001.csv",
+      mean: 0.85,
+      std: 0.01,
+    });
+    const seen: string[] = [];
+    const decision = await judgeCandidate(
+      {
+        projectPath: dir,
+        claimedEvalId: id,
+        iterationStartedAt: LONG_AGO,
+        lockedFiles: lockFiles,
+        worker: 2,
+        gitPath: "/worktrees/worker-2",
+      },
+      {
+        ...deps(),
+        gitHead: async (path) => {
+          seen.push(path);
+          return head;
+        },
+      },
+    );
+    expect(decision.verdict).toBe("promoted");
+    expect(seen).toEqual(["/worktrees/worker-2"]);
+    expect(verifierCalls[0]?.hypothesis.rubrics).toEqual(["worker two rubric"]);
+  });
+});
+
 describe("RALPH_MD", () => {
   test("tells the agent to emit <candidate_complete eval_id> and never <project_complete>", () => {
     expect(RALPH_MD).toContain('<candidate_complete eval_id="eval-...">');

@@ -35,7 +35,7 @@ Your contract with the user. Rarely changes.
 | `draft` | PRD being created | Agent |
 | `approved` | User approved, work begins | User |
 | `blocked` | Agent cannot progress (requires user decision) | Agent |
-| `complete` | All success criteria verified met | Agent |
+| `complete` | Reserved; the runner decides completion (`run_complete`), the agent never sets it | Runner |
 
 ### What Can Change
 

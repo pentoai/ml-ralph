@@ -72,10 +72,17 @@ function parseEvent(line: string): Record<string, unknown> | null {
   }
 }
 
-/** The prompt section holding conclusions.md and the last N log events */
-export async function buildContextPrompt(projectPath: string): Promise<string> {
+/**
+ * The prompt section holding conclusions.md and the last N log events.
+ * `merged` replaces the file's text: with workers it is the merge of the
+ * workers' own files.
+ */
+export async function buildContextPrompt(
+  projectPath: string,
+  merged?: string,
+): Promise<string> {
   const [conclusions, lines, count] = await Promise.all([
-    readConclusions(projectPath),
+    merged ?? readConclusions(projectPath),
     readLogLines(projectPath),
     readRecentEventsCount(projectPath),
   ]);
@@ -129,12 +136,14 @@ export function checkConclusions(
 
 /**
  * Enforce the rules after an iteration: on a violation restore `before`.
- * `logLinesBefore` is the log length when the iteration started.
+ * `logLinesBefore` is the log length when the iteration started. With
+ * `worker`, only that worker's events can justify the edit: the log is shared.
  */
 export async function enforceConclusions(
   projectPath: string,
   before: string,
   logLinesBefore: number,
+  worker?: number,
 ): Promise<{
   reason: ConclusionsRejection;
   detail: string;
@@ -144,10 +153,13 @@ export async function enforceConclusions(
     readConclusions(projectPath),
     readLogLines(projectPath),
   ]);
+  const during = lines.slice(logLinesBefore);
   const rejection = checkConclusions(
     before,
     after,
-    lines.slice(logLinesBefore),
+    worker === undefined
+      ? during
+      : during.filter((line) => parseEvent(line)?.worker === worker),
   );
   if (rejection) await Bun.write(join(projectPath, CONCLUSIONS_FILE), before);
   return rejection;

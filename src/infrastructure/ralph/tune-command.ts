@@ -33,7 +33,7 @@ import {
   scoreCandidate,
 } from "./eval-command.ts";
 import { evalCommit } from "./git.ts";
-import { appendValidatedEvent, findProjectDir } from "./log-command.ts";
+import { appendValidatedEvent, locateProject } from "./log-command.ts";
 import type { TuneResultEvent } from "./templates.ts";
 
 const SAMPLERS = ["tpe", "cmaes"] as const;
@@ -445,15 +445,16 @@ export async function runTuneCommand(
     }
   }
 
-  const projectDir = await findProjectDir(cwd);
-  if (!projectDir) {
+  const located = await locateProject(cwd);
+  if (!located) {
     return fail(
       "No .ml-ralph/ directory here or in any parent; run from your project directory. No trial was run.",
     );
   }
+  const { projectDir, workDir } = located;
   const locked = await readLockedEval(projectDir);
   if (!locked.ok) return fail(`${locked.error} No trial was run.`);
-  const commit = await evalCommit(projectDir);
+  const commit = await evalCommit(workDir);
   if (commit.state === "dirty") {
     return fail("commit your changes before tune. No trial was run.");
   }
@@ -534,7 +535,7 @@ export async function runTuneCommand(
       let failure = train.ok ? undefined : train.reason;
       if (train.ok) {
         // Training may have touched tracked files; a score must stay tied to a commit
-        const now = await evalCommit(projectDir);
+        const now = await evalCommit(workDir);
         if (now.state === "dirty") {
           failure =
             "tracked files changed while training; commit them or keep training output untracked";
@@ -545,6 +546,7 @@ export async function runTuneCommand(
       const candidate = substituteParams(a.candidate, params, false);
       const result = await scoreCandidate({
         projectDir,
+        workDir,
         locked,
         sha,
         candidatePath: isAbsolute(candidate)

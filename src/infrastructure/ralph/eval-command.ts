@@ -26,7 +26,7 @@ import {
 } from "./eval-metrics.ts";
 import { evalCommit } from "./git.ts";
 import { readStoredLock } from "./lock-store.ts";
-import { appendValidatedEvent, findProjectDir } from "./log-command.ts";
+import { appendValidatedEvent, locateProject } from "./log-command.ts";
 import type { CommandWrapper } from "./sandbox.ts";
 import type { EvalEvent } from "./templates.ts";
 
@@ -271,7 +271,10 @@ export interface EvaluatorRunOptions {
   python: string;
   /** The lock-verified bytes of evaluate.py */
   evaluateBytes: Uint8Array;
+  /** Holds .ml-ralph/eval/ */
   projectDir: string;
+  /** Working directory of the evaluator (default: projectDir) */
+  workDir?: string;
   candidatePath: string;
   split: string;
   seeds: number[];
@@ -326,7 +329,7 @@ export async function runEvaluatorSeeds(
       // In a container only the variables named here exist; the host environment never reaches it
       const wrapped = options.wrap?.(argv, {
         kind: options.sealedMounts ? "holdout" : "eval",
-        cwd: options.projectDir,
+        cwd: options.workDir ?? options.projectDir,
         env: {
           [EVAL_DIR_ENV]: join(options.projectDir, EVAL_DIR),
           PYTHONDONTWRITEBYTECODE: "1",
@@ -336,7 +339,7 @@ export async function runEvaluatorSeeds(
       });
       const run = await runSeed(
         wrapped?.argv ?? argv,
-        options.projectDir,
+        options.workDir ?? options.projectDir,
         env,
         seed,
         options.timeoutSeconds,
@@ -384,18 +387,20 @@ export async function runEvalCommand(
   if (!candidateArg || extra.length > 0) return fail(USAGE, 2);
 
   const cwd = resolve(options.cwd ?? process.cwd());
-  const projectDir = await findProjectDir(cwd);
-  if (!projectDir) {
+  const located = await locateProject(cwd);
+  if (!located) {
     return fail(
       "No .ml-ralph/ directory here or in any parent; run from your project directory. Nothing was run.",
     );
   }
+  // In a worker's worktree the state is the real project's, the code and commit are the worktree's
+  const { projectDir, workDir } = located;
 
   const locked = await readLockedEval(projectDir);
   if (!locked.ok) return fail(`${locked.error} Nothing was run.`);
 
   // A score must be reproducible from a commit; refuse before claiming a slot or running anything
-  const commit = await evalCommit(projectDir);
+  const commit = await evalCommit(workDir);
   if (commit.state === "dirty") {
     return fail("commit your changes before eval. Nothing was scored.");
   }
@@ -421,6 +426,7 @@ export async function runEvalCommand(
     : resolve(cwd, candidateArg);
   return scoreCandidate({
     projectDir,
+    workDir,
     locked,
     sha,
     candidatePath,
@@ -430,7 +436,10 @@ export async function runEvalCommand(
 }
 
 export interface ScoreCandidateOptions {
+  /** Where the run's state lives: lock, evals/ and log.jsonl */
   projectDir: string;
+  /** Where the candidate's code is and the evaluator runs: a worker's worktree (default: projectDir) */
+  workDir?: string;
   locked: Extract<LockedEval, { ok: true }>;
   /** HEAD commit the score is tied to; null outside git */
   sha: string | null;
@@ -454,12 +463,13 @@ export async function scoreCandidate(
   o: ScoreCandidateOptions,
 ): Promise<EvalCommandResult> {
   const { projectDir, locked, sha, candidatePath } = o;
+  const workDir = o.workDir ?? projectDir;
   const { lock, evaluateBytes, contract } = locked;
   const { seeds, search_split: split } = contract;
   const timeoutSeconds =
     contract.eval_timeout_seconds ?? DEFAULT_EVAL_TIMEOUT_SECONDS;
 
-  const rel = relative(projectDir, candidatePath);
+  const rel = relative(workDir, candidatePath);
   const candidate =
     rel.startsWith("..") || isAbsolute(rel) ? candidatePath : rel;
 
@@ -479,6 +489,7 @@ export async function scoreCandidate(
         python: o.python,
         evaluateBytes,
         projectDir,
+        workDir,
         candidatePath,
         split,
         seeds,

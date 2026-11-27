@@ -45,7 +45,7 @@ UNDERSTAND → STRATEGIZE → EXECUTE → REFLECT
 - Verified and promising? → Strategize next step
 - Surprised or confused? → Go back to Understand
 - Stuck after 2–3 experiments? → Strategic retreat to Understand
-- All success criteria met and verified? → Complete
+- All success criteria met and verified? → Hand in a candidate; the runner decides
 
 Strategic retreat — going back to understand when stuck — is a first-class concept, not a failure. Understanding is progress.
 
@@ -54,6 +54,10 @@ Strategic retreat — going back to understand when stuck — is a first-class c
 `.ml-ralph/conclusions.md` keeps what the agent has learned as at most 300 words of scoped, revisable claims. `ml-ralph init` creates it (empty), and the runner creates it at start if an older project lacks one. Each iteration's prompt inlines it plus the last N log events (`recent_events` in `config.json`, default 30) instead of the whole `log.jsonl`, so the prompt stays flat as a run grows.
 
 The agent may change the file only with a `conclusions_changed` event whose reason is `contradiction`, `new_category`, `flipped_recommendation` or `refinement`. If an iteration leaves it over 300 whitespace-separated words, or changed without such an event, the runner restores the previous version, logs `conclusions_rejected` with the reason and says why in the next prompt.
+
+## Two workers
+
+`ml-ralph --workers 2` runs two iteration loops at once, each with its own `claude` process in its own git worktree (`.ml-ralph/worktrees/worker-1` and `worker-2`, removed when the run ends). The default is 1; more than 2 is refused, and the project must be a git repository with at least one commit. The workers share the run budget (USD, GPU-hours and minutes are one total; `max_experiments_per_iteration` applies to each worker) and `log.jsonl`, where every event carries `worker`. They start once the eval is locked and wait for each other at the end of every iteration, where the runner merges their `conclusions.md` files by concatenation under `[worker 1]` / `[worker 2]` tags; both read the merge next. The runner then judges their candidates one at a time, so the second must beat the new best by the seed-noise margin, and `ralph/best` stays one tag. If one worker's `claude` crashes, a `worker_crashed` event is logged and the other worker carries on. A run that crashed leaves its worktrees behind; the next start removes them.
 
 ## Commit before every eval
 
@@ -67,7 +71,7 @@ When the runner promotes a candidate it force-moves the git tag `ralph/best` to 
 
 ## When a run completes
 
-Only the runner ends a run; the agent's `<project_complete>` is ignored. After a promotion whose search score (from the runner's own eval and `metrics.json`) meets the contract's `success_threshold` in the contract's direction, the runner:
+The runner alone decides promotion and completion; the agent only hands in candidates with `<candidate_complete>`, which it may refuse. After a promotion whose search score (from the runner's own eval and `metrics.json`) meets the contract's `success_threshold` in the contract's direction, the runner:
 
 1. checks that a `holdout_path` is configured for the project in `~/.config/ml-ralph/config.json` (it is read again at every promotion, so one added mid-run is used next time);
 2. runs the independent verifier on the whole diff since the baseline commit;

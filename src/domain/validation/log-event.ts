@@ -352,6 +352,14 @@ export const LOG_EVENT_SCHEMAS: Record<string, LogEventSchema> = {
     runnerOnly: true,
     fields: { tool: str, iteration: num },
   },
+  worker_crashed: {
+    runnerOnly: true,
+    fields: { worker: num, iteration: num, error: str },
+  },
+  worktrees_cleaned: {
+    runnerOnly: true,
+    fields: { removed: num },
+  },
   critique_verdict: {
     runnerOnly: true,
     fields: {
