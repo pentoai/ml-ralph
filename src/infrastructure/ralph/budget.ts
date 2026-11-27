@@ -5,6 +5,7 @@
 
 import { mkdir, open, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { readGpuHours } from "./gpu-hours.ts";
 
 /** Set by the runner on the claude process so `ml-ralph eval` knows which iteration it serves */
 export const ITERATION_ENV = "ML_RALPH_ITERATION";
@@ -18,23 +19,28 @@ const BUDGET_DIR = ".ml-ralph/budget";
 export interface BudgetCaps {
   max_wall_clock_minutes?: number;
   max_usd?: number;
+  max_gpu_hours?: number;
   max_experiments_per_iteration?: number;
 }
 
 export interface BudgetStatus {
   usd_spent: number;
   elapsed_minutes: number;
+  /** GPU-hours used by the run's jobs; present only when max_gpu_hours is set */
+  gpu_hours_used?: number;
   max_usd?: number;
+  max_gpu_hours?: number;
   max_wall_clock_minutes?: number;
   max_experiments_per_iteration?: number;
 }
 
-export type BudgetExhaustion = "usd" | "wall_clock";
+export type BudgetExhaustion = "usd" | "wall_clock" | "gpu_hours";
 
 type CapSpec = { key: keyof BudgetCaps; integer: boolean };
 const CAP_KEYS: CapSpec[] = [
   { key: "max_wall_clock_minutes", integer: false },
   { key: "max_usd", integer: false },
+  { key: "max_gpu_hours", integer: false },
   { key: "max_experiments_per_iteration", integer: true },
 ];
 
@@ -42,7 +48,7 @@ export type CapsResult =
   | { ok: true; caps: BudgetCaps }
   | { ok: false; error: string };
 
-/** Validate the three cap keys of a parsed config.json; unset (absent or null) caps stay unset */
+/** Validate the four cap keys of a parsed config.json; unset (absent or null) caps stay unset */
 export function parseBudgetCaps(config: unknown): CapsResult {
   const raw = (config && typeof config === "object" ? config : {}) as Record<
     string,
@@ -83,6 +89,12 @@ export async function readBudgetCaps(projectPath: string): Promise<CapsResult> {
 export function exhaustedCap(status: BudgetStatus): BudgetExhaustion | null {
   if (status.max_usd !== undefined && status.usd_spent >= status.max_usd) {
     return "usd";
+  }
+  if (
+    status.max_gpu_hours !== undefined &&
+    (status.gpu_hours_used ?? 0) >= status.max_gpu_hours
+  ) {
+    return "gpu_hours";
   }
   if (
     status.max_wall_clock_minutes !== undefined &&
@@ -126,10 +138,14 @@ export function budgetStatus(
   caps: BudgetCaps,
   usdSpent: number,
   elapsedMinutes: number,
+  gpuHours = 0,
 ): BudgetStatus {
   return {
     usd_spent: round(usdSpent),
     elapsed_minutes: round(elapsedMinutes),
+    ...(caps.max_gpu_hours !== undefined
+      ? { gpu_hours_used: round(gpuHours) }
+      : {}),
     ...caps,
   };
 }
@@ -152,13 +168,20 @@ export function budgetPrompt(status: BudgetStatus): string {
       `- Minutes remaining: ${left.toFixed(1)} of ${status.max_wall_clock_minutes}`,
     );
   }
+  if (status.max_gpu_hours !== undefined) {
+    const used = status.gpu_hours_used ?? 0;
+    const left = Math.max(0, status.max_gpu_hours - used);
+    lines.push(
+      `- GPU-hours used: ${used.toFixed(2)}; left: ${left.toFixed(2)} of ${status.max_gpu_hours} (gpus × runtime of your jobs; \`ml-ralph job start\` needs \`--gpus <n>\` and is refused once the cap is reached)`,
+    );
+  }
   if (status.max_experiments_per_iteration !== undefined) {
     lines.push(
       `- Experiments this iteration: at most ${status.max_experiments_per_iteration} \`ml-ralph eval\` calls; further calls fail`,
     );
   }
   if (lines.length === 0) return "";
-  return `\n\nRun budget (the runner stops the run when USD or minutes run out, so plan the smallest experiments that still test your hypothesis):\n${lines.join("\n")}`;
+  return `\n\nRun budget (the runner stops the run when USD, GPU-hours or minutes run out, so plan the smallest experiments that still test your hypothesis):\n${lines.join("\n")}`;
 }
 
 const iterationDir = (projectDir: string, id: string) =>
@@ -236,6 +259,8 @@ export async function claimExperiment(
 export function formatBudget(status: BudgetStatus): {
   usd: string;
   time: string;
+  /** Only when max_gpu_hours is set */
+  gpu?: string;
 } {
   const usd =
     status.max_usd === undefined
@@ -246,17 +271,30 @@ export function formatBudget(status: BudgetStatus): {
     status.max_wall_clock_minutes === undefined
       ? `${elapsed}, no cap`
       : `${elapsed} / ${status.max_wall_clock_minutes} min`;
-  return { usd, time };
+  const gpu =
+    status.max_gpu_hours === undefined
+      ? undefined
+      : `${(status.gpu_hours_used ?? 0).toFixed(2)} / ${status.max_gpu_hours} h`;
+  return { usd, time, ...(gpu !== undefined ? { gpu } : {}) };
 }
 
-/** Spend and time recorded for the run in progress (zeros for a new run), read from log.jsonl */
+export interface RecordedBudget {
+  usd_spent: number;
+  elapsed_minutes: number;
+  gpu_hours_used?: number;
+}
+
+/** Spend and time recorded for the run in progress (zeros for a new run), read from log.jsonl; GPU-hours come from the job ledger */
 export async function readRecordedBudget(
   projectPath: string,
-): Promise<{ usd_spent: number; elapsed_minutes: number }> {
+): Promise<RecordedBudget> {
   const runId = await readRunId(projectPath);
-  if (!runId) return { usd_spent: 0, elapsed_minutes: 0 };
+  if (!runId) return { usd_spent: 0, elapsed_minutes: 0, gpu_hours_used: 0 };
   const log = Bun.file(join(projectPath, ".ml-ralph/log.jsonl"));
-  return priorBudget((await log.exists()) ? await log.text() : "", runId);
+  return {
+    ...priorBudget((await log.exists()) ? await log.text() : "", runId),
+    gpu_hours_used: await readGpuHours(projectPath, runId),
+  };
 }
 
 /**
@@ -265,7 +303,7 @@ export async function readRecordedBudget(
  */
 export function headerBudget(
   config: unknown,
-  recorded: { usd_spent: number; elapsed_minutes: number },
+  recorded: RecordedBudget,
 ): { status: BudgetStatus; error?: string } {
   const parsed = parseBudgetCaps(config);
   return parsed.ok
@@ -274,6 +312,7 @@ export function headerBudget(
           parsed.caps,
           recorded.usd_spent,
           recorded.elapsed_minutes,
+          recorded.gpu_hours_used,
         ),
       }
     : {

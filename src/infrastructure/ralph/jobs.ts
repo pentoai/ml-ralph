@@ -10,12 +10,14 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { constants as osConstants } from "node:os";
 import { dirname, join } from "node:path";
 import type { TrainingJob } from "../../domain/types/index.ts";
+import { readBudgetCaps, readRunId } from "./budget.ts";
 import {
   critiqueJob,
   findHypothesis,
   readCritiqueThreshold,
   THRESHOLD_KEY,
 } from "./critique.ts";
+import { HEARTBEAT_MS, readGpuHours, writeGpuJob } from "./gpu-hours.ts";
 import { findProjectDir } from "./log-command.ts";
 import type { CommandWrapper } from "./sandbox.ts";
 
@@ -184,7 +186,7 @@ export interface JobCommandResult {
   stderr: string;
 }
 
-const USAGE = `Usage: ml-ralph job start [--est-minutes <n>] [--hypothesis-id <id>] <cmd> [args...]
+const USAGE = `Usage: ml-ralph job start [--gpus <n>] [--est-minutes <n>] [--hypothesis-id <id>] <cmd> [args...]
 
 Runs the command, writes its pid, command, start time and log path to
 .ml-ralph/runs/active.json, and removes the entry when it exits. Output goes
@@ -192,19 +194,27 @@ to the log file and to this terminal. A single argument runs through the shell.
 
 When config.json sets ${THRESHOLD_KEY}, both flags are required, and a job
 estimated above it is critiqued against conclusions.md and kanban.json first;
-a rejected job does not start.`;
+a rejected job does not start.
 
-/** Leading `--est-minutes` / `--hypothesis-id` flags (space or `=` form), then the command */
-function parseJobArgs(
-  args: string[],
-):
-  | { cmd: string[]; estMinutes?: number; hypothesisId?: string }
+--gpus <n> declares how many GPUs the job uses (0 for none); the run's GPU-hours
+are gpus x runtime. When config.json sets max_gpu_hours, --gpus is required and
+a job is refused once the run has used the cap.`;
+
+/** Leading `--gpus` / `--est-minutes` / `--hypothesis-id` flags (space or `=` form), then the command */
+function parseJobArgs(args: string[]):
+  | {
+      cmd: string[];
+      estMinutes?: number;
+      hypothesisId?: string;
+      gpus?: number;
+    }
   | { error: string } {
   let estMinutes: number | undefined;
   let hypothesisId: string | undefined;
+  let gpus: number | undefined;
   let i = 0;
   for (; i < args.length; i++) {
-    const m = /^(--est-minutes|--hypothesis-id)(?:=(.*))?$/.exec(
+    const m = /^(--gpus|--est-minutes|--hypothesis-id)(?:=(.*))?$/.exec(
       args[i] as string,
     );
     if (!m) break;
@@ -217,6 +227,15 @@ function parseJobArgs(
       continue;
     }
     const n = Number(value);
+    if (m[1] === "--gpus") {
+      if (!/^\d+$/.test(value) || !Number.isSafeInteger(n)) {
+        return {
+          error: `--gpus must be a non-negative whole number of GPUs (got ${JSON.stringify(value)})`,
+        };
+      }
+      gpus = n;
+      continue;
+    }
     if (!Number.isFinite(n) || n <= 0) {
       return {
         error: `--est-minutes must be a positive number of minutes (got ${JSON.stringify(value)})`,
@@ -228,6 +247,7 @@ function parseJobArgs(
     cmd: args.slice(i),
     ...(estMinutes !== undefined ? { estMinutes } : {}),
     ...(hypothesisId !== undefined ? { hypothesisId } : {}),
+    ...(gpus !== undefined ? { gpus } : {}),
   };
 }
 
@@ -256,13 +276,31 @@ export async function runJobCommand(
   if (args[0] !== "start" || args.length < 2) return fail(USAGE);
   const parsed = parseJobArgs(args.slice(1));
   if ("error" in parsed) return fail(parsed.error);
-  const { cmd, estMinutes, hypothesisId } = parsed;
+  const { cmd, estMinutes, hypothesisId, gpus } = parsed;
   if (cmd.length === 0) return fail(USAGE);
 
   const cwd = options.cwd ?? process.cwd();
   const projectDir = await findProjectDir(cwd);
   if (!projectDir)
     return fail("No .ml-ralph/ directory found; run init first.");
+
+  const caps = await readBudgetCaps(projectDir);
+  if (!caps.ok) return fail(caps.error);
+  const gpuCap = caps.caps.max_gpu_hours;
+  const runId = await readRunId(projectDir);
+  if (gpuCap !== undefined) {
+    if (gpus === undefined) {
+      return fail(
+        `config.json sets max_gpu_hours (${gpuCap}), so job start needs --gpus <n> (how many GPUs the job uses; 0 for none).`,
+      );
+    }
+    const used = await readGpuHours(projectDir, runId);
+    if (used >= gpuCap) {
+      return fail(
+        `max_gpu_hours (${gpuCap}) is used up (${used.toFixed(2)} GPU-hours); no job can start.`,
+      );
+    }
+  }
 
   const threshold = await readCritiqueThreshold(projectDir);
   if (!threshold.ok) return fail(threshold.error);
@@ -328,6 +366,25 @@ export async function runJobCommand(
     return { code: await exit, stdout: "", stderr: "" };
   }
   const pid = child.pid;
+  const startedAt = Date.now();
+  const ledger =
+    gpus !== undefined && gpus > 0
+      ? {
+          job_id: id,
+          run_id: runId ?? "",
+          gpus,
+          pid,
+          started_at: startedAt,
+          last_seen: startedAt,
+        }
+      : null;
+  if (ledger) await writeGpuJob(projectDir, ledger);
+  const heartbeat = ledger
+    ? setInterval(() => {
+        ledger.last_seen = Date.now();
+        void writeGpuJob(projectDir, ledger).catch(() => {});
+      }, HEARTBEAT_MS)
+    : null;
   await updateActiveJobs(projectDir, (jobs) => [
     ...jobs.filter((j) => j.id !== id),
     {
@@ -338,12 +395,22 @@ export async function runJobCommand(
       command: cmd.join(" "),
       logPath,
       ...(wrapped ? { container: wrapped.container } : {}),
-      startedAt: new Date().toISOString(),
+      ...(gpus !== undefined ? { gpus } : {}),
+      startedAt: new Date(startedAt).toISOString(),
       status: "running",
     },
   ]);
 
   const finish = async (code: number) => {
+    if (heartbeat) clearInterval(heartbeat);
+    if (ledger) {
+      const endedAt = Date.now();
+      await writeGpuJob(projectDir, {
+        ...ledger,
+        last_seen: endedAt,
+        ended_at: endedAt,
+      }).catch(() => {});
+    }
     await new Promise<void>((resolve) => log.end(resolve));
     if (options.detach) await writeFile(`${logPath}.exit`, `${code}\n`);
     await removeActiveJob(projectDir, id);
