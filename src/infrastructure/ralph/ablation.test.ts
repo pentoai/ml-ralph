@@ -151,11 +151,12 @@ async function runWith(
   edits: Array<[string, string]>,
   verifierCost?: number,
   maxIterations = 1,
+  afterEval?: (runner: RalphRunner) => void,
 ) {
   const completions: RunCompleteReason[] = [];
   const errors: string[] = [];
   let first = true;
-  const runner = new FakeRunner(
+  const runner: FakeRunner = new FakeRunner(
     {
       projectPath: dir,
       maxIterations,
@@ -194,6 +195,7 @@ async function runWith(
         candidatePath: join(dir, "feat"),
         python: "python3",
       });
+      afterEval?.(runner);
       return `<candidate_complete eval_id="${res.metrics?.eval_id}">`;
     },
   );
@@ -333,7 +335,74 @@ describe("ablation phase after a completed run", () => {
   });
 });
 
+describe("endings that are not a completion run no ablations", () => {
+  const edits: Array<[string, string]> = [
+    ["a.txt", "0.1"],
+    ["b.txt", "0.2"],
+    ["c.txt", "0.3"],
+  ];
+
+  test("budget_exhausted", async () => {
+    await setup({ success: 1.0, config: { max_usd: 1 } });
+    // A recorded spend over max_usd ends the run at its first check
+    await mkdir(join(dir, ".ml-ralph/budget"), { recursive: true });
+    await Bun.write(
+      join(dir, ".ml-ralph/budget/run.json"),
+      `${JSON.stringify({ run_id: "spent" })}\n`,
+    );
+    await Bun.write(
+      join(dir, ".ml-ralph/log.jsonl"),
+      `${JSON.stringify({ type: "budget_status", run_id: "spent", iteration: 1, usd_spent: 2, elapsed_minutes: 1 })}\n`,
+    );
+    const { completions } = await runWith(edits);
+    expect(completions).toEqual(["budget_exhausted"]);
+    expect(await events("budget_exhausted")).toHaveLength(1);
+    expect(await events("ablation")).toEqual([]);
+    expect(await reportText()).not.toContain("Ablations");
+  });
+
+  test("holdout_access", async () => {
+    await setup({ success: 1.0 });
+    const { completions } = await runWith(edits, undefined, 1, (runner) => {
+      (runner as unknown as { holdoutAccess: unknown }).holdoutAccess = {
+        toolName: "Bash",
+      };
+    });
+    expect(completions).toEqual(["holdout_access"]);
+    expect(await events("holdout_access")).toHaveLength(1);
+    expect(await events("ablation")).toEqual([]);
+    expect(await reportText()).not.toContain("Ablations");
+  });
+});
+
 describe("runAblations", () => {
+  test("docker mode: the evaluator runs through the wrapper, not on the host", async () => {
+    await setup({ success: 1.0 });
+    await runWith([
+      ["a.txt", "0.1"],
+      ["b.txt", "0.2"],
+    ]);
+    const wrapped: Array<{ kind: string; argv: string[] }> = [];
+    const outcome = await runAblations({
+      projectPath: dir,
+      runId: "r2",
+      maxAblations: 5,
+      stopReason: () => null,
+      onRow: async () => {},
+      wrap: (argv, options) => {
+        wrapped.push({ kind: options.kind, argv });
+        return { argv, container: "fake", remove: () => {} };
+      },
+    });
+    // Two commits, two contract seeds each; every run went through the wrapper as a search eval
+    expect(wrapped).toHaveLength(4);
+    expect(wrapped.every((w) => w.kind === "eval")).toBe(true);
+    expect(wrapped[0]?.argv.join(" ")).toContain(".ml-ralph/ablation/r2/feat");
+    expect(
+      outcome.state === "ran" && outcome.rows.map((r) => r.status),
+    ).toEqual(["ok", "ok"]);
+  });
+
   test("stops mid-phase when the budget runs out", async () => {
     await setup({ success: 1.0 });
     await runWith([
@@ -357,6 +426,22 @@ describe("runAblations", () => {
       "skipped:budget",
     ]);
   });
+});
+
+test("ablation evals stay out of the Claims section but are linked from the table", async () => {
+  await setup({ success: 1.0 });
+  await runWith([
+    ["a.txt", "0.1"],
+    ["b.txt", "0.2"],
+    ["c.txt", "0.3"],
+  ]);
+  const report = await reportText();
+  const [claims] = (report.split("## Claims")[1] ?? "").split("## Ablations");
+  expect(claims).not.toContain(".ml-ralph/ablation");
+  expect(claims).toContain("Eval of feat");
+  const rows = await events("ablation");
+  expect(rows).toHaveLength(3);
+  for (const r of rows) expect(report).toContain(`[eval:${r.eval_id}]`);
 });
 
 describe("claim audit of the Ablations table", () => {

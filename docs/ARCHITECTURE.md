@@ -211,8 +211,8 @@ When a run ends with `completed` (and only then: `max_iterations`, `budget_exhau
 - **Nothing to ablate.** When `ralph/best` is the baseline commit (or nothing was promoted) no event is logged and the report says `No promoted changes to ablate`.
 - **Failures.** A revert that does not apply cleanly, or an eval that fails, is a `failed: <reason>` row; the remaining ablations still run.
 - **Budget.** Before each ablation the runner checks `max_usd` and `max_wall_clock_minutes`; once a cap is reached the rest are `skipped: budget` (`skipped: stopped` if the user quits) and the report is still written. A final `budget_status` records the phase's time. A running evaluator is not interrupted mid-ablation.
-- **Report.** `report.md` gets an "Ablations" table (reverted commit, mean, std, `[eval:<id>]`, status). `auditClaims` also flags an ablation row whose eval is not in `log.jsonl`, or whose mean or std differs from that eval's.
-- **Limits.** The worktree holds tracked files only, so a candidate that depends on untracked outputs fails its ablations (shown as failed rows). The evaluator runs on the host, not in the Docker sandbox.
+- **Report.** `report.md` gets an "Ablations" table (ablation evals are linked from it and left out of the Claims section) (reverted commit, mean, std, `[eval:<id>]`, status). `auditClaims` also flags an ablation row whose eval is not in `log.jsonl`, or whose mean or std differs from that eval's.
+- **Limits.** The worktree holds tracked files only, so a candidate that depends on untracked outputs fails its ablations (shown as failed rows). In Docker mode the evaluator, and with it the reverted candidate code, runs in a container exactly like a search eval (the worktree lives under the mounted project), never on the host.
 
 ### Sealed holdout (`infrastructure/ralph/holdout.ts`)
 

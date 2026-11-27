@@ -5,11 +5,12 @@
  * working tree (every revert happens in a throwaway git worktree).
  */
 
-import { rm } from "node:fs/promises";
+import { realpath, rm } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { readLockedEval, scoreCandidate } from "./eval-command.ts";
 import { runGit } from "./git.ts";
 import { BASELINE_PATH, BEST_TAG, readIncumbent } from "./promotion.ts";
+import type { CommandWrapper } from "./sandbox.ts";
 
 export const DEFAULT_MAX_ABLATIONS = 5;
 export const ABLATION_DIR = ".ml-ralph/ablation";
@@ -113,6 +114,8 @@ export interface AblationOptions {
   /** Called with each finished row, so the runner can log it */
   onRow: (row: AblationRow) => Promise<void>;
   python?: string;
+  /** Docker mode: run the evaluator, and with it the reverted candidate code, in a container as search evals do */
+  wrap?: CommandWrapper;
 }
 
 const NO_HOOKS = ["-c", "core.hooksPath=/dev/null"];
@@ -155,7 +158,11 @@ export async function runAblations(
   const incumbent = await readIncumbent(projectPath);
   const candidate =
     incumbent.state === "ok" ? incumbent.incumbent.candidate : "";
-  const projectAbs = resolve(projectPath);
+  // The container mounts the real path, so every path handed to it must be the real one
+  const projectAbs = await realpath(projectPath).catch(() =>
+    resolve(projectPath),
+  );
+  o = { ...o, projectPath: projectAbs };
   const candidateRel = isAbsolute(candidate)
     ? relative(projectAbs, candidate)
     : candidate;
@@ -256,6 +263,7 @@ async function ablateOne(
       locked,
       sha: head.out.trim(),
       candidatePath: join(dir, candidateRel),
+      wrap: o.wrap,
       python: o.python ?? (Bun.which("python") ? "python" : "python3"),
     });
     const m = result.metrics;

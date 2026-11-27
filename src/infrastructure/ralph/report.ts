@@ -71,8 +71,15 @@ const hypothesisLabel = (value: unknown) =>
 export function buildClaims(events: LogEvent[]): string[] {
   const claims: string[] = [];
   const known = new Set<string>();
+  // Ablation evals scored a worktree that is gone; the Ablations table links them instead
+  const ablated = new Set(
+    events.flatMap((e) =>
+      e.type === "ablation" && typeof e.eval_id === "string" ? [e.eval_id] : [],
+    ),
+  );
   for (const e of events) {
     if (e.type !== "eval" || typeof e.eval_id !== "string") continue;
+    if (ablated.has(e.eval_id)) continue;
     known.add(e.eval_id);
     const text =
       e.status === "ok" && isNumber(e.mean)

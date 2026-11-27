@@ -506,10 +506,19 @@ export class RalphRunner {
    */
   private async runAblationPhase(): Promise<void> {
     try {
+      // Sandbox mode: the reverted candidate is the agent's code, so it runs in a container as search evals do
+      const wrap =
+        this.sandbox === "docker"
+          ? commandWrapper(
+              this.config.dockerBin ?? "docker",
+              await sandboxProjectPath(this.config.projectPath),
+            )
+          : undefined;
       this.ablation = await runAblations({
         projectPath: this.config.projectPath,
         runId: this.budgetRunId,
         maxAblations: this.maxAblations,
+        wrap,
         stopReason: () =>
           exhaustedCap(this.budgetNow())
             ? "budget"
