@@ -20,6 +20,7 @@ export interface TrainingJob {
   command: string; // What was executed
   logPath: string; // Path to log file
   container?: string; // Sandbox mode: the container the job runs in
+  gpus?: number; // GPUs the job declared with `job start --gpus N`
 
   // Tracking
   wandbRunId?: string;

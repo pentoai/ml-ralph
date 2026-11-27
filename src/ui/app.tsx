@@ -752,6 +752,9 @@ export function App({ projectPath, enableTeams, sandbox }: AppProps) {
         <Text color={colors.textMuted}>
           Spend (est.): {formatBudget(budget).usd} | Elapsed:{" "}
           {formatBudget(budget).time}
+          {formatBudget(budget).gpu
+            ? ` | GPU-hours: ${formatBudget(budget).gpu}`
+            : ""}
         </Text>
       </Box>
 

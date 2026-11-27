@@ -45,6 +45,7 @@ import {
   readLockHashes,
   relockEvalContract,
 } from "./eval-lock.ts";
+import { readGpuHours } from "./gpu-hours.ts";
 import {
   type HoldoutResult,
   readHoldoutPath,
@@ -207,6 +208,8 @@ export class RalphRunner {
   private budgetBase = { usd_spent: 0, elapsed_minutes: 0 };
   private budgetStartedAt = 0;
   private budgetUsd = 0;
+  /** GPU-hours of this run's jobs as of the last ledger read */
+  private budgetGpuHours = 0;
   /** Lines of the critique cost ledger already counted in budgetUsd */
   private critiqueLinesCounted = 0;
   private iterationCost: number | null = null;
@@ -590,6 +593,7 @@ export class RalphRunner {
     );
     this.budgetStartedAt = Date.now();
     this.budgetUsd = 0;
+    await this.refreshGpuHours();
     // Critiques before this start are already in the totals the log recorded
     this.critiqueLinesCounted = readCritiqueCosts(projectPath).lines;
     this.iterationCost = null;
@@ -613,6 +617,29 @@ export class RalphRunner {
       this.budgetBase.usd_spent + this.budgetUsd,
       this.budgetBase.elapsed_minutes +
         (Date.now() - this.budgetStartedAt) / 60_000,
+      this.budgetGpuHours,
+    );
+  }
+
+  /** Recompute GPU-hours from the job ledger (a no-op without max_gpu_hours) */
+  private async refreshGpuHours(): Promise<void> {
+    if (this.budgetCaps.max_gpu_hours === undefined) return;
+    this.budgetGpuHours = await readGpuHours(
+      this.config.projectPath,
+      this.budgetRunId,
+    ).catch(() => this.budgetGpuHours);
+  }
+
+  /** The GPU cap was reached: SIGTERM every job the agent started (then SIGKILL after the grace period) */
+  private async stopAllJobs(): Promise<void> {
+    const jobs = await readActiveJobs(this.config.projectPath).catch(() => []);
+    const docker = this.config.dockerBin ?? "docker";
+    await Promise.all(
+      jobs.map((job) =>
+        stopJob(this.config.projectPath, job, {
+          removeContainer: (name) => removeContainer(docker, name),
+        }).catch(() => {}),
+      ),
     );
   }
 
@@ -621,6 +648,7 @@ export class RalphRunner {
     const reported = this.iterationCost !== null;
     this.iterationCost = null;
     this.absorbCritiqueCosts();
+    await this.refreshGpuHours();
     const status = this.budgetNow();
     if (!reported) {
       await this.appendLogEvent({
@@ -655,6 +683,8 @@ export class RalphRunner {
 
   /** A cap was reached: log it and end the run. The claude session, if still alive, is already killed */
   private async endForBudget(cap: BudgetExhaustion): Promise<void> {
+    // The usage that reached the cap stays in the event; stopping jobs only ends accrual
+    if (cap === "gpu_hours") await this.stopAllJobs();
     await this.appendLogEvent({
       type: "budget_exhausted",
       run_id: this.budgetRunId,
@@ -669,6 +699,7 @@ export class RalphRunner {
   private stopForBudget(cap: BudgetExhaustion): void {
     if (this.budgetStop) return;
     this.budgetStop = cap;
+    if (cap === "gpu_hours") void this.stopAllJobs();
     if (this.currentProcess) this.killAgent(this.currentProcess, "SIGKILL");
   }
 
@@ -1217,11 +1248,13 @@ export class RalphRunner {
         Math.min(Math.max(0, leftMs), MAX_TIMER_MS),
       );
     }
-    const ticker = setInterval(() => {
+    const ticker = setInterval(async () => {
       this.absorbCritiqueCosts();
+      await this.refreshGpuHours();
       const status = this.budgetNow();
       this.config.onBudget?.(status);
-      if (exhaustedCap(status) === "usd") this.stopForBudget("usd");
+      const hit = exhaustedCap(status);
+      if (hit === "usd" || hit === "gpu_hours") this.stopForBudget(hit);
     }, BUDGET_TICK_MS);
     try {
       return await this.readIteration(proc);

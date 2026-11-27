@@ -858,7 +858,7 @@ describe("the container", () => {
         );
       }
     },
-    // About twenty sequential `docker run`s, one with a 3 s network timeout: far over bun's 5 s default
+    // about twenty sequential `docker run`s; the 5s default is a race on a slow runner
     60_000,
   );
 });

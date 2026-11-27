@@ -48,6 +48,7 @@ export interface ProjectConfig {
   // Run budget caps; each is optional and an unset cap is not enforced
   max_wall_clock_minutes?: number; // Minutes of wall-clock time for a run
   max_usd?: number; // Summed total_cost_usd of the claude result events
+  max_gpu_hours?: number; // Summed gpus × runtime of `ml-ralph job start --gpus N` jobs
   max_experiments_per_iteration?: number; // `ml-ralph eval` calls per iteration
 
   // Single-change ablations run after a completed run (default: 5, 0 disables)
