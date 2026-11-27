@@ -858,5 +858,7 @@ describe("the container", () => {
         );
       }
     },
+    // about twenty sequential `docker run`s; the 5s default is a race on a slow runner
+    60_000,
   );
 });

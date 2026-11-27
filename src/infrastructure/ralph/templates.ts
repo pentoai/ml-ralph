@@ -1517,7 +1517,10 @@ export interface BudgetStatusEvent extends BaseEvent {
   /** Summed total_cost_usd of the claude result events, including earlier starts of the same run */
   usd_spent: number;
   elapsed_minutes: number;
+  /** GPU-hours of the run's jobs (gpus × runtime); present only when max_gpu_hours is set */
+  gpu_hours_used?: number;
   max_usd?: number;
+  max_gpu_hours?: number;
   max_wall_clock_minutes?: number;
   max_experiments_per_iteration?: number;
 }
@@ -1530,15 +1533,17 @@ export interface BudgetWarningEvent extends BaseEvent {
   reason: string;
 }
 
-/** Written by the runner (never the agent) when max_usd or max_wall_clock_minutes is reached; the run ends with reason budget_exhausted */
+/** Written by the runner (never the agent) when max_usd, max_gpu_hours or max_wall_clock_minutes is reached; the run ends with reason budget_exhausted */
 export interface BudgetExhaustedEvent extends BaseEvent {
   type: "budget_exhausted";
   run_id: string;
   iteration: number;
-  cap: "usd" | "wall_clock";
+  cap: "usd" | "wall_clock" | "gpu_hours";
   usd_spent: number;
   elapsed_minutes: number;
+  gpu_hours_used?: number;
   max_usd?: number;
+  max_gpu_hours?: number;
   max_wall_clock_minutes?: number;
   max_experiments_per_iteration?: number;
 }
