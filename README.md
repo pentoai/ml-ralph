@@ -45,7 +45,7 @@ UNDERSTAND → STRATEGIZE → EXECUTE → REFLECT
 - Verified and promising? → Strategize next step
 - Surprised or confused? → Go back to Understand
 - Stuck after 2–3 experiments? → Strategic retreat to Understand
-- All success criteria met and verified? → Complete
+- All success criteria met and verified? → Hand in a candidate; the runner decides
 
 Strategic retreat — going back to understand when stuck — is a first-class concept, not a failure. Understanding is progress.
 
@@ -71,7 +71,7 @@ When the runner promotes a candidate it force-moves the git tag `ralph/best` to 
 
 ## When a run completes
 
-Only the runner ends a run; the agent's `<project_complete>` is ignored. After a promotion whose search score (from the runner's own eval and `metrics.json`) meets the contract's `success_threshold` in the contract's direction, the runner:
+The runner alone decides promotion and completion; the agent only hands in candidates with `<candidate_complete>`, which it may refuse. After a promotion whose search score (from the runner's own eval and `metrics.json`) meets the contract's `success_threshold` in the contract's direction, the runner:
 
 1. checks that a `holdout_path` is configured for the project in `~/.config/ml-ralph/config.json` (it is read again at every promotion, so one added mid-run is used next time);
 2. runs the independent verifier on the whole diff since the baseline commit;
