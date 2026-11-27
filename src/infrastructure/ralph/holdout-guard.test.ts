@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmod, mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { redactSecrets } from "./eval-command.ts";
+import { redactionTargets } from "./holdout.ts";
 import {
   findHoldoutToolUse,
   holdoutNeedles,
@@ -479,5 +481,91 @@ ${hang ? "exec sleep 60" : "exit 0"}
     });
     await expect(runner.start()).rejects.toThrow("Claude process failed");
     expect(errors[0]).toContain("boom");
+  });
+});
+
+describe("home, glob and directory forms", () => {
+  const HOME = "/home/agent";
+  const homeHoldout = `${HOME}/sealed/holdout.csv`;
+  const configFile = `${HOME}/.config/ml-ralph/config.json`;
+  const all = [
+    ...holdoutNeedles(homeHoldout, configFile),
+    "/home/agent/sealed/",
+    "/home/agent/.config/ml-ralph/",
+  ];
+  const flagged = (command: string, list = all) =>
+    findHoldoutToolUse(
+      JSON.parse(assistantLine(toolUse("Bash", { command }))),
+      list,
+      HOME,
+    );
+
+  test.each([
+    ["~/sealed/holdout.csv", "tilde"],
+    ["$HOME/sealed/holdout.csv", "$HOME"],
+    ["${HOME}/sealed/holdout.csv", "${HOME}"],
+  ])("%s expands to the holdout path (%s)", (spelling) => {
+    expect(flagged(`cat ${spelling}`)).toEqual({ toolName: "Bash" });
+    // the same spellings are harmless when they do not reach the holdout
+    expect(flagged(`cat ${spelling.replace("sealed", "other")}`)).toBeNull();
+  });
+
+  test("a quoted ~/ path and the config file in ~ form are flagged", () => {
+    expect(flagged(`cat "~/sealed/holdout.csv"`)).not.toBeNull();
+    expect(flagged("cat ~/.config/ml-ralph/config.json")).not.toBeNull();
+  });
+
+  test("a tilde inside another word is not home", () => {
+    expect(flagged("cat backup~/sealed/holdout.csv")).toBeNull();
+  });
+
+  test("listing the config directory or the holdout's directory is flagged", () => {
+    expect(flagged("ls ~/.config/ml-ralph")).not.toBeNull();
+    expect(flagged("ls -la $HOME/.config/ml-ralph/")).not.toBeNull();
+    expect(flagged("ls /home/agent/sealed")).not.toBeNull();
+    expect(flagged("cat /home/agent/sealed/*")).not.toBeNull();
+    expect(flagged("cat ~/.config/ml-ralph/*")).not.toBeNull();
+  });
+
+  test("a glob that matches the holdout is flagged", () => {
+    expect(flagged("cat /home/*/sealed/hold*")).not.toBeNull();
+    expect(flagged("cat /home/agent/sea?ed/holdout.{csv,tsv}")).not.toBeNull();
+    expect(flagged("cat /home/agent/sealed/ho*")).not.toBeNull();
+    expect(flagged("cat /home/agent/other/*")).toBeNull();
+    expect(flagged("cat /tmp/*.csv")).toBeNull();
+  });
+
+  test("a sibling with a shared prefix is not flagged", () => {
+    expect(flagged("cat /home/agent/sealed/holdout.csv.bak")).toBeNull();
+    expect(flagged("cat /home/agent/sealed/holdout.csv-train")).toBeNull();
+    expect(flagged("ls /home/agent/sealed-train")).toBeNull();
+    expect(flagged("ls /home/agent/.config/ml-ralph-old")).toBeNull();
+    expect(flagged("cat /home/agent/sealed/other.csv")).toBeNull();
+  });
+
+  test("loadHoldoutNeedles-style directory needles do not flag a file below an unrelated parent", () => {
+    expect(flagged("ls /home/agent")).toBeNull();
+  });
+});
+
+describe("redaction of the parent directory", () => {
+  test("a line that names only the parent directory is masked", () => {
+    const targets = redactionTargets(
+      "/data/sealed/holdout.csv",
+      "/mnt/real/holdout.csv",
+    );
+    expect(redactSecrets("FileNotFoundError: /data/sealed", targets)).toBe(
+      "FileNotFoundError: <holdout>",
+    );
+    expect(redactSecrets("scanning /mnt/real/ now", targets)).toBe(
+      "scanning <holdout>/ now",
+    );
+    expect(redactSecrets("open /data/sealed/holdout.csv failed", targets)).toBe(
+      "open <holdout> failed",
+    );
+  });
+
+  test("the filesystem root is never a target", () => {
+    expect(redactionTargets("/holdout.csv")).toEqual(["/holdout.csv"]);
   });
 });
